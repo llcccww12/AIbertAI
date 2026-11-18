@@ -1,0 +1,24 @@
+# Local configuration, dependencies and generated output
+.DS_Store
+.env
+.env.*
+!.env.example
+*.env
+*.log
+*.bak
+*.tsbuildinfo
+node_modules/
+dist/
+.vite/
+coverage/
+*.app/
+
+# This workspace keeps its local services and desktop profile outside Git.
+/.impeccable/hook.cache.json
+/AIbertAI/.local-runtime/
+/AIbertAI/code/app/resources/tray
+/AIbertCode/.local-dev/
+
+# Only the current platform is maintained in this repository.
+/AIbertCode/*
+!/AIbertCode/aibertai/

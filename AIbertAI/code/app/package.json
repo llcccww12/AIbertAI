@@ -1,0 +1,20 @@
+{
+  "name": "@monkeyai/desktop",
+  "productName": "MonkeyAI",
+  "version": "26.1116.2",
+  "private": true,
+  "description": "MonkeyAI desktop host (Electron): window, tray, updater, runtime supervisor. UI lives in apps/web.",
+  "author": "Chaitin",
+  "homepage": "https://github.com/chaitin/MonkeyAI",
+  "desktopName": "monkeyai.desktop",
+  "main": "./out/main/index.js",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@neplex/vectorizer": "0.1.0",
+    "electron-updater": "^6.8.9",
+    "js-yaml": "^4.3.2",
+    "playwright-core": "1.63.0",
+    "semver": "^7.7.4",
+    "sharp": "^0.35.4"
+  }
+}

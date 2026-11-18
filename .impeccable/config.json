@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "marquee",
+        "value": "*",
+        "files": [
+          "AIbertAI/code/web/index.html"
+        ],
+        "createdAt": "2026-11-18T09:12:43.413Z",
+        "reason": "Codex: inspected all five reported CSS selectors; one is a processing-state overlay and four are Markstream loading skeletons. Their pseudo-elements animate loading indicators, not scrolling content."
+      }
+    ]
+  }
+}

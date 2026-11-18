@@ -1,0 +1,654 @@
+package app
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	_ "net/http/pprof"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"aibertai.local/backend/internal/agentconfig"
+	"aibertai.local/backend/internal/apikey"
+	"aibertai.local/backend/internal/audit"
+	"aibertai.local/backend/internal/billing"
+	"aibertai.local/backend/internal/config"
+	"aibertai.local/backend/internal/database"
+	"aibertai.local/backend/internal/designcatalog"
+	"aibertai.local/backend/internal/endpoint"
+	"aibertai.local/backend/internal/enginehost"
+	"aibertai.local/backend/internal/envimage"
+	"aibertai.local/backend/internal/environment"
+	"aibertai.local/backend/internal/expert"
+	"aibertai.local/backend/internal/feedback"
+	"aibertai.local/backend/internal/group"
+	"aibertai.local/backend/internal/httpapi"
+	"aibertai.local/backend/internal/identity"
+	"aibertai.local/backend/internal/imagegen"
+	agnesimage "aibertai.local/backend/internal/imagegen/agnes"
+	openaiimages "aibertai.local/backend/internal/imagegen/openai/images"
+	openairesponses "aibertai.local/backend/internal/imagegen/openai/responses"
+	"aibertai.local/backend/internal/imagegen/volcengine"
+	"aibertai.local/backend/internal/imagegen/xai"
+	"aibertai.local/backend/internal/imageproxy"
+	"aibertai.local/backend/internal/kb"
+	"aibertai.local/backend/internal/mcp"
+	"aibertai.local/backend/internal/model"
+	"aibertai.local/backend/internal/proxy"
+	"aibertai.local/backend/internal/relay"
+	"aibertai.local/backend/internal/resource"
+	"aibertai.local/backend/internal/resourceimport"
+	"aibertai.local/backend/internal/rule"
+	"aibertai.local/backend/internal/runtimeartifact"
+	sessionreporting "aibertai.local/backend/internal/session"
+	"aibertai.local/backend/internal/setting"
+	"aibertai.local/backend/internal/skill"
+	"aibertai.local/backend/internal/stats"
+	"aibertai.local/backend/internal/teamcapacity"
+	"aibertai.local/backend/internal/videogen"
+	"aibertai.local/backend/internal/videoproxy"
+	"aibertai.local/backend/internal/web"
+	"aibertai.local/backend/logging"
+	"aibertai.local/backend/member"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+type App struct {
+	servers           []*http.Server
+	database          *pgxpool.Pool
+	shutdownTimeout   time.Duration
+	billing           *billing.Service
+	sessions          *sessionreporting.Service
+	proxy             *proxy.Proxy
+	images            *imagegen.Service
+	videos            *videogen.Service
+	inputs            *imagegen.Inputs
+	runtimeKeys       *apikey.Service
+	relay             *relay.Service
+	endpoints         *endpoint.Service
+	feedback          *feedback.Service
+	connectors        *mcp.Service
+	knowledgeBases    *kb.Service
+	resourceImports   *resourceimport.Service
+	environmentImages *envimage.Service
+	environments      *environment.Service
+}
+
+type MemberWriters func(*pgxpool.Pool) (member.UserWriter, member.GroupWriter, error)
+
+type AdminRegistrar interface {
+	RegisterAdmin(chi.Router)
+}
+
+// PublicLicenseReader is an optional host extension for public branding.
+type PublicLicenseReader = identity.PublicLicenseReader
+
+// InstanceIdentity 由宿主扩展提供部署身份，在成员工厂完成后读取一次。
+type InstanceIdentity interface {
+	InstanceID(context.Context) (string, error)
+}
+
+func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, error) {
+	return newApp(ctx, cfg, logger, func(pool *pgxpool.Pool) (member.UserWriter, member.GroupWriter, error) {
+		return teamcapacity.NewMembers(pool), member.EmptyGroupWriter{}, nil
+	}, nil)
+}
+
+func NewWithMembers(ctx context.Context, cfg config.Config, logger *slog.Logger, factory MemberWriters, registrars ...AdminRegistrar) (*App, error) {
+	if factory == nil {
+		return nil, errors.New("成员写入实现不可为空")
+	}
+	return newApp(ctx, cfg, logger, factory, registrars)
+}
+
+func newApp(ctx context.Context, cfg config.Config, logger *slog.Logger, factory MemberWriters, registrars []AdminRegistrar) (*App, error) {
+	pool, err := database.Open(ctx, cfg.URL)
+	if err != nil {
+		return nil, err
+	}
+	var users member.UserWriter
+	var groups member.GroupWriter
+	if factory != nil {
+		users, groups, err = factory(pool)
+		if err != nil {
+			pool.Close()
+			return nil, err
+		}
+		if users == nil || groups == nil {
+			pool.Close()
+			return nil, errors.New("成员写入实现不可为空")
+		}
+	}
+	handler, err := newApplicationHandlerWithMembers(ctx, logger, pool, cfg, users, groups, registrars)
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+
+	return &App{
+		servers: []*http.Server{
+			{
+				Addr:              cfg.Addr,
+				Handler:           handler,
+				ReadHeaderTimeout: 5 * time.Second,
+				IdleTimeout:       2 * time.Minute,
+				MaxHeaderBytes:    1 << 20,
+				ErrorLog:          logging.ErrorLog(logger),
+			},
+			{
+				Addr:              cfg.PprofAddr,
+				Handler:           debugHandler(handler.(*applicationHandler).relay),
+				ReadHeaderTimeout: 5 * time.Second,
+				IdleTimeout:       2 * time.Minute,
+				MaxHeaderBytes:    1 << 20,
+				ErrorLog:          logging.ErrorLog(logger),
+			},
+		},
+		billing:           handler.(*applicationHandler).billing,
+		sessions:          handler.(*applicationHandler).sessions,
+		proxy:             handler.(*applicationHandler).proxy,
+		images:            handler.(*applicationHandler).images,
+		videos:            handler.(*applicationHandler).videos,
+		inputs:            handler.(*applicationHandler).inputs,
+		runtimeKeys:       handler.(*applicationHandler).runtimeKeys,
+		relay:             handler.(*applicationHandler).relay,
+		endpoints:         handler.(*applicationHandler).endpoints,
+		feedback:          handler.(*applicationHandler).feedback,
+		connectors:        handler.(*applicationHandler).connectors,
+		knowledgeBases:    handler.(*applicationHandler).knowledgeBases,
+		resourceImports:   handler.(*applicationHandler).resourceImports,
+		environmentImages: handler.(*applicationHandler).environmentImages,
+		environments:      handler.(*applicationHandler).environments,
+		database:          pool,
+		shutdownTimeout:   cfg.ShutdownTimeout,
+	}, nil
+}
+
+func debugHandler(runtime *relay.Service) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/", http.DefaultServeMux)
+	if runtime != nil {
+		mux.HandleFunc("GET /debug/relay", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store")
+			if err := json.NewEncoder(w).Encode(runtime.Metrics()); err != nil {
+				slog.Error("写入输出失败", "module", "app", "operation", "debugHandler", "error", err)
+			}
+		})
+	}
+	return mux
+}
+
+func newHandler(logger *slog.Logger, database httpapi.Pinger) http.Handler {
+	admin := chi.NewRouter()
+	agent := chi.NewRouter()
+	auth := chi.NewRouter()
+	router := chi.NewRouter()
+	router.Use(web.New(logger).Middleware)
+	router.NotFound(web.NotFound)
+	router.MethodNotAllowed(web.MethodNotAllowed)
+	proxy.NewProxy(nil, logger).Register(router)
+	imageproxy.NewProxy(nil, nil, nil, nil, nil).Register(router)
+	videoproxy.New(nil, nil, nil, nil).Register(router)
+	router.Mount("/", httpapi.New(logger, database, admin, agent, auth))
+	return router
+}
+
+func newApplicationHandler(ctx context.Context, logger *slog.Logger, pool *pgxpool.Pool, cfg config.Config) (http.Handler, error) {
+	return newApplicationHandlerWithMembers(ctx, logger, pool, cfg, nil, nil, nil)
+}
+
+func newApplicationHandlerWithMembers(ctx context.Context, logger *slog.Logger, pool *pgxpool.Pool, cfg config.Config, users member.UserWriter, groups member.GroupWriter, registrars []AdminRegistrar) (http.Handler, error) {
+	settings := setting.NewService(setting.NewPostgres(pool))
+	sessions := sessionreporting.NewService(pool).WithReportingSettings(settings).WithPurgeAuthorizer(func(ctx context.Context) bool {
+		user, ok := identity.UserFromContext(ctx)
+		return ok && user.Role == "admin"
+	})
+	identities := identity.NewService(pool, settings, cfg.PublicURL).WithEmailSender(settings)
+	executions := endpoint.NewExecution(pool, identities)
+	sessions.WithHostAuthorizer(executions)
+	identities.WithUserWriter(users)
+	configurePublicLicense(identities, registrars)
+	if err := identities.EnsureInitialAdmin(ctx, cfg.InitialAdminName, cfg.InitialAdminEmail, cfg.InitialAdminPassword); err != nil && !errors.Is(err, member.ErrWriterUnavailable) {
+		return nil, fmt.Errorf("初始化管理员: %w", err)
+	}
+	charges := billing.NewService(pool)
+	if err := charges.Initialize(ctx); err != nil {
+		return nil, fmt.Errorf("初始化计费: %w", err)
+	}
+	identities.WithAccountPreserver(charges)
+	keys := apikey.NewService(apikey.NewPostgres(pool))
+	modelRepo := model.NewPostgres(pool)
+	charges.WithUsageReconciler(modelUsageReconciler{models: modelRepo, proxies: settings, responses: proxy.NewResponseReconciler()})
+	models := model.NewService(modelRepo).WithProxyResolver(settings).WithKeyAuthenticator(keys).WithGatewayURL(strings.TrimRight(cfg.PublicURL, "/") + "/v1")
+	storage, err := resource.NewS3(ctx)
+	if err != nil {
+		return nil, err
+	}
+	initCtx, cancel := context.WithTimeout(ctx, time.Minute)
+	err = storage.Init(initCtx)
+	cancel()
+	if err != nil {
+		return nil, fmt.Errorf("初始化资源 Bucket: %w", err)
+	}
+	identities.WithProfileStorage(storage)
+	settings.WithLogoStorage(storage, cfg.PublicURL)
+	identities.WithBrandingLogo(settings)
+	feedbacks := feedback.NewService(pool, storage)
+	imageRepo := imagegen.NewPostgres(pool)
+	imageInputs := imagegen.NewInputs(imageRepo, storage)
+	imageOutputs := imagegen.NewOutputs(imageRepo, storage)
+	imageService := imagegen.NewService(modelRepo, imageRepo, imageInputs, imageOutputs, charges).WithProxyResolver(settings)
+	upstreamClient := &http.Client{Timeout: 10 * time.Minute, Transport: proxy.DirectTransport()}
+	gptImages := openaiimages.New(upstreamClient)
+	gptResponses := openairesponses.New(upstreamClient)
+	seedream := volcengine.New(upstreamClient)
+	agnesImages := agnesimage.New(upstreamClient)
+	grok := xai.New(upstreamClient)
+	imageService.WithAdapter(model.ProviderOpenAIImages, imagegen.Adapter{Capabilities: gptImages.Capabilities, DefaultCapabilities: gptImages.DefaultCapabilities, Generator: gptImages, Editor: gptImages})
+	imageService.WithAdapter(model.ProviderOpenAIResponses, imagegen.Adapter{Capabilities: gptResponses.Capabilities, DefaultCapabilities: gptResponses.DefaultCapabilities, Generator: gptResponses, Editor: gptResponses})
+	imageService.WithAdapter(model.ProviderVolcengine, imagegen.Adapter{Capabilities: seedream.Capabilities, DefaultCapabilities: seedream.DefaultCapabilities, Generator: seedream, Editor: seedream})
+	imageService.WithAdapter(model.ProviderAgnes, imagegen.Adapter{Capabilities: agnesImages.Capabilities, DefaultCapabilities: agnesImages.DefaultCapabilities, Generator: agnesImages, Editor: agnesImages})
+	imageService.WithAdapter(model.ProviderXAI, imagegen.Adapter{Capabilities: grok.Capabilities, DefaultCapabilities: grok.DefaultCapabilities, Generator: grok, Editor: grok})
+	models.WithImageCapabilities(imageService.Capabilities)
+	videoService := videogen.NewService(pool, storage, charges, modelRepo).WithProxyResolver(settings)
+	store := resource.NewStore(pool)
+	rules := rule.NewService(store)
+	skills := skill.NewService(store, storage)
+	connectors := mcp.NewService(store, cfg.PublicURL).WithStorage(storage).WithProxyResolver(settings).WithNetworkSettings(settings)
+	experts := expert.NewService(store).WithStorage(storage)
+	knowledgeBases := kb.NewService(store, models).WithStorage(storage)
+
+	models.WithEmbeddingChangeHook(knowledgeBases.SyncEmbeddingModels)
+	resources := agentconfig.NewResources(store, connectors, skills)
+
+	admin := chi.NewRouter()
+	admin.Use(identities.RequireAdmin)
+	audits := audit.NewService(pool, logger)
+	admin.Use(audits.Middleware(func(r *http.Request) audit.Actor {
+		user, _ := identity.UserFromContext(r.Context())
+		return audit.Actor{ID: user.ID, Name: user.Name, Email: user.Email}
+	}))
+	audits.RegisterAdmin(admin)
+	teamcapacity.New(pool).RegisterAdmin(admin)
+	identities.RegisterAdmin(admin)
+	engineHosts := enginehost.NewService(pool).WithInstallation(cfg.PublicURL, cfg.EngineReleaseDir, cfg.EngineVersion)
+	if cfg.EngineReleaseDir != "" {
+		stateDir := cfg.RuntimeStateDir
+		if stateDir == "" {
+			stateDir = "data/runtime"
+		}
+		key, err := enginehost.EnrollmentKey(filepath.Join(stateDir, "host-signing.key"))
+		if err != nil {
+			return nil, fmt.Errorf("初始化宿主接入签名: %w", err)
+		}
+		engineHosts.WithEnrollmentKey(key)
+	}
+	environments := environment.NewService(pool).WithBilling(charges)
+	engineHosts.WithCommands(environments)
+	environments.RegisterAdmin(admin)
+	engineHosts.RegisterAdmin(admin)
+	groupService := group.NewService(pool).WithAccountPreserver(charges).WithMemberWriter(groups)
+	groupService.RegisterAdmin(admin)
+	for _, registrar := range registrars {
+		if registrar != nil {
+			registrar.RegisterAdmin(admin)
+		}
+	}
+	settings.RegisterAdmin(admin)
+	charges.RegisterAdmin(admin)
+	stats.NewService(pool).RegisterAdmin(admin)
+	keys.RegisterAdmin(admin)
+	models.RegisterAdmin(admin)
+	store.RegisterAdmin(admin)
+	store.RegisterGrants(admin, map[string]*resource.CRUD{"rule": rules, "skill": skills.CRUD, "expert": experts.CRUD, "connector": connectors.Connectors, "kb": knowledgeBases.CRUD})
+	resourceImports := resourceimport.NewService(pool, storage)
+	resourceImports.RegisterAdmin(admin)
+	rules.Register(admin)
+	skills.RegisterAdmin(admin)
+	connectors.RegisterAdmin(admin)
+	experts.RegisterAdmin(admin)
+	knowledgeBases.RegisterAdmin(admin)
+	resources.RegisterAdmin(admin)
+	feedbacks.RegisterAdmin(admin)
+	sessions.RegisterAdmin(admin)
+
+	agent := chi.NewRouter()
+	agent.Use(identities.RequireAgent)
+	environments.RegisterAgent(agent)
+	endpointStore := endpoint.NewPostgres(pool).WithDeviceAuthorizer(identities)
+	var instanceID string
+	for _, registrar := range registrars {
+		if source, ok := registrar.(InstanceIdentity); ok {
+			instanceID, err = source.InstanceID(ctx)
+			if err != nil {
+				logger.WarnContext(ctx, "读取部署实例身份失败，设计资源签发不可用", "error", err)
+				instanceID = ""
+			}
+			break
+		}
+	}
+	designs := designcatalog.NewService(pool, storage).WithAccess(designcatalog.AccessConfig{PublicURL: cfg.PublicURL, InstanceID: instanceID, PublisherID: cfg.DesignPublisherID, RespubURL: cfg.DesignRespubURL, RespubSecret: cfg.DesignRespubJWTSecret, MediaSecret: cfg.DesignMediaJWTSecret}).WithDevices(designDevices{endpointStore})
+	resourceImports.WithDesignCatalog(designs).WithKnowledgeCatalog(knowledgeBases)
+	endpoints := endpoint.NewService(endpointStore, endpointAuth{identities}, logger, cfg.PublicURL).WithMaxConnections(cfg.EndpointMaxConnections)
+	endpoints.RegisterAgent(agent)
+	endpoints.RegisterAdmin(admin)
+	identities.RegisterAgent(agent)
+	group.NewService(pool).RegisterAgent(agent)
+	keys.RegisterAgent(agent)
+	models.RegisterAgent(agent)
+	rules.RegisterAgent(agent)
+	skills.RegisterAgent(agent)
+	experts.RegisterAgent(agent)
+	knowledgeBases.RegisterAgent(agent)
+	store.RegisterSharing(agent, map[string]resource.Shareable{"model": modelRepo, "rule": rules, "skill": skills.CRUD, "connector": connectors.Connectors, "expert": experts.CRUD, "kb": knowledgeBases.CRUD})
+	settings.RegisterAgent(agent)
+	connectors.RegisterAgent(agent)
+	resources.RegisterAgent(agent)
+	charges.RegisterAgent(agent)
+	feedbacks.RegisterAgent(agent)
+	sessions.RegisterAgent(agent)
+
+	router := chi.NewRouter()
+
+	router.Use(web.New(logger).Middleware)
+	router.Use(relay.PreviewGuard(cfg.RuntimePreviewOriginTemplate))
+	router.With(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Authorization") != "" {
+				identities.RequireAgent(next).ServeHTTP(w, r)
+			} else {
+				identities.RequireBrowser(next).ServeHTTP(w, r)
+			}
+		})
+	}).Get("/api/kb/{id}/assets/{name}", knowledgeBases.ServeAsset)
+	router.NotFound(web.NotFound)
+	router.MethodNotAllowed(web.MethodNotAllowed)
+	engineHosts.Register(router)
+	designs.RegisterCatalog(router, identities.RequireAgent)
+	sessionResolver := sessionAdapter{service: sessions}
+	modelProxy := proxy.NewProxy(modelResolver{service: models}, logger).
+		WithSessionResolver(sessionResolver).
+		WithBilling(modelBilling{service: charges}).
+		WithUsageRecorder(modelUsageRecorder{models: modelRepo})
+	modelProxy.Register(router)
+	imageproxy.NewProxy(modelResolver{service: models}, keys, imageService, imageService, imageService).
+		WithSessionResolver(sessionResolver).
+		WithInputs(imageUploader{inputs: imageInputs}).WithOutputs(imageOutputs).Register(router)
+	videoproxy.New(modelResolver{service: models}, keys, sessionResolver, videoService).Register(router)
+	connectors.WithSessionResolver(sessionResolver).RegisterGateway(router, keys, toolBilling{service: charges})
+	knowledgeBases.RegisterMCP(router, keys)
+	var runtimeRelay *relay.Service
+	if cfg.RuntimeRelay {
+		runtimeRelay, err = relay.NewService(pool, identities, executions, logger, relay.Config{DesktopOrigins: cfg.RuntimeDesktopOrigins, PreviewOriginTemplate: cfg.RuntimePreviewOriginTemplate, StateDir: cfg.RuntimeStateDir, ServerID: cfg.RuntimeServerID, PublicURL: cfg.PublicURL, FilesOrigin: cfg.RuntimeFilesOrigin, SigningKeyFile: cfg.RuntimeSigningKeyFile, VerificationKeysFile: cfg.RuntimeVerificationKeysFile, MaxDevices: cfg.EndpointMaxConnections})
+		if err != nil {
+			return nil, fmt.Errorf("初始化远程执行中转: %w", err)
+		}
+		identities.WithDeviceAuthorization(runtimeRelay.Metadata()["server_id"].(string), runtimeRelay.DeviceAuthorizationKey(), executions).WithRuntimeAccess(environments)
+		environments.WithRuntime(cfg.PublicURL, runtimeRelay.Metadata()["server_id"].(string), identities).WithDisconnect(runtimeRelay.DisconnectRuntime).WithReadiness(runtimeRelay)
+		runtimeRelay.Register(router)
+		sessions.WithRuntimeStatus(runtimeRelay)
+		identities.WithRuntimeFeatures(func(ctx context.Context) (map[string]bool, error) {
+			enabled, err := sessions.IndexEnabled(ctx)
+			return map[string]bool{"session_index": enabled, "device_grant": true}, err
+		})
+		endpoints.WithRuntimeDirectory(runtimeRelay.Directory())
+		endpointStore.WithExecutionRevoker(runtimeRelay.InvalidateDevice)
+		identities.WithRuntimeMetadata(runtimeRelay.Metadata()).WithGrantRevoker(func(id string) {
+			runtimeRelay.InvalidateGrant(id)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := keys.RevokeRuntimeKeys(ctx, id); err != nil {
+				slog.WarnContext(ctx, "操作失败", "module", "app", "operation", "newApplicationHandlerWithMembers", "error", err)
+				logging.Event(ctx, logger, slog.LevelWarn, "app.operation.warn", "撤销独立执行密钥标记失败", "module", "app", "operation", "newApplicationHandlerWithMembers", "grant_id", id, "reason", "storage_unavailable")
+			}
+		})
+	}
+	router.Get("/.well-known/oauth-authorization-server", identities.OAuthMetadata)
+	router.Get("/oauth/connectors/{id}/callback", connectors.Callback)
+	router.Mount("/oauth", identities.OAuthRouter())
+	auth := audits.Middleware(func(r *http.Request) audit.Actor {
+		switch r.URL.Path {
+		case "/api/auth/v1/admin/login", "/api/auth/v1/admin/email/login":
+			return audit.Actor{Name: "未认证用户"}
+		case "/api/auth/v1/logout":
+			if user, ok := identities.BrowserUser(r); ok {
+				return audit.Actor{ID: user.ID, Name: user.Name, Email: user.Email}
+			}
+			return audit.Actor{Name: "未认证用户"}
+		default:
+			return audit.Actor{}
+		}
+	})(identities.AuthRouter())
+	if cfg.RuntimeReleaseDir != "" {
+		runtimes := runtimeartifact.New(cfg.RuntimeReleaseDir, cfg.RuntimeVersion)
+		environments.WithRuntimeCatalog(runtimes)
+		runtimes.RegisterHost(router)
+	}
+	var environmentImages *envimage.Service
+	if cfg.ImageStateDir != "" {
+		environmentImages, err = envimage.New(ctx, cfg.ImageStateDir, cfg.PublicURL)
+		if err != nil {
+			return nil, fmt.Errorf("初始化环境镜像仓库: %w", err)
+		}
+		environmentImages.WithAuthorize(engineHosts.RegistryAuthorized)
+		if cfg.ImageImportDir != "" {
+			if err := environmentImages.Import(ctx, cfg.ImageImportDir); err != nil {
+				environmentImages.Close()
+				return nil, fmt.Errorf("导入环境镜像资源: %w", err)
+			}
+		}
+		environments.WithImages(environmentImages)
+		environmentImages.RegisterAdmin(admin)
+		environmentImages.RegisterHost(router)
+	}
+	router.Mount("/", httpapi.New(logger, readiness{pool: pool, storage: storage, endpoints: endpoints}, admin, agent, auth))
+	return &applicationHandler{environments: environments, environmentImages: environmentImages, Handler: router, sessions: sessions, billing: charges, proxy: modelProxy, images: imageService, videos: videoService, inputs: imageInputs, endpoints: endpoints, relay: runtimeRelay, runtimeKeys: keys, feedback: feedbacks, connectors: connectors, knowledgeBases: knowledgeBases, resourceImports: resourceImports}, nil
+}
+
+type sessionAdapter struct{ service *sessionreporting.Service }
+
+func (a sessionAdapter) EnsureSession(ctx context.Context, userID, sessionID, parentID, groupID string) error {
+	return a.service.EnsureSession(ctx, userID, sessionID, parentID, groupID)
+}
+
+type modelResolver struct {
+	service *model.Service
+}
+
+func (r modelResolver) Resolve(ctx context.Context, credential, requestedModel string) (proxy.Target, error) {
+	target, err := r.service.Resolve(ctx, credential, requestedModel)
+	if err != nil {
+		return proxy.Target{}, err
+	}
+	return proxy.Target{
+		ModelID:       target.ID,
+		OwnershipType: target.OwnershipType,
+		UpstreamModel: target.UpstreamModelID,
+		Protocol:      string(target.Protocol),
+		UserID:        target.UserID,
+		BaseURL:       target.BaseURL,
+		ProxyURL:      target.ProxyURL,
+		APIKey:        target.APIKey,
+	}, nil
+}
+
+func (a *App) Run(ctx context.Context) error {
+	defer a.database.Close()
+	if a.environmentImages != nil {
+		defer a.environmentImages.Close()
+	}
+	workerCtx, stopWorker := context.WithCancel(context.Background())
+	sessionsDone := make(chan struct{})
+	go func() {
+		defer close(sessionsDone)
+		if a.sessions != nil {
+			a.sessions.Run(workerCtx)
+		}
+	}()
+	workerDone := make(chan struct{})
+	go func() { defer close(workerDone); a.billing.Run(workerCtx) }()
+	environmentDone := make(chan struct{})
+	go func() {
+		defer close(environmentDone)
+		if a.environments != nil {
+			a.environments.Run(workerCtx)
+		}
+	}()
+	relayDone := make(chan struct{})
+	go func() {
+		defer close(relayDone)
+		if a.relay != nil {
+			cleanupKeys := time.NewTicker(time.Minute)
+			defer cleanupKeys.Stop()
+			cleanupRelayDone := make(chan struct{})
+			go func() { defer close(cleanupRelayDone); a.relay.Run(workerCtx) }()
+			defer func() { <-cleanupRelayDone }()
+			for {
+				select {
+				case <-workerCtx.Done():
+					return
+				case <-cleanupKeys.C:
+					ctx, cancel := context.WithTimeout(workerCtx, 5*time.Second)
+					if err := a.runtimeKeys.CleanupRuntimeKeys(ctx); err != nil && workerCtx.Err() == nil {
+						if err != nil {
+							slog.WarnContext(ctx, "操作失败", "module", "app", "operation", "Run", "error", err)
+						}
+						logging.Event(ctx, slog.Default(), slog.LevelWarn, "worker.scan.failed", "回收独立执行密钥失败", "module", "app", "operation", "Run", "dependency", "storage", "reason", "storage_unavailable")
+					}
+					cancel()
+				}
+			}
+		}
+	}()
+	connectorsDone := make(chan struct{})
+	go func() {
+		defer close(connectorsDone)
+		if a.connectors != nil {
+			a.connectors.Run(workerCtx)
+		}
+	}()
+	knowledgeDone := make(chan struct{})
+	go func() {
+		defer close(knowledgeDone)
+		if a.knowledgeBases != nil {
+			a.knowledgeBases.Run(workerCtx)
+		}
+	}()
+	observeDone := make(chan struct{})
+	go func() { defer close(observeDone); a.endpoints.Observe(workerCtx) }()
+	imageDone := make(chan struct{})
+	go func() { defer close(imageDone); a.images.Run(workerCtx) }()
+	videoDone := make(chan struct{})
+	go func() { defer close(videoDone); a.videos.Run(workerCtx) }()
+	cleanupDone := make(chan struct{})
+	go func() { defer close(cleanupDone); runImageCleanup(workerCtx, a.inputs) }()
+	feedbackCleanupDone := make(chan struct{})
+	go func() {
+		defer close(feedbackCleanupDone)
+		if err := a.feedback.Run(workerCtx, time.Hour); err != nil {
+			slog.Error("操作失败", "module", "app", "operation", "Run", "error", err)
+		}
+	}()
+	uploadCleanupDone := make(chan struct{})
+	go func() {
+		defer close(uploadCleanupDone)
+		if a.resourceImports != nil {
+			a.resourceImports.Run(workerCtx)
+		}
+	}()
+	defer func() {
+		stopWorker()
+		<-workerDone
+		<-environmentDone
+		<-sessionsDone
+		<-relayDone
+		<-connectorsDone
+		<-knowledgeDone
+		<-observeDone
+		<-imageDone
+		<-videoDone
+		<-cleanupDone
+		<-feedbackCleanupDone
+		<-uploadCleanupDone
+	}()
+
+	result := make(chan error, len(a.servers))
+	for _, server := range a.servers {
+		go func() {
+			err := server.ListenAndServe()
+			if errors.Is(err, http.ErrServerClosed) {
+				err = nil
+			} else if err != nil {
+				err = fmt.Errorf("监听 %s: %w", server.Addr, err)
+			}
+			result <- err
+		}()
+	}
+
+	completed := 0
+	var runErrors []error
+	select {
+	case err := <-result:
+		runErrors = append(runErrors, err)
+		completed++
+	case <-ctx.Done():
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), a.shutdownTimeout)
+	defer cancel()
+	bridgeCtx, bridgeCancel := context.WithTimeout(shutdownCtx, 10*time.Second)
+	if a.relay != nil {
+		if err := a.relay.Shutdown(bridgeCtx); err != nil {
+			runErrors = append(runErrors, fmt.Errorf("关闭远程执行中转: %w", err))
+		}
+	}
+	if err := a.endpoints.Shutdown(bridgeCtx); err != nil {
+		runErrors = append(runErrors, fmt.Errorf("关闭端点桥接: %w", err))
+	}
+	bridgeCancel()
+	for _, server := range a.servers {
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			runErrors = append(runErrors, fmt.Errorf("关闭 %s: %w", server.Addr, err))
+		}
+	}
+
+	if err := a.proxy.Wait(shutdownCtx); err != nil {
+		runErrors = append(runErrors, err)
+	}
+	if err := a.images.Wait(shutdownCtx); err != nil {
+		runErrors = append(runErrors, err)
+	}
+	if err := a.videos.Wait(shutdownCtx); err != nil {
+		runErrors = append(runErrors, err)
+	}
+	for completed < len(a.servers) {
+		runErrors = append(runErrors, <-result)
+		completed++
+	}
+	return errors.Join(runErrors...)
+}
+
+type readiness struct {
+	pool      *pgxpool.Pool
+	storage   resource.Storage
+	endpoints *endpoint.Service
+}
+
+func (r readiness) Ping(ctx context.Context) error {
+	if r.endpoints != nil && !r.endpoints.Ready() {
+		return logging.Dependency("endpoint", errors.New("端点桥接正在停止"))
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := r.pool.Ping(ctx); err != nil {
+		return logging.Dependency("database", err)
+	}
+	return logging.Dependency("object_storage", r.storage.Ping(ctx))
+}

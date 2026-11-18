@@ -1,0 +1,198 @@
+import { lazy, Suspense, useEffect } from "react"
+import { CloudHostsPage } from "@/pages/cloud-hosts-page"
+import { DirectionProvider } from "@base-ui/react/direction-provider"
+import { useTranslation } from "react-i18next"
+import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom"
+
+import { Dashboard } from "@/components/dashboard"
+import { LicenseGuard } from "@/components/license-guard"
+import { useAuth } from "@/hooks/use-auth"
+import {
+  CONSOLE_PAGES,
+  CONSOLE_PATH,
+  CONSOLE_ROUTES,
+  DEFAULT_CONSOLE_PATH,
+  LOGIN_PATH,
+} from "@/lib/routes"
+import { ConsolePage } from "@/pages/console-page"
+import { BillingDetailsPage } from "@/pages/billing-details-page"
+import { BillingSettingsPage } from "@/pages/billing-settings-page"
+import { ExpertsPage } from "@/pages/experts-page"
+import { FeedbackPage } from "@/pages/feedback-page"
+import { KbPage } from "@/pages/kb-page"
+import { LandingPage } from "@/pages/landing-page"
+import { LoginPage } from "@/pages/login-page"
+import { DeviceAuthorizationPage } from "@/pages/device-authorization-page"
+import { ClientLoginPage } from "@/pages/client-login-page"
+import { ConversationHistoryPage } from "@/pages/conversation-history-page"
+import { ClientAnalysisPage } from "@/pages/client-analysis-page"
+import { MemberAnalysisPage } from "@/pages/member-analysis-page"
+import { TaskAnalysisPage } from "@/pages/task-analysis-page"
+import { MembersAndGroupsPage } from "@/pages/members-and-groups-page"
+import { ModelsPage } from "@/pages/models-page"
+import { OperationLogsPage } from "@/pages/operation-logs-page"
+import { OtherSettingsPage } from "@/pages/other-settings-page"
+import { OverviewPage } from "@/pages/overview-page"
+import { RealtimeStatusPage } from "@/pages/realtime-status-page"
+import { RulesPage } from "@/pages/rules-page"
+import { ResourceImportsPage } from "@/pages/resource-imports-page"
+import { SkillsPage } from "@/pages/skills-page"
+import { TaskHistoryPage } from "@/pages/task-history-page"
+import { ResourceAnalysisPage } from "@/pages/resource-analysis-page"
+import { SessionDetailPage } from "@/pages/session-detail-page"
+import { ToolsPage } from "@/pages/tools-page"
+
+const KbDocumentPage = lazy(() => import("@/pages/kb-document-page"))
+const KbDetailPage = lazy(() => import("@/pages/kb-detail-page"))
+
+function RequireAuth() {
+  const { isLoading, user } = useAuth()
+  const location = useLocation()
+
+  if (isLoading) return <PageLoading />
+
+  if (user?.role !== "admin") {
+    return (
+      <Navigate
+        to={LOGIN_PATH}
+        replace
+        state={{
+          from: `${location.pathname}${location.search}${location.hash}`,
+        }}
+      />
+    )
+  }
+
+  return (
+    <LicenseGuard>
+      <Outlet />
+    </LicenseGuard>
+  )
+}
+
+function PageLoading() {
+  return (
+    <main
+      className="flex min-h-screen items-center justify-center bg-background text-sm text-muted-foreground"
+      role="status"
+    >
+      正在检查登录状态…
+    </main>
+  )
+}
+
+export function App() {
+  const { i18n, t } = useTranslation()
+  const location = useLocation()
+
+  useEffect(() => {
+    if (location.pathname !== LOGIN_PATH && location.pathname !== "/") {
+      document.title = t("app.documentTitle")
+    }
+  }, [location.pathname, t])
+
+  return (
+    <DirectionProvider direction={i18n.dir()}>
+      <Routes>
+        <Route path="/" element={<LandingPage />} />
+        <Route path={LOGIN_PATH} element={<LoginPage />} />
+        <Route path="/device" element={<DeviceAuthorizationPage />} />
+        <Route path="/client-login" element={<ClientLoginPage />} />
+        <Route element={<RequireAuth />}>
+          <Route path={CONSOLE_PATH} element={<Dashboard />}>
+            <Route
+              index
+              element={<Navigate to={DEFAULT_CONSOLE_PATH} replace />}
+            />
+            <Route
+              path="resources/knowledge-bases"
+              element={<Navigate to={CONSOLE_ROUTES.kb} replace />}
+            />
+            {CONSOLE_PAGES.map((page) => (
+              <Route
+                key={page.path}
+                path={page.path.slice(CONSOLE_PATH.length + 1)}
+                element={
+                  page.path === CONSOLE_ROUTES.overview ? (
+                    <OverviewPage />
+                  ) : page.path === CONSOLE_ROUTES.cloudHosts ? (
+                    <CloudHostsPage />
+                  ) : page.path === CONSOLE_ROUTES.realtimeStatus ? (
+                    <RealtimeStatusPage />
+                  ) : page.path === CONSOLE_ROUTES.taskHistory ? (
+                    <TaskHistoryPage />
+                  ) : page.path === CONSOLE_ROUTES.conversationHistory ? (
+                    <ConversationHistoryPage />
+                  ) : page.path === CONSOLE_ROUTES.memberAnalysis ? (
+                    <MemberAnalysisPage />
+                  ) : page.path === CONSOLE_ROUTES.taskAnalysis ? (
+                    <TaskAnalysisPage />
+                  ) : page.path === CONSOLE_ROUTES.resourceAnalysis ? (
+                    <ResourceAnalysisPage />
+                  ) : page.path === CONSOLE_ROUTES.clientAnalysis ? (
+                    <ClientAnalysisPage />
+                  ) : page.path === CONSOLE_ROUTES.models ? (
+                    <ModelsPage />
+                  ) : page.path === CONSOLE_ROUTES.kb ? (
+                    <KbPage />
+                  ) : page.path === CONSOLE_ROUTES.rules ? (
+                    <RulesPage />
+                  ) : page.path === CONSOLE_ROUTES.resourceImports ? (
+                    <ResourceImportsPage />
+                  ) : page.path === CONSOLE_ROUTES.skills ? (
+                    <SkillsPage />
+                  ) : page.path === CONSOLE_ROUTES.experts ? (
+                    <ExpertsPage />
+                  ) : page.path === CONSOLE_ROUTES.tools ? (
+                    <ToolsPage />
+                  ) : page.path === CONSOLE_ROUTES.billingDetails ? (
+                    <BillingDetailsPage />
+                  ) : page.path === CONSOLE_ROUTES.billingSettings ? (
+                    <BillingSettingsPage />
+                  ) : page.path === CONSOLE_ROUTES.membersAndGroups ? (
+                    <MembersAndGroupsPage />
+                  ) : page.path === CONSOLE_ROUTES.feedback ? (
+                    <FeedbackPage />
+                  ) : page.path === CONSOLE_ROUTES.operationLogs ? (
+                    <OperationLogsPage />
+                  ) : page.path === CONSOLE_ROUTES.otherSettings ? (
+                    <OtherSettingsPage />
+                  ) : (
+                    <ConsolePage />
+                  )
+                }
+              />
+            ))}
+            <Route
+              path="resources/kb/:kbId"
+              element={
+                <Suspense fallback={<PageLoading />}>
+                  <KbDetailPage />
+                </Suspense>
+              }
+            />
+            <Route
+              path="resources/kb/:kbId/documents/:documentId"
+              element={
+                <Suspense fallback={<PageLoading />}>
+                  <KbDocumentPage />
+                </Suspense>
+              }
+            />
+            <Route
+              path={CONSOLE_ROUTES.sessionDetail.slice(CONSOLE_PATH.length + 1)}
+              element={<SessionDetailPage />}
+            />
+            <Route
+              path="*"
+              element={<Navigate to={DEFAULT_CONSOLE_PATH} replace />}
+            />
+          </Route>
+        </Route>
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </DirectionProvider>
+  )
+}
+
+export default App
