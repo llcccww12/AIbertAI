@@ -42,6 +42,10 @@ CONFIG
     (umask 077; mkdir -p data/design-cache data/releases)
     compose=(docker compose --env-file .env -f compose.yaml)
     "${compose[@]}" config --quiet
+    design_cache=$("${compose[@]}" config --environment | awk '/^DESIGN_PUBLIC_CACHE_DIR=/ { sub(/^[^=]*=/, ""); print }')
+    if [[ -n "$design_cache" ]]; then
+      python3 ../backend/tools/designcache/sync.py data/design-cache --verify
+    fi
     "${compose[@]}" build admin backend
     "${compose[@]}" run --rm --no-deps backend verify-host-release
     "${compose[@]}" up -d --wait --wait-timeout 90 postgres object-storage

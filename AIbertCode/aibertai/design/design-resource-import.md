@@ -13,6 +13,8 @@ python3 backend/tools/designcache/sync.py "$PWD/../.local-dev/design-cache" \
 
 在后端环境设置 `AIBERTAI_DESIGN_PUBLIC_CACHE_DIR` 为该目录。设计案例与设计系统由桌面端从登录时填写的后端读取。同步脚本由部署方运行，来源地址由 `--source` 指定。
 
+同步会检查本地 ZIP 的 SHA-256，并核对文件清单中每个路径的大小和 SHA-256。校验失败会保留原来的 `catalog.json`。部署已有或迁移来的缓存时，使用 `python3 backend/tools/designcache/sync.py <缓存目录> --verify` 执行同一检查。更新模板归档时，从同一发布版本取得 ZIP 和清单，校验通过后再上线。
+
 ## 发布包部署配置
 
 升级前按[数据库迁移说明](../backend/migrations/README.md)备份数据库与对象存储并执行迁移。

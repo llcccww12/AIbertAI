@@ -15,6 +15,7 @@ from urllib.request import HTTPRedirectHandler, build_opener
 from zipfile import BadZipFile, ZipFile
 
 PREFIX = "/api/v1/design-resources/public-cache"
+ASSET_PREFIX = PREFIX + "/assets/"
 MODES = ("image", "prototype", "deck", "video", "web", "logo")
 MEDIA = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp",
          "image/avif": "avif", "image/gif": "gif", "video/mp4": "mp4",
@@ -80,6 +81,64 @@ def should_cache_archive(body):
     except (BadZipFile, OSError, RuntimeError, ValueError):
         return False
     return True
+
+def verify_cache(root, bundle):
+    if not bundle["revision"]:
+        raise ValueError("cache catalog snapshot ID is missing")
+    failures = []
+    archives = 0
+    files = 0
+    for kind, rows in bundle["details"].items():
+        for key, detail in rows.items():
+            listing = bundle["listing"][kind][key]
+            urls = {url for row in (detail, listing)
+                    for url in (row.get("download_url"), (row.get("download") or {}).get("url"))
+                    if isinstance(url, str) and url.startswith(ASSET_PREFIX)}
+            declared = detail.get("files") or []
+            for url in sorted(urls):
+                label = f"{kind}/{key}"
+                name = url[len(ASSET_PREFIX):]
+                if not re.fullmatch(r"[a-f0-9]{64}\.zip", name):
+                    failures.append(f"{label}: invalid ZIP asset name")
+                    continue
+                if kind == "templates" and not declared:
+                    failures.append(f"{label}: downloadable template has no file manifest")
+                    continue
+                archives += 1
+                try:
+                    body = (root / "assets" / name).read_bytes()
+                    if hashlib.sha256(body).hexdigest() != name[:-4]:
+                        failures.append(f"{label}: ZIP SHA-256 mismatch")
+                        continue
+                    prefix = ("catalog-template-" if kind == "templates" else "design-system-") + key + "/"
+                    with ZipFile(BytesIO(body)) as archive:
+                        members = [entry for entry in archive.infolist() if not entry.is_dir()]
+                        wrapped = all(entry.filename.startswith(prefix) for entry in members)
+                        entries = {entry.filename[len(prefix):] if wrapped else entry.filename: entry
+                                   for entry in members}
+                        if not members or len(entries) != len(members):
+                            failures.append(f"{label}: empty ZIP or duplicate file paths")
+                            continue
+                        if not declared and (damaged := archive.testzip()) is not None:
+                            failures.append(f"{label}: damaged ZIP member {damaged}")
+                            continue
+                        for file in declared:
+                            path = file["path"]
+                            entry = entries.get(path)
+                            if entry is None and kind == "design-systems" and wrapped and path.startswith(prefix):
+                                entry = entries.get(path[len(prefix):])
+                            if entry is None:
+                                failures.append(f"{label}: missing file {path}")
+                                continue
+                            expected = file["sha256"].removeprefix("sha256:").lower()
+                            if entry.file_size != file["size"] or hashlib.sha256(archive.read(entry)).hexdigest() != expected:
+                                failures.append(f"{label}: file size or SHA-256 mismatch: {path}")
+                            files += 1
+                except (BadZipFile, OSError, RuntimeError, ValueError) as exc:
+                    failures.append(f"{label}: cannot verify ZIP: {exc}")
+    if failures:
+        raise ValueError("\n".join(failures))
+    print(f"Verified {archives} ZIP archives and {files} declared files", flush=True)
 
 def synchronize(root):
     assets = root / "assets"
@@ -162,15 +221,24 @@ def synchronize(root):
             listing[kind][key], details[kind][key] = item, detail
     bundle = {"revision": revision, "listing": listing, "details": details,
               "mode_buckets": mode_buckets}
+    verify_cache(root, bundle)
     write_atomic(root / "catalog.json", json.dumps(bundle, ensure_ascii=False).encode())
     print(f"Published {sum(map(len, listing.values()))} resources and {len(list(assets.iterdir()))} local files", flush=True)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", type=Path)
-    parser.add_argument("--source", required=True, help="Administrator-approved HTTPS catalog API base")
+    action = parser.add_mutually_exclusive_group(required=True)
+    action.add_argument("--source", help="Administrator-approved HTTPS catalog API base")
+    action.add_argument("--verify", action="store_true", help="Verify cached ZIP archives and their file manifests")
     parser.add_argument("--media-origin", action="append", default=[], help="Additional HTTPS asset origin")
     args = parser.parse_args()
+    if args.verify:
+        try:
+            verify_cache(args.directory, json.loads((args.directory / "catalog.json").read_bytes()))
+        except (KeyError, OSError, ValueError) as exc:
+            parser.exit(1, f"{exc}\n")
+        raise SystemExit(0)
     source = urlsplit(args.source)
     if source.scheme != "https" or not source.hostname or source.username or source.password or source.query or source.fragment:
         parser.error("source must be a credential-free HTTPS catalog URL")

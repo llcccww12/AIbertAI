@@ -99,7 +99,13 @@ aibertai-server migrate-resource-bucket
 export AIBERTAI_DESIGN_PUBLIC_CACHE_DIR=/srv/aibertai/design-cache
 ```
 
-保存后重启 Go 后端。通过统一入口访问 `/api/v1/design-resources/public-cache/catalog/templates?page_size=1`，应返回 HTTP 200，且 `data.items` 中有案例。再用桌面端登录同一个入口，打开「海报 → 设计案例」，检查案例和缩略图是否显示。升级时复用服务器上的缓存目录和环境配置。
+启用缓存的 Compose 部署需要 Python 3.9 或以上。启动前，`stack.sh up` 会校验缓存中的 ZIP 和清单，有错误时会列出资源和文件路径，并在构建或停服前退出。手工部署时，先对待发布目录执行相同的校验，再切换缓存或重启 Go 后端。
+
+```bash
+python3 backend/tools/designcache/sync.py /srv/aibertai/design-cache --verify
+```
+
+通过统一入口访问 `/api/v1/design-resources/public-cache/catalog/templates?page_size=1`，应返回 HTTP 200，且 `data.items` 中有案例。再用桌面端登录同一个入口，打开「海报 → 设计案例」，检查案例和缩略图是否显示。升级时复用服务器上的缓存目录和环境配置。
 
 ## 业务和验证入口
 
