@@ -48,7 +48,7 @@ func installPreparedHost(ctx context.Context, args []string, out, stderr io.Writ
 	if _, err := os.Stat("/run/systemd/system"); err != nil {
 		return errors.New("宿主需要 systemd")
 	}
-	unlock, err := control.Lock(filepath.Join(filepath.Dir(control.KeyPath), "install.lock"))
+	unlock, err := lockHostInstall(filepath.Dir(control.KeyPath))
 	if err != nil {
 		return err
 	}
@@ -121,6 +121,13 @@ func installPreparedHost(ctx context.Context, args []string, out, stderr io.Writ
 	}
 	fmt.Fprintln(out, "宿主已注册，等待后台接收预检和心跳")
 	return nil
+}
+
+func lockHostInstall(controlDir string) (func(), error) {
+	if err := os.MkdirAll(controlDir, 0700); err != nil {
+		return nil, fmt.Errorf("创建宿主控制目录: %w", err)
+	}
+	return control.Lock(filepath.Join(controlDir, "install.lock"))
 }
 
 func verifiedHostProgram(ctx context.Context, client *control.Client, version, arch, checksum string) ([]byte, error) {

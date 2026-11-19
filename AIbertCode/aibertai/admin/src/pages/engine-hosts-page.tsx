@@ -1,3 +1,4 @@
+import { copyHostCommand } from "@/lib/copy-host-command"
 import {
   CloudSection,
   CloudGrid,
@@ -297,7 +298,7 @@ export function EngineHostsPage() {
   async function copy() {
     if (!enrollment) return
     try {
-      await navigator.clipboard.writeText(enrollment.command)
+      await copyHostCommand(enrollment.command)
       setCopied(true)
       setFormError("")
     } catch {

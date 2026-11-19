@@ -3,6 +3,8 @@
 !admin/**
 !backend/
 !backend/**
+!engine/
+!engine/**
 !deploy/
 !deploy/*.Dockerfile
 **/node_modules

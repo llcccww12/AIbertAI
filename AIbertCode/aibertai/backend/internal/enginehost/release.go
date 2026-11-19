@@ -1,10 +1,13 @@
 package enginehost
 
 import (
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 
 	"aibertai.local/backend/internal/web"
@@ -47,6 +50,50 @@ func (s *Service) manifest(version, arch string) (manifest, []byte, error) {
 	}
 	return m, raw, nil
 }
+func releaseVersion(dir, explicit string) string {
+	if explicit != "" || dir == "" {
+		return explicit
+	}
+	file, err := os.Open(filepath.Join(dir, "latest.json"))
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+	var latest struct {
+		Version string `json:"version"`
+	}
+	raw, err := io.ReadAll(io.LimitReader(file, 4097))
+	if err != nil || len(raw) > 4096 || json.Unmarshal(raw, &latest) != nil ||
+		!versionPattern.MatchString(latest.Version) || latest.Version == "latest" {
+		return ""
+	}
+	return latest.Version
+}
+
+func (s *Service) VerifyRelease() error {
+	for _, arch := range []string{"amd64", "arm64"} {
+		m, _, err := s.manifest(s.version, arch)
+		if err != nil {
+			return fmt.Errorf("宿主发布件 %q (%s): %w", s.version, arch, err)
+		}
+		for filename, expected := range m.Files {
+			file, err := os.Open(filepath.Join(s.releases, s.version, arch, filename))
+			if err != nil {
+				return err
+			}
+			digest := sha256.New()
+			_, readErr := io.Copy(digest, io.LimitReader(file, 256<<20+1))
+			if err := errors.Join(readErr, file.Close()); err != nil {
+				return err
+			}
+			if hex.EncodeToString(digest.Sum(nil)) != expected {
+				return fmt.Errorf("宿主发布件 %s/%s/%s SHA-256 不匹配", s.version, arch, filename)
+			}
+		}
+	}
+	return nil
+}
+
 func (s *Service) script(w http.ResponseWriter, r *http.Request) {
 	s.bootstrapScript(w, r, false)
 }

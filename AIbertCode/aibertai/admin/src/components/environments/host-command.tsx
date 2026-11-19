@@ -1,3 +1,4 @@
+import { copyHostCommand } from "@/lib/copy-host-command"
 import { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { useAuth } from "@/hooks/use-auth"
@@ -71,7 +72,7 @@ export function HostCommand({
   async function copy() {
     if (!command || expired || !current) return
     try {
-      await navigator.clipboard.writeText(command.command)
+      await copyHostCommand(command.command)
       setError("")
       showToast({ status: "success", title: text("copied") })
     } catch {

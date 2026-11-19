@@ -1,3 +1,4 @@
+import { copyHostCommand } from "@/lib/copy-host-command"
 import { useId, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { api } from "@/lib/api"
@@ -145,7 +146,7 @@ export function HostUpgrade({
     setError("")
     setNotice("")
     try {
-      await navigator.clipboard.writeText(command)
+      await copyHostCommand(command)
       showToast({ status: "success", title: text("copied") })
     } catch {
       setError(text("copyFailed"))
