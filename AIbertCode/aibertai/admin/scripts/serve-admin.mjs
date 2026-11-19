@@ -62,6 +62,14 @@ function proxyHTTP(req, res) {
   req.pipe(upstream)
 }
 
+async function statFile(file) {
+  try {
+    return await stat(file)
+  } catch (error) {
+    if (error.code !== "ENOENT" && error.code !== "ENOTDIR") throw error
+  }
+}
+
 async function serveStatic(req, res) {
   const pathname = decodeURIComponent(req.url.split("?")[0])
   let file = resolve(dist, "." + pathname)
@@ -69,14 +77,14 @@ async function serveStatic(req, res) {
     res.writeHead(404).end()
     return
   }
-  let info = await stat(file, { throwIfNoEntry: false })
+  let info = await statFile(file)
   if (info?.isDirectory()) {
     file = resolve(file, "index.html")
-    info = await stat(file, { throwIfNoEntry: false })
+    info = await statFile(file)
   }
   if (!info?.isFile()) {
     file = resolve(dist, "index.html")
-    if (!(await stat(file, { throwIfNoEntry: false }))?.isFile()) {
+    if (!(await statFile(file))?.isFile()) {
       res.writeHead(404).end()
       return
     }

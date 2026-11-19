@@ -44,6 +44,8 @@ jobs:
           def get(path):
               with urllib.request.urlopen(base + path, timeout=5) as response:
                   return json.load(response)
+          with urllib.request.urlopen(base + "/console/models", timeout=5) as response:
+              assert response.headers.get_content_type() == "text/html"
           assert get("/readyz") == {"status": "ok"}
           assert get("/.well-known/oauth-authorization-server")["issuer"] == base
           payload = json.dumps({"email": os.environ["INITIAL_ADMIN_EMAIL"],
