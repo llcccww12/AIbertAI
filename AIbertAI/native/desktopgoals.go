@@ -102,10 +102,33 @@ func goalModelTokens(usage modelUsage) (int64, bool) {
 	return min(*usage.Input+*usage.Output, maxGoalBudget), true
 }
 
+// A checkpoint belongs to one unfinished turn. Keep the Responses replay items
+// separate from the Chat Completions wire representation.
+type goalReplayMessage struct {
+	toolConversationMessage
+	Items []json.RawMessage `json:"response_items,omitempty"`
+}
+
+type goalCheckpoint struct {
+	Tail     []goalReplayMessage `json:"tail,omitempty"`
+	Runs     []workspaceToolRun  `json:"runs,omitempty"`
+	Usage    modelUsage          `json:"usage"`
+	Progress string              `json:"progress,omitempty"`
+	Rounds   int                 `json:"rounds,omitempty"`
+	Pending  *goalReplayMessage  `json:"pending,omitempty"`
+	Unknown  []modelToolUse      `json:"unknown,omitempty"`
+}
+
+const goalContinuePrompt = "Continue the current goal from the recorded progress and tool results. Do not repeat work already completed. Take the next useful step and keep the same completion rule."
+const maxBackgroundGoalRounds = 64
+const maxBackgroundGoalTools = 24
+
 type desktopGoalRun struct {
-	remaining int64
-	active    func() bool
-	outcome   string
+	checkpoint *goalCheckpoint
+	save       func(goalCheckpoint) error
+	remaining  int64
+	active     func() bool
+	outcome    string
 }
 
 func (g *desktopGoalRun) stop(usage modelUsage) bool {
