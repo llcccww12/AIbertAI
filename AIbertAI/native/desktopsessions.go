@@ -188,8 +188,10 @@ func readDesktopSession(root *os.Root, id string) (acpSession, error) {
 	operations := make(map[string]struct{}, len(session.Turns))
 	for i, turn := range session.Turns {
 		_, duplicate := operations[turn.Operation]
+		unfinishedGoal := i == len(session.Turns)-1 && session.GoalRun == turn.Operation && turn.GoalCheckpoint != nil &&
+			session.Goal != nil && session.Goal.Current
 		if !validUUID(turn.Operation) || turn.Started.IsZero() ||
-			(turn.Ended.IsZero() && session.State != "running") || (!turn.Ended.IsZero() && turn.Ended.Before(turn.Started)) ||
+			(turn.Ended.IsZero() && session.State != "running" && !unfinishedGoal) || (!turn.Ended.IsZero() && turn.Ended.Before(turn.Started)) ||
 			(i < len(session.Turns)-1 && !turn.Acked) || (turn.Acked && turn.Ended.IsZero()) || duplicate {
 			return acpSession{}, errors.New("invalid_desktop_turn_snapshot")
 		}
@@ -293,13 +295,32 @@ func (l *acpLive) restoreDesktopSessions() error {
 	// its result. Close the interrupted turn without replaying the action.
 	for _, session := range l.sessions {
 		activeGoal := session.Goal != nil && session.Goal.Current && session.Goal.Status == "active"
+		if session.GoalRun != "" && session.Goal != nil && session.Goal.Current {
+			if n := len(session.Turns); n > 0 && session.Turns[n-1].Operation == session.GoalRun {
+				saved := session.Turns[n-1].GoalCheckpoint
+				if saved != nil && (saved.Pending != nil || !activeGoal) {
+					goal := *session.Goal
+					if saved.Pending != nil {
+						goal.Status, goal.Reason, goal.Uncertain = "paused", "resume_confirmation", true
+						goal.Version++
+					}
+					session.Goal, session.State = &goal, "idle"
+					if err := l.save(session); err != nil {
+						return err
+					}
+				}
+			}
+			continue
+		}
 		if session.State != "running" && !activeGoal {
 			continue
 		}
 		if session.State == "running" {
+			session.GoalRun = ""
 			session.Turns = slices.Clone(session.Turns)
 			last := &session.Turns[len(session.Turns)-1]
 			if last.Ended.IsZero() {
+				materializeGoalCheckpoint(last)
 				last.Failed, last.Ended = true, time.Now().UTC()
 				if last.Ended.Before(last.Started) {
 					last.Ended = last.Started

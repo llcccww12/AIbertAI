@@ -171,24 +171,87 @@ func (c *client) completeWorkspaceToolTurn(ctx context.Context, protocol, key, s
 	seen := make(map[string]bool, maxCalls)
 	checkpoints := 0
 	lastProgress := "目标已暂停。"
+	if goal != nil && goal.save != nil {
+		lastProgress = ""
+	}
+	var checkpoint goalCheckpoint
+	var recovered []workspaceToolRun
+	promptEnd := len(talk)
+	saveProgress := func(pending *toolConversationMessage) error {
+		if goal == nil || goal.save == nil {
+			return nil
+		}
+		checkpoint.Runs, checkpoint.Usage, checkpoint.Progress = runs, usage, lastProgress
+		checkpoint.Pending = nil
+		if pending != nil {
+			checkpoint.Pending = &goalReplayMessage{*pending, pending.ResponseItems}
+		}
+		checkpoint.Tail = make([]goalReplayMessage, 0, len(talk)-promptEnd)
+		for _, message := range talk[promptEnd:] {
+			checkpoint.Tail = append(checkpoint.Tail, goalReplayMessage{message, message.ResponseItems})
+		}
+		return goal.save(checkpoint)
+	}
+	if goal != nil && goal.checkpoint != nil {
+		checkpoint = *goal.checkpoint
+		checkpoint.Unknown = slices.Clone(checkpoint.Unknown)
+		runs, usage, lastProgress = slices.Clone(checkpoint.Runs), checkpoint.Usage, checkpoint.Progress
+		recovered = slices.Clone(runs)
+		for _, saved := range checkpoint.Tail {
+			message := saved.toolConversationMessage
+			message.ResponseItems = saved.Items
+			talk = append(talk, message)
+			for _, invocation := range message.ToolCalls {
+				seen[invocation.ID] = true
+			}
+		}
+		if pending := checkpoint.Pending; pending != nil {
+			if len(pending.ToolCalls) != 1 {
+				return lastProgress, usage, runs, errors.New("invalid_goal_checkpoint")
+			}
+			message := pending.toolConversationMessage
+			message.ResponseItems = pending.Items
+			invocation := message.ToolCalls[0]
+			seen[invocation.ID] = true
+			checkpoint.Unknown = append(checkpoint.Unknown, invocation)
+			status := "This tool call was interrupted after submission and its outcome is unknown. Do not repeat it. Verify its result independently before proceeding."
+			talk = append(talk, message, toolConversationMessage{Role: "tool", Content: &status, ToolCallID: invocation.ID})
+			if err := saveProgress(nil); err != nil {
+				return lastProgress, usage, runs, err
+			}
+		}
+		if len(runs) >= maxCalls {
+			choice = ""
+		}
+	}
 	for roundIndex := 0; ; roundIndex++ {
 		if goal != nil && !goal.active() {
 			goal.outcome = "user_paused"
 			return lastProgress, usage, runs, nil
 		}
+		if goal != nil && goal.save != nil && checkpoint.Rounds >= maxBackgroundGoalRounds {
+			goal.outcome = "auto_turn_budget"
+			return lastProgress, usage, runs, nil
+		}
 		nextUsage, answer, finish, err := round(talk, choice)
-		if roundIndex == 0 {
-			usage = nextUsage
-		} else {
-			usage = addToolUsage(usage, nextUsage)
+		if err == nil || nextUsage.Input != nil || nextUsage.Output != nil {
+			if roundIndex == 0 && checkpoint.Rounds == 0 {
+				usage = nextUsage
+			} else {
+				usage = addToolUsage(usage, nextUsage)
+			}
 		}
 		partial := ""
 		if delta != nil && answer.Content != nil {
 			partial = *answer.Content
 		}
 		if err != nil {
+			if goal != nil && goal.save != nil {
+				return lastProgress, usage, runs, err
+			}
 			return partial, usage, runs, err
 		}
+		checkpoint.Rounds++
 		if choice != "required" && finish == "stop" && len(answer.ToolCalls) == 0 && answer.Content != nil && *answer.Content != "" {
 			progress := strings.TrimSpace(*answer.Content)
 			if goal == nil {
@@ -208,13 +271,16 @@ func (c *client) completeWorkspaceToolTurn(ctx context.Context, protocol, key, s
 				return lastProgress, usage, runs, nil
 			}
 			checkpoints++
-			if checkpoints >= 3 {
+			if goal.save == nil && checkpoints >= 3 {
 				goal.outcome = "auto_turn_budget"
 				return lastProgress, usage, runs, nil
 			}
-			next := "Continue the current goal from your progress. Take the next useful step and keep the same completion rule."
+			next := goalContinuePrompt
 			answer.Role = "assistant"
 			talk = append(talk, answer, toolConversationMessage{Role: "user", Content: &next})
+			if err := saveProgress(nil); err != nil {
+				return lastProgress, usage, runs, err
+			}
 			continue
 		}
 		if goal != nil && goal.stop(usage) {
@@ -233,8 +299,44 @@ func (c *client) completeWorkspaceToolTurn(ctx context.Context, protocol, key, s
 		}
 		seen[invocation.ID] = true
 		answer.Role = "assistant"
+		if goal != nil && goal.save != nil {
+			var recorded *string
+			for _, unknown := range checkpoint.Unknown {
+				if sameGoalAction(unknown, invocation) {
+					recorded = new("The outcome of this submitted action is unknown. The runtime did not submit it again.")
+					break
+				}
+			}
+			if recorded == nil && !safeGoalRead(invocation.Function.Name) {
+				for _, previous := range recovered {
+					if previous.Call != nil && previous.Report.Failed == 0 && sameGoalAction(*previous.Call, invocation) {
+						recorded = &previous.Output
+						break
+					}
+				}
+			}
+			if recorded != nil {
+				talk = append(talk, answer, toolConversationMessage{Role: "tool", Content: recorded, ToolCallID: invocation.ID})
+				if err := saveProgress(nil); err != nil {
+					return lastProgress, usage, runs, err
+				}
+				continue
+			}
+			var pending *toolConversationMessage
+			if !safeGoalRead(invocation.Function.Name) {
+				pending = &answer
+			}
+			if err := saveProgress(pending); err != nil {
+				return lastProgress, usage, runs, err
+			}
+		}
 		started := time.Now()
 		value, err := call(answer, args, len(runs))
+		if err != nil && goal != nil && goal.save != nil && !safeGoalRead(invocation.Function.Name) &&
+			(ctx.Err() != nil || strings.Contains(err.Error(), "already_submitted")) {
+			goal.outcome = "resume_confirmation"
+			return lastProgress, usage, runs, err
+		}
 		fact := reportedTool{Category: "builtin", Name: invocation.Function.Name, ResourceID: invocation.Function.Name,
 			Calls: 1, DurationMS: time.Since(started).Milliseconds()}
 		if args.Connector != nil {
@@ -250,10 +352,22 @@ func (c *client) completeWorkspaceToolTurn(ctx context.Context, protocol, key, s
 			}
 		}
 		runs = append(runs, workspaceToolRun{Preamble: partial, Call: &invocation, Report: fact, Output: value, ResponseItems: answer.ResponseItems})
+		if err != nil && (err.Error() == "tool_permission_cancelled" || err.Error() == "tool_approval_unavailable") && goal != nil && goal.save != nil {
+			goal.outcome = "permission_denied"
+			// No action happened. Resume from the same model checkpoint when an operator is available.
+			runs = runs[:len(runs)-1]
+			if saveErr := saveProgress(nil); saveErr != nil {
+				return lastProgress, usage, runs, saveErr
+			}
+			return lastProgress, usage, runs, err
+		}
+		talk = append(talk, answer, toolConversationMessage{Role: "tool", Content: &value, ToolCallID: invocation.ID})
+		if saveErr := saveProgress(nil); saveErr != nil {
+			return lastProgress, usage, runs, saveErr
+		}
 		if err != nil && (requireTool || ctx.Err() != nil || err.Error() == "tool_permission_cancelled" || err.Error() == "tool_approval_unavailable") {
 			return "", usage, runs, err
 		}
-		talk = append(talk, answer, toolConversationMessage{Role: "tool", Content: &value, ToolCallID: invocation.ID})
 		choice = "auto"
 		if len(runs) == maxCalls {
 			choice = ""

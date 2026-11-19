@@ -52,6 +52,7 @@ type acpSession struct {
 	ContextSummary       *desktopContextSummary `json:"contextSummary,omitempty"`
 	Goal                 *desktopGoal           `json:"goal,omitempty"`
 	LastGoalRequest      string                 `json:"lastGoalRequest,omitempty"`
+	GoalRun              string                 `json:"goalRun,omitempty"`
 	ID                   string                 `json:"sessionId"`
 	CWD                  string                 `json:"cwd"`
 	Workspace            string                 `json:"workspace,omitempty"`
@@ -238,6 +239,10 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 	}
 	defer ws.CloseNow()
 	ws.SetReadLimit(64 << 10)
+	viewer := h.goals != nil && h.local != nil && r.Header.Get("Origin") == h.local.origin
+	if viewer {
+		defer h.goals.removeViewer(ws)
+	}
 	initialized := false
 	for {
 		var in struct {
@@ -245,11 +250,19 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 			ID      json.RawMessage `json:"id"`
 			Method  string          `json:"method"`
 			Params  json.RawMessage `json:"params"`
+			Result  json.RawMessage `json:"result"`
+			Error   json.RawMessage `json:"error"`
 		}
 		if wsjson.Read(ctx, ws, &in) != nil {
 			return
 		}
-		if in.Version != "2.0" || in.Method == "" || len(in.ID) == 0 || string(in.ID) == "null" {
+		if in.Version != "2.0" || len(in.ID) == 0 || string(in.ID) == "null" {
+			continue
+		}
+		if in.Method == "" {
+			if initialized && viewer {
+				h.goals.respond(ws, in.ID, in.Result, in.Error)
+			}
 			continue
 		}
 		if h.trace && len(in.Method) <= 128 {
@@ -457,7 +470,10 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 					if h.local == nil || h.live == nil || h.acpScope(r, "session:control") != nil {
 						fault = errRelayAccess
 					} else {
-						result, fault = h.live.desktopGoalAction(in.Params)
+						result, fault = h.live.saveGoalAction(in.Params, h.goals != nil)
+						if fault == nil && h.goals != nil {
+							h.goals.schedule()
+						}
 					}
 				case "_monkeyai/session/rename", "_monkeyai/session/flags":
 					if h.local == nil || h.live == nil || h.acpScope(r, "session:control") != nil {
@@ -602,11 +618,14 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 		if wsjson.Write(ctx, ws, reply) != nil {
 			return
 		}
+		if viewer && initialized && in.Method == "initialize" {
+			h.goals.addViewer(ws)
+		}
 	}
 }
 
 func (row acpSession) workspaceMetadata() map[string]any {
-	return map[string]any{"cwd": row.CWD, "model": row.Model, "thinking": row.Thinking, "mode": row.permissionMode(), "mediaImageModelId": row.MediaImageModelID, "mediaVideoModelId": row.MediaVideoModelID, "expertId": row.ExpertID, "configurationRevision": row.ResourceRevision, "isDefaultWorkspace": row.Workspace != "selected", "projectId": row.ProjectID, "status": row.State, "goalModeAvailable": row.Workspace != "", "goal": row.Goal,
+	return map[string]any{"cwd": row.CWD, "model": row.Model, "thinking": row.Thinking, "mode": row.permissionMode(), "mediaImageModelId": row.MediaImageModelID, "mediaVideoModelId": row.MediaVideoModelID, "expertId": row.ExpertID, "configurationRevision": row.ResourceRevision, "isDefaultWorkspace": row.Workspace != "selected", "projectId": row.ProjectID, "status": row.State, "goalModeAvailable": row.Workspace != "", "goal": goalView(row),
 		"titleSource": row.titleSource(), "pinned": row.Pinned, "archivedAt": row.ArchivedAt, "readAt": row.ReadAt}
 }
 
