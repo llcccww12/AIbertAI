@@ -131,25 +131,37 @@ func newApp(ctx context.Context, cfg config.Config, logger *slog.Logger, factory
 		return nil, err
 	}
 
-	return &App{
-		servers: []*http.Server{
-			{
-				Addr:              cfg.Addr,
-				Handler:           handler,
-				ReadHeaderTimeout: 5 * time.Second,
-				IdleTimeout:       2 * time.Minute,
-				MaxHeaderBytes:    1 << 20,
-				ErrorLog:          logging.ErrorLog(logger),
-			},
-			{
-				Addr:              cfg.PprofAddr,
-				Handler:           debugHandler(handler.(*applicationHandler).relay),
-				ReadHeaderTimeout: 5 * time.Second,
-				IdleTimeout:       2 * time.Minute,
-				MaxHeaderBytes:    1 << 20,
-				ErrorLog:          logging.ErrorLog(logger),
-			},
+	servers := []*http.Server{
+		{
+			Addr:              cfg.Addr,
+			Handler:           handler,
+			ReadHeaderTimeout: 5 * time.Second,
+			IdleTimeout:       2 * time.Minute,
+			MaxHeaderBytes:    1 << 20,
+			ErrorLog:          logging.ErrorLog(logger),
 		},
+		{
+			Addr:              cfg.PprofAddr,
+			Handler:           debugHandler(handler.(*applicationHandler).relay),
+			ReadHeaderTimeout: 5 * time.Second,
+			IdleTimeout:       2 * time.Minute,
+			MaxHeaderBytes:    1 << 20,
+			ErrorLog:          logging.ErrorLog(logger),
+		},
+	}
+	if cfg.CloudBackendGateway != "" {
+		gateway, err := cloudGateway(cfg.CloudBackendGateway, cfg.PublicURL, handler)
+		if err != nil {
+			pool.Close()
+			if images := handler.(*applicationHandler).environmentImages; images != nil {
+				images.Close()
+			}
+			return nil, err
+		}
+		servers = append(servers, gateway)
+	}
+	return &App{
+		servers:           servers,
 		billing:           handler.(*applicationHandler).billing,
 		sessions:          handler.(*applicationHandler).sessions,
 		proxy:             handler.(*applicationHandler).proxy,
@@ -436,7 +448,11 @@ func newApplicationHandlerWithMembers(ctx context.Context, logger *slog.Logger, 
 	}
 	var environmentImages *envimage.Service
 	if cfg.ImageStateDir != "" {
-		environmentImages, err = envimage.New(ctx, cfg.ImageStateDir, cfg.PublicURL)
+		registryURL, err := cloudImageRegistryURL(cfg.CloudImageRegistry, cfg.Addr, cfg.PublicURL)
+		if err != nil {
+			return nil, err
+		}
+		environmentImages, err = envimage.New(ctx, cfg.ImageStateDir, registryURL)
 		if err != nil {
 			return nil, fmt.Errorf("初始化环境镜像仓库: %w", err)
 		}

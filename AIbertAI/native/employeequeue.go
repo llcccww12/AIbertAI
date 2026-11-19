@@ -284,7 +284,7 @@ func (h *relaySessionHost) handleQueue(ctx context.Context, ws *websocket.Conn, 
 		live.mu.Unlock()
 		return nil, errors.New("session_write_failed")
 	}
-	if p.Action == "sendNow" {
+	if p.Action == "sendNow" && row.GoalRun == "" {
 		if cancel := live.activeTurns[row.ID]; cancel != nil {
 			cancel()
 		}
@@ -301,13 +301,13 @@ func (h *relaySessionHost) handleQueue(ctx context.Context, ws *websocket.Conn, 
 
 // claimQueue is called with the live session lock held.
 func (l *acpLive) claimQueue(row acpSession) bool {
-	if l.restarting || l.queueWorkers[row.ID] || row.State == "running" || row.Queue.Paused || len(row.Queue.Messages) == 0 || row.Queue.Messages[0].editID != "" {
+	if l.restarting || l.queueWorkers[row.ID] != nil || row.State == "running" && row.GoalRun == "" || row.Queue.Paused || len(row.Queue.Messages) == 0 || row.Queue.Messages[0].editID != "" {
 		return false
 	}
 	if l.queueWorkers == nil {
-		l.queueWorkers = make(map[string]bool)
+		l.queueWorkers = make(map[string]chan struct{})
 	}
-	l.queueWorkers[row.ID] = true
+	l.queueWorkers[row.ID] = make(chan struct{}, 1)
 	return true
 }
 
@@ -321,6 +321,26 @@ func (h *relaySessionHost) runSessionQueue(ctx context.Context, ws *websocket.Co
 			live.mu.Unlock()
 			return initial, nil
 		}
+		if row.GoalRun != "" || row.State == "running" {
+			wake := live.queueWorkers[id]
+			live.mu.Unlock()
+			// The goal owns the session. Acknowledge the persisted message before waiting.
+			if accepted != nil {
+				err := accepted(row)
+				accepted = nil
+				if err != nil {
+					live.mu.Lock()
+					delete(live.queueWorkers, id)
+					live.mu.Unlock()
+					return nil, err
+				}
+			}
+			select {
+			case <-ctx.Done():
+			case <-wake:
+			}
+			continue
+		}
 		message := row.Queue.Messages[0]
 		live.mu.Unlock()
 
@@ -333,7 +353,7 @@ func (h *relaySessionHost) runSessionQueue(ctx context.Context, ws *websocket.Co
 			return notifySessionQueue(ctx, ws, current)
 		}
 		_, err := h.promptACP(ctx, ws, r, id, message.OperationID, message.ID, message.Text, onStart, &message, message.Attachments...)
-		if errors.Is(err, errSessionQueueChanged) {
+		if errors.Is(err, errSessionQueueChanged) || errors.Is(err, errGoalSessionBusy) {
 			continue
 		}
 		if err != nil {

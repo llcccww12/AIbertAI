@@ -12,6 +12,7 @@ import (
 
 	"aibertai.local/backend/internal/app"
 	"aibertai.local/backend/internal/config"
+	"aibertai.local/backend/internal/enginehost"
 	"aibertai.local/backend/internal/envimage"
 	"aibertai.local/backend/internal/resource"
 	"aibertai.local/backend/logging"
@@ -23,6 +24,15 @@ func main() {
 }
 
 func mainCode() int {
+	if len(os.Args) == 2 && os.Args[1] == "verify-host-release" {
+		hosts := enginehost.NewService(nil).WithInstallation("", os.Getenv("AIBERTAI_ENGINE_RELEASE_DIR"), os.Getenv("AIBERTAI_ENGINE_VERSION"))
+		if err := hosts.VerifyRelease(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		fmt.Fprintln(os.Stdout, "AMD64 和 ARM64 宿主发布件校验通过")
+		return 0
+	}
 	if len(os.Args) > 1 && os.Args[1] == "migrate-resource-bucket" {
 		flags := flag.NewFlagSet("migrate-resource-bucket", flag.ContinueOnError)
 		rollback := flags.Bool("rollback", false, "将新版资源同步回旧桶")

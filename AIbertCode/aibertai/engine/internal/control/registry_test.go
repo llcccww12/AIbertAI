@@ -44,3 +44,21 @@ func TestRegistryAuthIsScopedAndShortLived(t *testing.T) {
 		}
 	}
 }
+
+func TestRegistryAuthForLoopback(t *testing.T) {
+	_, key, _ := ed25519.GenerateKey(rand.Reader)
+	client, _ := New("http://192.168.20.2:5173", key)
+	const valid = "127.0.0.1:8080/environments/cloud-base:bookworm-1"
+	if _, err := client.RegistryAuthForLoopback("host", valid, "127.0.0.1:8080"); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range [][2]string{
+		{valid, "127.0.0.1:8081"},
+		{valid, "192.168.20.2:5173"},
+		{"127.0.0.1:8080/other/cloud:one", "127.0.0.1:8080"},
+	} {
+		if _, err := client.RegistryAuthForLoopback("host", tc[0], tc[1]); err == nil {
+			t.Fatalf("accepted an unauthorized registry: %v", tc)
+		}
+	}
+}

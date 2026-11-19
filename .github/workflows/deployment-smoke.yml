@@ -8,6 +8,7 @@ on:
       - "AIbertCode/aibertai/admin/**"
       - "AIbertCode/aibertai/backend/**"
       - "AIbertCode/aibertai/deploy/**"
+      - "AIbertCode/aibertai/engine/**"
   push:
     branches: [main]
     paths:
@@ -16,6 +17,7 @@ on:
       - "AIbertCode/aibertai/admin/**"
       - "AIbertCode/aibertai/backend/**"
       - "AIbertCode/aibertai/deploy/**"
+      - "AIbertCode/aibertai/engine/**"
 
 permissions:
   contents: read
@@ -39,7 +41,7 @@ jobs:
           . deploy/.env
           PUBLIC_URL="$PUBLIC_URL" INITIAL_ADMIN_EMAIL="$INITIAL_ADMIN_EMAIL" \
             INITIAL_ADMIN_PASSWORD="$INITIAL_ADMIN_PASSWORD" python3 - <<'PY'
-          import json, os, urllib.request
+          import hashlib, http.cookiejar, json, os, urllib.request
           base = os.environ["PUBLIC_URL"]
           def get(path):
               with urllib.request.urlopen(base + path, timeout=5) as response:
@@ -52,11 +54,28 @@ jobs:
                                 "password": os.environ["INITIAL_ADMIN_PASSWORD"]}).encode()
           request = urllib.request.Request(base + "/api/auth/v1/admin/login", data=payload,
                                            headers={"Content-Type": "application/json", "Origin": base})
-          with urllib.request.urlopen(request, timeout=5) as response:
+          client = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+          with client.open(request, timeout=5) as response:
               assert json.load(response)["email"] == os.environ["INITIAL_ADMIN_EMAIL"]
+          enroll = urllib.request.Request(base + "/api/admin/v1/engine-host-enrollments", data=b"{}",
+                                          headers={"Content-Type": "application/json", "Origin": base})
+          with client.open(enroll, timeout=5) as response:
+              assert response.status == 201
+              enrollment = json.load(response)
+          assert "/api/host/v1/install.sh?token=" in enrollment["command"]
+          with client.open(base + "/api/host/v1/install.sh", timeout=5) as response:
+              script = response.read()
+              assert b"x86_64|amd64)" in script and b"aarch64|arm64)" in script
+          for arch in ("amd64", "arm64"):
+              prefix = "/api/host/v1/releases/" + enrollment["version"] + "/" + arch + "/"
+              manifest = get(prefix + "manifest.json")
+              assert manifest["architecture"] == arch and manifest["version"] == enrollment["version"]
+              for filename, expected in manifest["files"].items():
+                  with client.open(base + prefix + filename, timeout=15) as response:
+                      assert hashlib.sha256(response.read()).hexdigest() == expected
           PY
           docker run --rm -v "$PWD/admin:/src:ro" node:22.23.3-bookworm-slim \
-            node --test /src/test/serve-admin.test.mjs
+            node --test /src/test/serve-admin.test.mjs /src/test/copy-host-command.test.mjs
       - name: Collect startup diagnostics
         if: failure()
         run: docker compose --env-file deploy/.env -f deploy/compose.yaml ps

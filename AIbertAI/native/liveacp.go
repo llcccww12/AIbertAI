@@ -36,7 +36,7 @@ type acpLive struct {
 	operations     map[string]string
 	sessions       map[string]acpSession
 	activeTurns    map[string]context.CancelFunc
-	queueWorkers   map[string]bool
+	queueWorkers   map[string]chan struct{}
 	compacting     map[string]bool
 	restarting     bool
 }
@@ -53,6 +53,7 @@ type acpSession struct {
 	ContextSummary       *desktopContextSummary `json:"contextSummary,omitempty"`
 	Goal                 *desktopGoal           `json:"goal,omitempty"`
 	LastGoalRequest      string                 `json:"lastGoalRequest,omitempty"`
+	GoalRun              string                 `json:"goalRun,omitempty"`
 	ID                   string                 `json:"sessionId"`
 	CWD                  string                 `json:"cwd"`
 	Workspace            string                 `json:"workspace,omitempty"`
@@ -86,6 +87,12 @@ func (l *acpLive) save(session acpSession) error {
 		}
 		session.archivedTurns = archived
 		l.sessions[session.ID] = session
+		if wake := l.queueWorkers[session.ID]; wake != nil {
+			select {
+			case wake <- struct{}{}:
+			default:
+			}
+		}
 		return nil
 	}
 	file, err := os.CreateTemp(l.dir, "session-*.tmp")
@@ -231,10 +238,8 @@ type acpPermissionReply struct {
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params"`
 	JSONRPC string          `json:"jsonrpc"`
-	Result  struct {
-		Outcome struct{ Outcome, OptionID string }
-	} `json:"result"`
-	Error json.RawMessage `json:"error"`
+	Result  json.RawMessage `json:"result"`
+	Error   json.RawMessage `json:"error"`
 }
 
 type acpPermissionWaiter struct {
@@ -266,6 +271,10 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 	}
 	defer ws.CloseNow()
 	ws.SetReadLimit(64 << 10)
+	viewer := h.goals != nil && h.local != nil && r.Header.Get("Origin") == h.local.origin
+	if viewer {
+		defer h.goals.removeViewer(ws)
+	}
 	initialized := false
 	permissions := new(sync.Map)
 	ctx = context.WithValue(ctx, acpPermissionContextKey{}, permissions)
@@ -283,6 +292,9 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 				if wait, ok := permissions.LoadAndDelete(permissionID); ok {
 					wait.(*acpPermissionWaiter).resolve(in)
 				}
+			}
+			if initialized && viewer {
+				h.goals.respond(ws, in.ID, in.Result, in.Error)
 			}
 			continue
 		}
@@ -504,7 +516,10 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 					if h.local == nil || h.live == nil || h.acpScope(r, "session:control") != nil {
 						fault = errRelayAccess
 					} else {
-						result, fault = h.live.desktopGoalAction(in.Params)
+						result, fault = h.live.saveGoalAction(in.Params, h.goals != nil)
+						if fault == nil && h.goals != nil {
+							h.goals.schedule()
+						}
 					}
 				case "_monkeyai/session/rename", "_monkeyai/session/flags":
 					if h.local == nil || h.live == nil || h.acpScope(r, "session:control") != nil {
@@ -668,16 +683,17 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if fault == nil && trusted != nil {
-			var allowed acpPermissionReply
-			allowed.Result.Outcome.Outcome, allowed.Result.Outcome.OptionID = "selected", "allow"
-			trusted.resolve(allowed)
+			trusted.resolve(acpPermissionReply{Result: json.RawMessage(`{"outcome":{"outcome":"selected","optionId":"allow"}}`)})
+		}
+		if viewer && initialized && in.Method == "initialize" {
+			h.goals.addViewer(ws)
 		}
 	}
 }
 
 func (row acpSession) workspaceMetadata() map[string]any {
 	title, source := row.sessionTitle()
-	return map[string]any{"cwd": row.CWD, "model": row.Model, "thinking": row.Thinking, "mode": row.permissionMode(), "mediaImageModelId": row.MediaImageModelID, "mediaVideoModelId": row.MediaVideoModelID, "expertId": row.ExpertID, "configurationRevision": row.ResourceRevision, "isDefaultWorkspace": row.Workspace != "selected", "projectId": row.ProjectID, "status": row.State, "goalModeAvailable": row.Workspace != "", "goal": row.Goal,
+	return map[string]any{"cwd": row.CWD, "model": row.Model, "thinking": row.Thinking, "mode": row.permissionMode(), "mediaImageModelId": row.MediaImageModelID, "mediaVideoModelId": row.MediaVideoModelID, "expertId": row.ExpertID, "configurationRevision": row.ResourceRevision, "isDefaultWorkspace": row.Workspace != "selected", "projectId": row.ProjectID, "status": row.State, "goalModeAvailable": row.Workspace != "", "goal": goalView(row),
 		"title": title, "titleSource": source, "pinned": row.Pinned, "archivedAt": row.ArchivedAt, "readAt": row.ReadAt}
 }
 

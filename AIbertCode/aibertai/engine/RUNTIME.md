@@ -15,7 +15,13 @@
 
 新容器的 runtime 卷挂载在 `/var/lib/aibertai`，实际传入 `--state-dir /var/lib/aibertai/state`。设备身份、会话和待补传记录在该状态卷持久化。项目与用户目录分别为 `/workspace` 和 `/home/aibertai`。已有容器继续使用 `/var/lib/monkeyai` 和 `/home/monkey`。原容器的可写层和持久卷继续使用，运行时根据容器的挂载布局选择状态目录。
 
-托管规格必须使用 `public-only`，并确保固定 DNS、后台 HTTP(S)、中转 WS(S) 和所需服务可达。后台位于私网时由管理员配置固定服务例外；不自动放宽私网规则。`isolated` 保留给本地容器执行，不可用于客户端云电脑登录。
+托管规格必须使用 `public-only`，并确保固定 DNS、后台 HTTP(S)、中转 WS(S) 和所需服务可达。后台位于同一 Linux 宿主时，可启用[同机内网后台网关](NETWORK.md#同机内网后台)，仅允许设备运行时访问后台。`isolated` 保留给本地容器执行，不可用于客户端云电脑登录。
+
+默认镜像可运行 `bash engine/image/prepare.sh /绝对路径/cloud-oci` 构建。
+脚本校验两种架构的清单、配置和每个镜像层。用后台的 `environment-images` 命令导入并做
+`--check` 校验。安装后设置 `AIBERTAI_ENVIRONMENT_IMAGE_STATE_DIR` 为该镜像仓库的持久目录。
+同机部署可在后台与宿主进程同时设置 `AIBERTAI_CLOUD_IMAGE_REGISTRY=127.0.0.1:8080`（必须等于后台回环监听地址），让宿主 Docker 通过本机回环拉取镜像。
+镜像引用始终由控制面固定到已验证的摘要。
 
 ## 启动流程
 

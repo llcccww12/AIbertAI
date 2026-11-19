@@ -33,12 +33,14 @@ type Database struct {
 }
 
 type Config struct {
-	ImageStateDir     string
-	ImageImportDir    string
-	RuntimeReleaseDir string
-	RuntimeVersion    string
-	EngineReleaseDir  string
-	EngineVersion     string
+	CloudBackendGateway string
+	CloudImageRegistry  string
+	ImageStateDir       string
+	ImageImportDir      string
+	RuntimeReleaseDir   string
+	RuntimeVersion      string
+	EngineReleaseDir    string
+	EngineVersion       string
 	HTTP
 	Database
 	Design
@@ -80,6 +82,8 @@ func Load(args []string) (Config, error) {
 		return Config{}, fmt.Errorf("解析远程执行开关: %w", err)
 	}
 	cfg := Config{
+		CloudBackendGateway:          envconfig.Getenv("AIBERTAI_CLOUD_BACKEND_GATEWAY"),
+		CloudImageRegistry:           envconfig.Getenv("AIBERTAI_CLOUD_IMAGE_REGISTRY"),
 		ImageStateDir:                envconfig.Getenv("AIBERTAI_ENVIRONMENT_IMAGE_STATE_DIR"),
 		ImageImportDir:               envconfig.Getenv("AIBERTAI_ENVIRONMENT_IMAGE_IMPORT_DIR"),
 		RuntimeReleaseDir:            envconfig.Getenv("AIBERTAI_ENVIRONMENT_RUNTIME_DIR"),

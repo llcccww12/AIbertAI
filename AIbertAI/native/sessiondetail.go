@@ -48,7 +48,10 @@ func (h *relaySessionHost) sessionState(id string) (map[string]any, error) {
 	if row.ConnectorPreferences != nil {
 		state["resourcePreferences"] = row.ConnectorPreferences.normalized()
 	}
-	state["status"], state["goal"] = row.State, row.Goal
+	state["status"], state["goal"] = row.State, goalView(row)
+	if row.GoalRun != "" && row.State == "running" {
+		state["executionId"] = row.GoalRun
+	}
 	state["title"], state["titleSource"] = row.sessionTitle()
 	return map[string]any{"sessionId": id, "eventSeq": row.historySequence(), "state": state, "finish": false}, nil
 }

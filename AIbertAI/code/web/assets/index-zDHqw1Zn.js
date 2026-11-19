@@ -37161,7 +37161,7 @@ function mZe(e, t) {
   const { message: n, eventSeq: r, toolCalls: s } = t,
     i = e.messages.findIndex((c) => c.id === n.id),
     o = e.messages[i],
-    a = Lve(o, n, r);
+    a = Lve(o, n, r, t.checkpoint === !0 && (o?.lastUpdate?.eventSeq ?? -1) <= r);
   return a === o
     ? e
     : {
@@ -52755,7 +52755,7 @@ const zO = 20,
         try {
           const result = await action(se);
           ie(result);
-          if (local && p.current(J) && result.goal?.status === "active" && (G === "create" || G === "resume")) {
+          if (local && !result.background && p.current(J) && result.goal?.status === "active" && (G === "create" || G === "resume")) {
             const prompt = G === "create" ? result.goal.objective
               : Uo.language === "zh-CN" ? "继续当前目标：" + result.goal.objective : "Continue the current goal: " + result.goal.objective;
             await t().send(P, prompt, [], [], se.requestId);

@@ -71,7 +71,9 @@ bash deploy/stack.sh up
 
 - 统一入口的 `/readyz` 返回 HTTP 200，`/.well-known/oauth-authorization-server` 返回正确的 `issuer`。
 - 登录管理后台后配置并启用文本模型，授权给桌面账号或所在分组。用桌面端登录，检查「设置 → 模型」并发送一条测试消息。
-- 云电脑按需配备 [Linux 执行宿主](engine/README.md)。使用添加宿主或安装升级功能时，把双架构宿主安装器和运行时发布件放到 `deploy/data/releases`，并在 `deploy/.env` 设置 `ENGINE_RELEASE_DIR`、`ENGINE_VERSION`、`ENVIRONMENT_RUNTIME_DIR` 和 `ENVIRONMENT_RUNTIME_VERSION`。目录变量使用容器内的 `/data/releases/...` 路径。
+- `stack.sh up` 从当前源码构建 AMD64 和 ARM64 宿主安装器，随后台镜像提供，并在停止已有服务前校验两个架构的发布清单和 SHA-256。登录后台，在「云电脑 → 添加宿主机」生成命令。执行命令的目标 Linux 主机需要预先安装 Docker 并配置 gVisor，详见 [宿主安装说明](engine/INSTALL.md)。
+- 发布标签形如 `host-v26010101` 的 GitHub Release 时，工作流会附上两种架构的安装资源及压缩包校验和。使用固定发布版本时，将已校验的资源解压到 `deploy/data/releases/host-engine`，并将 `ENGINE_RELEASE_DIR=/data/releases/host-engine` 和 `ENGINE_VERSION=v26010101` 写入 `deploy/.env`。保留旧版本目录可继续分发旧安装命令需要的文件。默认镜像只提供当前构建版本，更新镜像后可重新生成安装命令。需要使用后台的宿主版本比较时，使用此类编号发布版本。
+- 云电脑工作负载使用独立的运行时发布件。按 [运行时说明](engine/RUNTIME.md) 准备该目录，在 `deploy/.env` 配置 `ENVIRONMENT_RUNTIME_DIR` 和 `ENVIRONMENT_RUNTIME_VERSION`。目录变量使用容器内的 `/data/releases/...` 路径。
 
 迁移已有平台前，备份并恢复 PostgreSQL、RustFS、运行时状态目录和部署私密配置。迁移时尽量保留统一域名和端口，以延续原设备身份。更换登录地址时，桌面端会按新地址重新注册设备。首次初始化数据库只能得到一个空团队。若曾使用手工部署的 5173 静态代理，切换到此入口前先为新实例选择独立监听端口，避免和正在运行的服务冲突。保持已有服务运行时，也可优先将代理换成仓库内的 `admin/scripts/serve-admin.mjs`。
 

@@ -35,7 +35,7 @@ type Service struct {
 
 func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
 func (s *Service) WithInstallation(server, dir, version string) *Service {
-	s.server, s.releases, s.version = strings.TrimRight(server, "/"), dir, version
+	s.server, s.releases, s.version = strings.TrimRight(server, "/"), dir, releaseVersion(dir, version)
 	return s
 }
 func (s *Service) RegisterAdmin(r chi.Router) {
