@@ -154,7 +154,13 @@ func (h *relaySessionHost) desktopMediaGateway(ctx context.Context, raw json.Raw
 			!validUUID(model.ID) || model.Model == "" || selected != "" && model.ID != selected {
 			continue
 		}
-		return map[string]any{"id": model.ID, "model": model.Model + "@" + model.ID,
+		// Current catalogs supply the gateway identifier. Older catalogs supplied
+		// the upstream name and need the catalog UUID appended once.
+		modelRef := model.Model
+		if suffix := "@" + model.ID; !strings.HasSuffix(modelRef, suffix) {
+			modelRef += suffix
+		}
+		return map[string]any{"id": model.ID, "model": modelRef,
 			"baseUrl": h.live.client.server + "/v1", "apiKey": h.live.key,
 			"imageConfig": model.ImageConfig, "videoConfig": model.VideoConfig,
 			"headers": map[string]string{"X-MAI-Session-ID": row.ID}}, nil

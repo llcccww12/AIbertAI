@@ -1,6 +1,7 @@
 package main
 
 import (
+	"aibertai.local/engine/internal/hostpaths"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -147,7 +148,7 @@ func upgradePreparedHost(ctx context.Context, args []string, out, stderr io.Writ
 	}
 	u := hostUpgrade{config: control.ConfigPath, unit: preparedHostUnit, program: installedProgram, journal: control.SourceUpgradePath}
 	u.restart = func(ctx context.Context) error {
-		for _, args := range [][]string{{"daemon-reload"}, {"restart", "monkeyai-engine.service"}} {
+		for _, args := range [][]string{{"daemon-reload"}, {"restart", hostpaths.Unit}} {
 			cmd := exec.CommandContext(ctx, "systemctl", args...)
 			cmd.Stdout, cmd.Stderr = out, stderr
 			if err := cmd.Run(); err != nil {
@@ -217,7 +218,7 @@ func upgradePreparedHost(ctx context.Context, args []string, out, stderr io.Writ
 			raw, err := os.ReadFile(control.HealthPath)
 			var health control.Health
 			if err == nil && json.Unmarshal(raw, &health) == nil && health.Version == version && health.HostID == cfg.HostID && health.At.After(start) && health.PID > 0 {
-				pid, err := exec.CommandContext(ctx, "systemctl", "show", "monkeyai-engine.service", "--property=MainPID", "--value").Output()
+				pid, err := exec.CommandContext(ctx, "systemctl", "show", hostpaths.Unit, "--property=MainPID", "--value").Output()
 				if err == nil && strings.TrimSpace(string(pid)) == strconv.Itoa(health.PID) {
 					return nil
 				}

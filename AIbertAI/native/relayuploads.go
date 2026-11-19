@@ -192,7 +192,7 @@ func (u *relayUploads) operation(method, id, session, op string, auth relayAutho
 		completed := *slot
 		completed.State, completed.operation = "completed", op
 		completed.Ref = &relayFileRef{ServerID: auth.ServerID, UserID: auth.OwnerUserID, MachineID: auth.MachineID, SessionID: slot.SessionID,
-			Path: ".monkeyai/uploads/upload-" + id + "/" + slot.Name}
+			Path: workspaceUploads + id + "/" + slot.Name}
 		if u.persist {
 			data, err := json.Marshal(completed)
 			if err != nil {
@@ -340,7 +340,7 @@ func (u *relayUploads) completed(ref relayFileRef, auth relayAuthorization) (*re
 		return u.persistedCompleted(ref)
 	}
 	for _, slot := range u.slots {
-		if slot.Ref != nil && *slot.Ref == ref && slot.Auth.same(auth) && time.Now().Before(slot.Expires) {
+		if slot.Ref != nil && sameRelayFileReference(*slot.Ref, ref) && slot.Auth.same(auth) && time.Now().Before(slot.Expires) {
 			return slot, nil
 		}
 	}
@@ -355,7 +355,7 @@ func (u *relayUploads) promptFile(ref relayFileRef, session, name string, remain
 		row, _ = u.persistedCompleted(ref)
 	} else {
 		for _, slot := range u.slots {
-			if slot.Ref != nil && *slot.Ref == ref {
+			if slot.Ref != nil && sameRelayFileReference(*slot.Ref, ref) {
 				row = slot
 				break
 			}
@@ -368,10 +368,11 @@ func (u *relayUploads) promptFile(ref relayFileRef, session, name string, remain
 }
 
 func (u *relayUploads) persistedCompleted(ref relayFileRef) (*relayUpload, error) {
-	path, _ := strings.CutPrefix(ref.Path, ".monkeyai/uploads/upload-")
+	ref.Path = canonicalWorkspaceReference(ref.Path)
+	path, _ := strings.CutPrefix(ref.Path, workspaceUploads)
 	id, name, ok := strings.Cut(path, "/")
 	if !ok || !validUUID(id) || name == "" || name == path || strings.ContainsAny(name, "/\\") ||
-		ref.Path != ".monkeyai/uploads/upload-"+id+"/"+name {
+		ref.Path != workspaceUploads+id+"/"+name {
 		return nil, errInvalidUpload
 	}
 	meta := id + ".json"
@@ -388,7 +389,7 @@ func (u *relayUploads) persistedCompleted(ref relayFileRef) (*relayUpload, error
 	var row relayUpload
 	if decoder.Decode(&row) != nil || decoder.Decode(new(any)) != io.EOF || row.State != "completed" ||
 		row.UploadID != id || row.SessionID != ref.SessionID || row.Name != name || row.Size < 0 ||
-		row.Size > relayMaxUpload || row.Offset != row.Size || row.Ref == nil || *row.Ref != ref {
+		row.Size > relayMaxUpload || row.Offset != row.Size || row.Ref == nil || !sameRelayFileReference(*row.Ref, ref) {
 		return nil, errInvalidUpload
 	}
 	if info, err := u.root.Lstat(uploadFilename(id, true)); err != nil || !info.Mode().IsRegular() || info.Size() != row.Size {
@@ -436,10 +437,10 @@ func (u *relayUploads) openReferencedFile(ref relayFileRef, auth relayAuthorizat
 	if ref.ServerID != auth.ServerID || ref.UserID != auth.OwnerUserID || ref.MachineID != auth.MachineID || !validUUID(ref.SessionID) {
 		return nil, "", errInvalidUpload
 	}
-	if u.openHistory != nil && strings.HasPrefix(ref.Path, ".monkeyai/history-files/") {
+	if u.openHistory != nil && strings.HasPrefix(canonicalWorkspaceReference(ref.Path), workspaceHistoryFiles) {
 		return u.openHistory(ref)
 	}
-	if u.openWorkspace != nil && !strings.HasPrefix(ref.Path, ".monkeyai/uploads/upload-") {
+	if u.openWorkspace != nil && !strings.HasPrefix(canonicalWorkspaceReference(ref.Path), workspaceUploads) {
 		return u.openWorkspace(ref)
 	}
 	u.mu.Lock()

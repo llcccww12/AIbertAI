@@ -387,7 +387,8 @@ func (w *desktopWorkspaces) recoverPatch(sessions map[string]acpSession) error {
 	if err != nil || !ok || !plan.valid() {
 		return errors.New("workspace_patch_recovery_invalid")
 	}
-	root, err := w.sessionRoot(session)
+	// Finish the previous process's journal using its original paths.
+	root, err := w.openSessionRoot(session)
 	if err != nil {
 		return err
 	}

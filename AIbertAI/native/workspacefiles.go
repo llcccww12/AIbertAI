@@ -32,7 +32,7 @@ func workspaceRelative(value string) (string, error) {
 		strings.ContainsAny(value, "\\:") || strings.ContainsFunc(value, unicode.IsControl) {
 		return "", errWorkspacePath
 	}
-	relative := filepath.FromSlash(value)
+	relative := filepath.FromSlash(canonicalWorkspaceReference(value))
 	if !filepath.IsLocal(relative) {
 		return "", errWorkspacePath
 	}
@@ -162,7 +162,7 @@ func (h *relaySessionHost) workspaceRoot(id string) (*os.Root, acpSession, error
 	row.ID, row.CWD, row.ProjectID = id, legacy.CWD, legacy.ProjectID
 	if !legacy.IsDefaultWorkspace {
 		row.Workspace = "selected"
-		root, err := h.live.workspaces.approvedRoot(row.CWD)
+		root, err := prepareWorkspaceBrand(h.live.workspaces.approvedRoot(row.CWD))
 		return root, row, err
 	}
 	folder := filepath.Base(row.CWD)
@@ -182,7 +182,7 @@ func (h *relaySessionHost) workspaceRoot(id string) (*os.Root, acpSession, error
 			return nil, row, errProjectFolder
 		}
 	}
-	root, err := profile.OpenRoot(relative)
+	root, err := prepareWorkspaceBrand(profile.OpenRoot(relative))
 	row.Workspace, row.CWD = "default", filepath.Join(h.profile, relative)
 	return root, row, err
 }
@@ -227,7 +227,7 @@ func (h *relaySessionHost) workspaceQuery(ctx context.Context, method string, ra
 		return nil, err
 	}
 	if method == "_monkeyai/workspace/list" {
-		return listWorkspaceDirectory(root, relative, p.Path, p.Offset)
+		return listWorkspaceDirectory(root, relative, filepath.ToSlash(relative), p.Offset)
 	}
 	if relative == "." {
 		return nil, errWorkspacePath
@@ -277,6 +277,7 @@ func (h *relaySessionHost) resolveWorkspacePaths(root *os.Root, row acpSession, 
 		if err != nil {
 			continue
 		}
+		value = filepath.ToSlash(relative)
 		info, err := root.Lstat(relative)
 		if err != nil {
 			item["status"] = "missing"

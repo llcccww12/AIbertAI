@@ -1,9 +1,9 @@
 package model
 
 import (
+	"aibertai.local/backend/logging"
 	"context"
 	"errors"
-	"aibertai.local/backend/logging"
 	"log/slog"
 	"net/http"
 
@@ -66,6 +66,9 @@ func (s *Service) UpdateUser(ctx context.Context, id, userID string, input UserI
 	item.OwnershipType = "user"
 	item.OwnerUserID = userID
 	item.Enabled = existing.Enabled
+	if item.Kind == KindText && item.AdvancedConfig.StreamMode == "" {
+		item.AdvancedConfig.StreamMode = existing.AdvancedConfig.StreamMode
+	}
 	item.Authorization = existing.Authorization
 	item.CreditMultiplier = existing.CreditMultiplier
 	if input.TagIDs == nil {

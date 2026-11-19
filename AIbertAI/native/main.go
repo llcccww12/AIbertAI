@@ -56,7 +56,7 @@ func verify(ctx context.Context, reader io.Reader, emit func(string, string) err
 	if err != nil {
 		return err
 	}
-	protocol, err := c.selectedModel(ctx, auth)
+	model, err := c.selectedModelConfig(ctx, auth)
 	if err != nil {
 		return err
 	}
@@ -80,7 +80,7 @@ func verify(ctx context.Context, reader io.Reader, emit func(string, string) err
 	if err := c.registerSession(ctx, auth, machine, session, modelID, started); err != nil {
 		return err
 	}
-	usage, finish, modelErr := c.chat(ctx, protocol, key.Value, session, modelID, prompt, func(chunk string) error { return emit("delta", chunk) })
+	usage, finish, modelErr := c.chat(ctx, model.Protocol, key.Value, session, modelID, prompt, model.StreamMode != "off", func(chunk string) error { return emit("delta", chunk) })
 	stop := "complete"
 	switch {
 	case modelErr != nil:
@@ -123,6 +123,13 @@ func verifyKnowledge(ctx context.Context, emit func(string, string) error) (err 
 }
 
 func main() {
+	if len(os.Args) == 3 && os.Args[1] == "rollback-workspace-brand" {
+		if err := rollbackWorkspaceBrand(os.Args[2]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && (os.Args[1] == "status" || os.Args[1] == "login" || os.Args[1] == "serve") {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		err := cloudCommand(ctx, os.Args[1:], os.Stdout)

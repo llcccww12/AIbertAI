@@ -13,6 +13,7 @@ import (
 	"aibertai.local/backend/internal/app"
 	"aibertai.local/backend/internal/config"
 	"aibertai.local/backend/internal/envimage"
+	"aibertai.local/backend/internal/resource"
 	"aibertai.local/backend/logging"
 	"aibertai.local/backend/server"
 )
@@ -22,6 +23,24 @@ func main() {
 }
 
 func mainCode() int {
+	if len(os.Args) > 1 && os.Args[1] == "migrate-resource-bucket" {
+		flags := flag.NewFlagSet("migrate-resource-bucket", flag.ContinueOnError)
+		rollback := flags.Bool("rollback", false, "将新版资源同步回旧桶")
+		onlyDefault := flags.Bool("if-default", false, "只迁移使用默认资源桶的部署")
+		if err := flags.Parse(os.Args[2:]); errors.Is(err, flag.ErrHelp) {
+			return 0
+		} else if err != nil || flags.NArg() != 0 || *rollback && *onlyDefault {
+			return 2
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer stop()
+		if err := resource.MigrateBucket(ctx, *rollback, *onlyDefault); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		fmt.Fprintln(os.Stdout, "资源桶操作已完成")
+		return 0
+	}
 	if len(os.Args) > 1 && os.Args[1] == "environment-images" {
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()

@@ -82,3 +82,29 @@ func TestDesignHostDependenciesUseDesignDispatch(t *testing.T) {
 		}
 	}
 }
+
+func TestChatImageToolsRespectWorkspaceWritePermission(t *testing.T) {
+	const schema = `{"type":"object","properties":{},"additionalProperties":false}`
+	tools := []desktopDesignTool{
+		{Name: "media_get_image_model", Schema: json.RawMessage(schema)},
+		{Name: "media_generate_image", Schema: json.RawMessage(schema)},
+		{Name: "media_edit_image", Schema: json.RawMessage(schema)},
+	}
+	for _, allowWrite := range []bool{false, true} {
+		policy := workspaceToolPolicy{CanWrite: allowWrite, DesignTools: tools}
+		builtins := map[string]bool{}
+		for _, tool := range policy.extraDefinitions() {
+			builtins[tool["name"].(string)] = true
+		}
+		for _, tool := range tools {
+			want := allowWrite || tool.Name == "media_get_image_model"
+			invocation := modelToolUse{ID: "call_fixture", Type: "function"}
+			invocation.Function.Name = tool.Name
+			invocation.Function.Arguments = `{}`
+			parsed, err := parseModelToolArguments(invocation, nil, allowWrite, nil, builtins)
+			if builtins[tool.Name] != want || (err == nil && parsed.Design) != want {
+				t.Fatalf("tool %q, can write %v: registered %v, parsed %+v, %v", tool.Name, allowWrite, builtins[tool.Name], parsed, err)
+			}
+		}
+	}
+}

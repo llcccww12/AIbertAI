@@ -48,7 +48,7 @@ func (h *relaySessionHost) readQueue(id string) (map[string]any, error) {
 	return sessionQueue(id, seq), nil
 }
 
-func (h *relaySessionHost) handleQueue(ctx context.Context, ws *websocket.Conn, r *http.Request, raw json.RawMessage) (any, error) {
+func (h *relaySessionHost) handleQueue(ctx context.Context, ws *websocket.Conn, r *http.Request, raw json.RawMessage, accept func(any) error) (any, error) {
 	var p struct {
 		SessionID, Action, ID, Text string
 		SendIfIdle                  bool
@@ -100,8 +100,14 @@ func (h *relaySessionHost) handleQueue(ctx context.Context, ws *websocket.Conn, 
 		}
 		h.uploads.mu.Unlock()
 	}
-	if _, err := h.promptACP(ctx, ws, r, p.SessionID, p.Meta.OperationID, p.ID, p.Text, p.Attachments...); err != nil {
-		return nil, err
+	queueAccepted := func(row acpSession) error {
+		result := sessionQueue(p.SessionID, row.historySequence())
+		result["clientMessageId"], result["action"] = p.ID, p.Action
+		return accept(result)
+	}
+	_, turnErr := h.promptACP(ctx, ws, r, p.SessionID, p.Meta.OperationID, p.ID, p.Text, queueAccepted, p.Attachments...)
+	if turnErr != nil {
+		return nil, turnErr
 	}
 	result, err := h.readQueue(p.SessionID)
 	if err != nil {

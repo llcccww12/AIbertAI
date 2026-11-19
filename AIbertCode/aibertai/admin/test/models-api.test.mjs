@@ -19,6 +19,15 @@ const modelKeys = [
   "noTags",
   "maxOutputTokens",
   "supportsReasoning",
+  "streaming",
+  "streamingAuto",
+  "streamingOff",
+  "outputMode",
+  "outputStream",
+  "outputBuffered",
+  "firstTextTime",
+  "totalTestTime",
+  "streamInterrupted",
   "notRecommended",
   "billingMultiplier",
   "creator",
@@ -263,6 +272,8 @@ test("image generation test form follows model capabilities and protects invocat
   assert.match(source, /\/v1\/images\/edits/)
   assert.match(source, /\/v1\/images\/tasks/)
   assert.match(source, /X-Api-Key/)
+  assert.match(source, /pattern="mk_\.\+"/)
+  assert.match(source, /!key\.startsWith\("mk_"\)/)
   assert.match(source, /credentials: "omit"/)
   assert.match(source, /URL\.revokeObjectURL/)
 })

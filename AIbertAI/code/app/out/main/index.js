@@ -1479,7 +1479,7 @@ class PastedAttachments {
   async write(name, data, hash2) {
     let path2;
     try {
-      this.directory ??= node_fs.mkdtempSync(node_path.join(this.tempRoot, "monkeyai-paste-"));
+      this.directory ??= node_fs.mkdtempSync(node_path.join(this.tempRoot, "aibertai-paste-"));
       const extension2 = node_path.extname(name);
       path2 = node_path.join(this.directory, hash2 + (/^\.[a-zA-Z0-9]{1,16}$/.test(extension2) ? extension2 : ".bin"));
       await promises.writeFile(path2, data, { flag: "wx", mode: 384 });
@@ -14751,6 +14751,10 @@ function onStdoutLine(proc, token, raw, logger, authorizationServer) {
     if (child$2 === proc) void refreshDeviceRemoteStatus();
     return;
   }
+  if (event?.event === "design_tool_cancel" && child$2 === proc) {
+    runtimeImageCalls.get(event.id)?.abort();
+    return;
+  }
   if (event?.event === "design_tool" && authorizationServer) {
     if (child$2 === proc) void answerRuntimeDesignTool(proc, authorizationServer, event);
     return;
@@ -16183,7 +16187,7 @@ class RemoteFiles {
       void this.cancel(id2);
     }, PLAN_TTL_MS$1);
     timer2.unref?.();
-    this.downloads.set(id2, { ref: ref2, destination, temporary: destination + ".monkeyai-" + id2 + ".part", abort, timer: timer2 });
+    this.downloads.set(id2, { ref: ref2, destination, temporary: destination + ".aibertai-" + id2 + ".part", abort, timer: timer2 });
     return id2;
   }
   async save(id2, link2) {
@@ -16445,7 +16449,7 @@ async function saveMediaStream(response, destination, signal, current = () => {
     });
     throw new Error(response.status === 404 ? ErrorCode.fileUnavailable : response.status === 401 || response.status === 403 ? ErrorCode.fileAccessDenied : response.status === 413 ? ErrorCode.previewTooLarge : ErrorCode.fileDownloadFailed);
   }
-  const temporary = `${destination}.monkeyai-${node_crypto.randomUUID()}.part`;
+  const temporary = `${destination}.aibertai-${node_crypto.randomUUID()}.part`;
   let file2;
   const reader2 = response.body.getReader();
   const abort = () => {
@@ -19889,7 +19893,7 @@ class OfficePreviewHost {
     let source = cacheGet(cacheKey, fingerprint);
     const cached2 = Boolean(source);
     if (!source) {
-      source = node_path.join(electron.app.getPath("temp"), `monkeyai-office-${node_crypto.randomUUID()}${node_path.extname(path2)}`);
+      source = node_path.join(electron.app.getPath("temp"), `aibertai-office-${node_crypto.randomUUID()}${node_path.extname(path2)}`);
       try {
         if (remoteSource) await remoteSource.download(source);
         else {
@@ -20873,7 +20877,7 @@ async function validatePptxLayout(input) {
   await promises.writeFile(node_path.join(folder, "report.html"), `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'"><title>PPTX 排版校验报告</title><style>body{font:15px/1.6 system-ui,sans-serif;color:#172033;background:#f7f8fa;margin:0;padding:24px}main{max-width:1400px;margin:auto}section{margin:24px 0;padding:20px;background:white;border:1px solid #dce0e8;border-radius:12px}.pair{display:grid;grid-template-columns:1fr 1fr;gap:16px}figure{margin:0;min-width:0}img{display:block;width:100%;border:1px solid #dce0e8}figcaption{font-weight:600;margin-bottom:8px}li{margin:8px 0}.error{color:#b42318}.warning{color:#8a5000}small{color:#596579;word-break:break-all}@media(max-width:800px){.pair{grid-template-columns:1fr}body{padding:12px}}</style></head><body><main><h1>PPTX 排版校验</h1><p><strong>${label}</strong> · 已检查 ${checkedSlides}/${manifest.slides.length} 页</p><p>检查对象是实际可编辑 PPTX，不是 HTML 截图版。原生图表区域不做像素比较，图表结构由导出器检查；像素差异仅作为人工复核线索。预览渲染与 PowerPoint/WPS 的表现仍可能不同。</p><small>文件 SHA-256：${outputDigest}</small><section><h2>全部问题页</h2><p>${problemPages.length ? problemPages.map((page) => `第 ${page} 页`).join("、") : issues.length ? "存在整稿问题，详见下方检查结果。" : "未发现明显问题页。"}</p><p><strong>批次修复规则：</strong>先扫描整稿、汇总全部问题页，再一次性修完所有问题页；修改单页不自动导出。每轮全部修改提交后才显式重新导出整稿并复检一次，最多 3 轮（首次检查不计入）。第 3 轮后仍有问题就停止自动修复，保留当前可编辑 PPTX、完整报告和剩余问题，仍可正常预览，由用户决定后续；不能改成图片版冒充通过。</p></section><section><h2>检查结果</h2>${issues.length ? `<ul>${issues.map((issue2) => `<li class="${issue2.severity}">${issue2.slide ? `第 ${issue2.slide} 页：` : ""}${escapeHtml$1(issue2.message)}</li>`).join("")}</ul>` : "<p>未发现明显缺页、缺字、文字越界或较大视觉差异；这不是对所有 Office 软件的像素级一致性保证。</p>"}</section>${comparisons.join("")}</main></body></html>`);
   return result;
 }
-const MANIFEST = /^\.monkeyai\/design\/[^/]+\/slide-manifest\.json$/;
+const MANIFEST = /^\.(?:aibertai|monkeyai)\/design\/[^/]+\/slide-manifest\.json$/;
 const OUTPUT = "presentation.pptx";
 function designExpertDir() {
   return electron.app.isPackaged ? node_path.join(process.resourcesPath, "design-expert") : node_path.join(electron.app.getAppPath(), "../../packages/design-expert");
@@ -20884,7 +20888,7 @@ function inside(root, file2) {
 }
 function workspaceFile(cwd, value) {
   if (!value || value.includes("\0") || node_path.isAbsolute(value) || value.split(/[\\/]/).includes("..")) throw new Error(ErrorCode.invalidPath);
-  return node_path.resolve(cwd, value);
+  return node_path.resolve(cwd, value.replace(/^\.monkeyai(?=[\\/]|$)/, ".aibertai"));
 }
 function allowedFileUrl(url2, roots) {
   if (!url2.startsWith("file:")) return false;
@@ -22599,8 +22603,9 @@ async function answerPrivateDesignRender(proc, message) {
   if (catalogRequests.get(message.operationId) === request && request) proc.postMessage(reply);
 }
 
+const runtimeImageTools = new Set(["media_get_image_model", "media_generate_image", "media_edit_image"]);
 function privateDesignUsesMedia(tool, params) {
-  return ["canvas_generate_media", "canvas_resume_media", "canvas_media", "canvas_html_image_media"].includes(tool) ||
+  return runtimeImageTools.has(tool) || ["canvas_generate_media", "canvas_resume_media", "canvas_media", "canvas_html_image_media"].includes(tool) ||
     tool === "canvas_production" && ["start", "rerun", "generate", "resume_task"].includes(params?.action);
 }
 
@@ -22624,7 +22629,7 @@ async function answerPrivateDesignMediaModel(proc, message) {
   if (catalogRequests.get(operationId) === pending) proc.postMessage(reply);
 }
 
-function requestPrivateDesignCatalog(origin, tool, args) {
+function requestPrivateDesignCatalog(origin, tool, args, signal) {
   if (catalogOrigin !== origin) {
     catalogOrigin = origin;
     child?.postMessage({ type: "init-private-catalog", origin });
@@ -22640,21 +22645,31 @@ function requestPrivateDesignCatalog(origin, tool, args) {
     const account = capture || media ? currentAccount() : null;
     const abort = capture ? new AbortController() : null;
     const deadline = setTimeout(() => finish(new Error("design_request_timeout")), media ? 21 * 60e3 : tool === "design_session_open" || tool === "design_model_tool" ? 120e3 : 12e3);
+    const cancel = () => {
+      try {
+        proc.postMessage({ type: "private-catalog-cancel", id });
+      } catch {}
+      finish(new Error("design_media_cancelled"));
+    };
     function finish(error, data) {
       clearTimeout(deadline);
+      signal?.removeEventListener("abort", cancel);
       abort?.abort();
       catalogRequests.delete(id);
       if (error) reject(error);
       else resolve(data);
     }
     catalogRequests.set(id, { proc, finish, capture, abort, mediaSession, runtime: child$2, accountId: account?.id, server: account?.server.url });
+    if (signal?.aborted) return cancel();
+    signal?.addEventListener("abort", cancel, { once: true });
     try {
-      proc.postMessage({ type: "private-catalog", id, tool, args });
+      proc.postMessage({ type: "private-catalog", id, tool, args, cancellable: Boolean(signal) });
     } catch (error) {
       finish(error);
     }
   });
 }
+const runtimeImageCalls = new Map();
 async function answerRuntimeDesignTool(proc, server, event) {
   const { id, sessionId, cwd, design, name, arguments: args } = event;
   if (typeof id !== "string" || !UUID$2.test(id)) return;
@@ -22665,25 +22680,29 @@ async function answerRuntimeDesignTool(proc, server, event) {
   };
   const reply = { type: "design_tool_result", id };
   try {
-    const open = name === "design_session_open", list = name === "design_tool_catalog";
-    if (!current() || typeof name !== "string" || !/^(?:canvas|design)_[a-z_]{1,48}$/.test(name) ||
+    const open = name === "design_session_open", list = name === "design_tool_catalog", image = runtimeImageTools.has(name);
+    if (!current() || typeof name !== "string" || (!image && !/^(?:canvas|design)_[a-z_]{1,48}$/.test(name)) ||
         typeof sessionId !== "string" || !UUID$2.test(sessionId) ||
-        typeof cwd !== "string" || !node_path.isAbsolute(cwd) || !open && !design ||
+        typeof cwd !== "string" || !node_path.isAbsolute(cwd) || (!open && !list && !image && !design) ||
         !args || typeof args !== "object" || Array.isArray(args)) {
       throw new Error("invalid_design_tool_request");
     }
+    const controller = image && name !== "media_get_image_model" ? new AbortController() : null;
+    if (controller) runtimeImageCalls.set(id, controller);
     const result = await requestPrivateDesignCatalog(new URL(server).origin, open ? name : list ? name : "design_model_tool", open
       ? { cwd, sessionId, selection: args }
-      : { name, args, cwd, sessionId, design });
+      : { name, args, cwd, sessionId, design }, controller?.signal);
     if (!result || Buffer.byteLength(JSON.stringify(result)) > 48 * 1024) throw new Error("design_tool_result_too_large");
     reply.result = result;
   } catch (error) {
     const reason = error instanceof Error ? error.message : "";
     reply.error = /^[a-z][a-z0-9_]{1,70}$/.test(reason) ? "design_" + reason.replace(/^design_/, "") : "design_tool_failed";
+  } finally {
+    runtimeImageCalls.delete(id);
   }
   if (!current()) return;
   proc.stdin?.write(JSON.stringify(reply) + "\n");
-  if (reply.result && !["design_tool_catalog", "canvas_get_document", "canvas_get_selection"].includes(name)) {
+  if (reply.result && !["design_tool_catalog", "canvas_get_document", "canvas_get_selection", "media_get_image_model"].includes(name)) {
     for (const window of liveWindows()) {
       const sender = window.webContents;
       if (runtimeTarget(sender)?.transport !== "relay") sender.send("design:canvas-changed", sessionId);
@@ -23584,9 +23603,8 @@ function setupSessionNotifications() {
     for (const id2 of notices.keys()) dismiss(id2);
   });
 }
-const MARKER_FILE = ".monkeyai-data.json";
-const INCOMPLETE_FILE = ".monkeyai-incomplete";
-const DELETING_FILE = ".monkeyai-deleting";
+const profileBrand = require("./desktop-profile-brand.cjs");
+const [MARKER_FILE, INCOMPLETE_FILE, DELETING_FILE] = profileBrand.markers;
 const MIGRATION_DIR = ".migration";
 const STAGING_DIR = "copy";
 const stagingDir = (to) => node_path.join(to, MIGRATION_DIR, STAGING_DIR);
@@ -23754,7 +23772,7 @@ function backupLocationRecord(file2) {
 }
 function readMarker(dir) {
   try {
-    const value = readJsonPatiently(node_path.join(dir, MARKER_FILE));
+    const value = readJsonPatiently(profileBrand.markerPath(dir, MARKER_FILE));
     if (!isRecord(value) || !isText(value.dataId) || !isText(value.createdAt)) return null;
     return { dataId: value.dataId, createdAt: value.createdAt };
   } catch {
@@ -23763,30 +23781,32 @@ function readMarker(dir) {
 }
 function writeMarker(dir, dataId = node_crypto.randomUUID()) {
   const marker = { dataId, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
+  profileBrand.migrate(dir);
   writeJsonAtomic(node_path.join(dir, MARKER_FILE), marker);
   return marker;
 }
-const isRootEntryName = (name) => name !== "" && name !== "." && name !== ".." && !/[\\/]/.test(name) && name !== MIGRATION_DIR && name !== INCOMPLETE_FILE;
+const isRootEntryName = (name) => name !== "" && name !== "." && name !== ".." && !/[\\/]/.test(name) && name !== MIGRATION_DIR && !profileBrand.isMarker(name, INCOMPLETE_FILE);
 function readIncomplete(dir) {
   let value;
   try {
-    value = readJsonPatiently(node_path.join(dir, INCOMPLETE_FILE));
+    value = readJsonPatiently(profileBrand.markerPath(dir, INCOMPLETE_FILE));
   } catch (error) {
     if (error.code === "ENOENT") return null;
     return { id: "", promoted: [] };
   }
   if (!isRecord(value)) return { id: "", promoted: [] };
-  const promoted = Array.isArray(value.promoted) ? value.promoted.filter((name) => isText(name) && isRootEntryName(name)) : [];
+  const promoted = Array.isArray(value.promoted) ? value.promoted.filter((name) => isText(name) && isRootEntryName(name)).map((name) => profileBrand.isMarker(name, MARKER_FILE) ? MARKER_FILE : name) : [];
   return { id: isText(value.id) ? value.id : "", promoted };
 }
 function writeIncomplete(dir, state2) {
-  writeJsonAtomic(node_path.join(dir, INCOMPLETE_FILE), state2);
+  profileBrand.migrate(dir);
+  writeJsonAtomic(node_path.join(dir, INCOMPLETE_FILE), { ...state2, promoted: state2.promoted.map((name) => name === MARKER_FILE ? profileBrand.legacy(name) : name) });
 }
 function isBeingDeleted(dir) {
-  return node_fs.existsSync(node_path.join(dir, DELETING_FILE));
+  return node_fs.existsSync(profileBrand.markerPath(dir, DELETING_FILE));
 }
 function looksLikeData(dir) {
-  if (node_fs.existsSync(node_path.join(dir, INCOMPLETE_FILE)) || isBeingDeleted(dir)) return false;
+  if (node_fs.existsSync(profileBrand.markerPath(dir, INCOMPLETE_FILE)) || isBeingDeleted(dir)) return false;
   return readMarker(dir) !== null || node_fs.existsSync(node_path.join(dir, "accounts.json")) && node_fs.existsSync(node_path.join(dir, "Local State"));
 }
 const migrationShellDir = (to) => node_path.join(to, MIGRATION_DIR, "shell");
@@ -23803,7 +23823,7 @@ function renamePatiently(from, to) {
   }
 }
 function isUnfinishedCopy(dir) {
-  return node_fs.existsSync(node_path.join(dir, INCOMPLETE_FILE)) && readMarker(dir) === null;
+  return node_fs.existsSync(profileBrand.markerPath(dir, INCOMPLETE_FILE)) && readMarker(dir) === null;
 }
 function setAsideUnusable(options2, record2) {
   const aside = `${options2.defaultDir}.deleting-${node_crypto.randomUUID().slice(0, 8)}`;
@@ -23905,13 +23925,13 @@ function chooseTarget(picked, context) {
   return choice;
 }
 const SYSTEM_JUNK = /* @__PURE__ */ new Set([".DS_Store", "Thumbs.db", "desktop.ini"]);
-const WRITE_TEST_PREFIX = ".monkeyai-write-test-";
+const WRITE_TEST_PREFIX = ".aibertai-write-test-";
 function isLeftover(name) {
-  return name === MIGRATION_DIR || name === INCOMPLETE_FILE || SYSTEM_JUNK.has(name) || name.startsWith(WRITE_TEST_PREFIX);
+  return name === MIGRATION_DIR || profileBrand.isMarker(name, INCOMPLETE_FILE) || SYSTEM_JUNK.has(name) || name.startsWith(WRITE_TEST_PREFIX) || name.startsWith(profileBrand.legacy(WRITE_TEST_PREFIX));
 }
 function foreignEntries(target) {
   const promoted = new Set(readIncomplete(target)?.promoted ?? []);
-  return directoryEntries(target).filter((name) => !isLeftover(name) && !promoted.has(name));
+  return directoryEntries(target).filter((name) => !isLeftover(name) && !promoted.has(profileBrand.isMarker(name, MARKER_FILE) ? MARKER_FILE : name));
 }
 function checkTarget(choice, context) {
   if (isBeingDeleted(choice.target)) throw new CodedError(ErrorCode.dataLocationBusy);
@@ -23991,7 +24011,7 @@ function requiredSpace(bytes2) {
   return Math.ceil(bytes2 * 1.05) + 512 * 1024 * 1024;
 }
 const CACHE_DIRS = /* @__PURE__ */ new Set(["Cache", "Code Cache", "GPUCache", "DawnGraphiteCache", "DawnWebGPUCache", "GraphiteDawnCache", "GrShaderCache", "ShaderCache"]);
-const ROOT_SKIP = /* @__PURE__ */ new Set([MARKER_FILE, INCOMPLETE_FILE, DELETING_FILE, MIGRATION_DIR, "Crashpad", "SingletonLock", "SingletonSocket", "SingletonCookie", "lockfile", ...SYSTEM_JUNK]);
+const ROOT_SKIP = /* @__PURE__ */ new Set([...profileBrand.markers, ...profileBrand.markers.map(profileBrand.legacy), MIGRATION_DIR, "Crashpad", "SingletonLock", "SingletonSocket", "SingletonCookie", "lockfile", ...SYSTEM_JUNK]);
 function skippedInTransfer(parts) {
   if (parts.length === 1) return ROOT_SKIP.has(parts[0]) || CACHE_DIRS.has(parts[0]);
   return parts.length === 3 && parts[0] === "Partitions" && CACHE_DIRS.has(parts[2]);
@@ -24242,10 +24262,10 @@ async function clearMigrationContent(dir, keepMarker, retryDelayMs) {
   const promoted = new Set(readIncomplete(dir)?.promoted ?? []);
   await removeTree(stagingDir(dir), retryDelayMs);
   for (const name of names2) {
-    if (name === MIGRATION_DIR || name === INCOMPLETE_FILE) continue;
-    if (promoted.has(name) || isLeftover(name)) await removeTree(node_path.join(dir, name), retryDelayMs);
+    if (name === MIGRATION_DIR || profileBrand.isMarker(name, INCOMPLETE_FILE)) continue;
+    if (promoted.has(profileBrand.isMarker(name, MARKER_FILE) ? MARKER_FILE : name) || isLeftover(name)) await removeTree(node_path.join(dir, name), retryDelayMs);
   }
-  if (!keepMarker && !foreignEntries(dir).length) await removeTree(node_path.join(dir, INCOMPLETE_FILE), retryDelayMs);
+  if (!keepMarker && !foreignEntries(dir).length) await removeTree(profileBrand.markerPath(dir, INCOMPLETE_FILE), retryDelayMs);
 }
 function clearPartialCopy(dir, retryDelayMs = 200) {
   return clearMigrationContent(dir, false, retryDelayMs);
@@ -24347,7 +24367,7 @@ async function performMigration(pending2, record2, paths, options2 = {}) {
   }
   if (pending2.mode !== "adopt") {
     try {
-      await retry(() => promises.rm(node_path.join(pending2.to, INCOMPLETE_FILE), { force: true }), retryDelayMs);
+      await retry(() => promises.rm(profileBrand.markerPath(pending2.to, INCOMPLETE_FILE), { force: true }), retryDelayMs);
     } catch {
     }
   }
@@ -24361,7 +24381,7 @@ async function removeOldData(task, context, retryDelayMs = 200) {
   const resuming = isBeingDeleted(dir);
   if (!resuming && !looksLikeData(dir)) throw new Error(`refusing to delete a folder that is not AIbertAI data: ${dir}`);
   if (!resuming) node_fs.writeFileSync(node_path.join(dir, DELETING_FILE), task.for);
-  await clearDataDir(dir, [DELETING_FILE], retryDelayMs);
+  await clearDataDir(dir, [node_path.basename(profileBrand.markerPath(dir, DELETING_FILE))], retryDelayMs);
   await removeTree(dir, retryDelayMs);
 }
 function relaunchApp() {
@@ -24958,7 +24978,7 @@ async function tidyDiscard() {
       continue;
     }
     try {
-      if (node_fs.existsSync(node_path.join(task.dir, INCOMPLETE_FILE))) await clearPartialCopy(task.dir);
+      if (node_fs.existsSync(profileBrand.markerPath(task.dir, INCOMPLETE_FILE))) await clearPartialCopy(task.dir);
       await removeTree(node_path.join(task.dir, MIGRATION_DIR));
       if (task.created && !samePath(task.dir, options.defaultDir)) await promises.rmdir(task.dir).catch(() => {
       });
@@ -24976,6 +24996,7 @@ async function tidyDiscard() {
 function setupDataStorage(next) {
   options = next;
   const dir = currentDir();
+  profileBrand.migrate(node_path.resolve(dir));
   if (next.source !== "env") {
     let stored = null;
     try {
@@ -24983,7 +25004,7 @@ function setupDataStorage(next) {
     } catch (error) {
       log("warn", `location record unreadable: ${describe(error)}`);
     }
-    const incomplete = node_fs.existsSync(node_path.join(dir, INCOMPLETE_FILE));
+    const incomplete = node_fs.existsSync(profileBrand.markerPath(dir, INCOMPLETE_FILE));
     const marker = readMarker(dir);
     if (incomplete && marker && (stored?.dataId === void 0 || marker.dataId === stored.dataId)) {
       try {

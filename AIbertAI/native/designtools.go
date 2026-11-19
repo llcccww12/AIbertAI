@@ -24,7 +24,7 @@ const designPreparePPTXTool = "canvas_prepare_pptx"
 func designTool(name string) bool {
 	switch name {
 	case designReadTool, designSelectionTool, designTextTool, designCreateHTMLTool, designCommitHTMLTool,
-		designProductionTool, designPreparePPTXTool, "design_await_style_choice", "canvas_add_artifact_asset",
+		designProductionTool, designPreparePPTXTool, "media_get_image_model", "media_generate_image", "media_edit_image", "design_await_style_choice", "canvas_add_artifact_asset",
 		"canvas_capture_preview", "design_jury_submit", "canvas_create_image", "canvas_create_video",
 		"canvas_compose_media_project", "canvas_create_layer_group", "canvas_group_story_assets", "canvas_update_node",
 		"canvas_delete_node", "design_catalog_search", "design_catalog_detail", "design_catalog_logo_batch":
@@ -35,7 +35,7 @@ func designTool(name string) bool {
 
 func designWriteTool(name string) bool {
 	switch name {
-	case designReadTool, designSelectionTool, "design_await_style_choice", "design_catalog_search", "design_catalog_detail":
+	case designReadTool, designSelectionTool, "media_get_image_model", "design_await_style_choice", "design_catalog_search", "design_catalog_detail":
 		return false
 	}
 	return designTool(name)
@@ -111,7 +111,9 @@ func (b *desktopDesignBridge) call(ctx context.Context, row acpSession, design j
 		return "", err
 	}
 	timeout := 20 * time.Second
-	if name == "canvas_capture_preview" || name == "design_await_style_choice" || name == "design_session_open" {
+	if name == "media_generate_image" || name == "media_edit_image" {
+		timeout = 21 * time.Minute
+	} else if name == "canvas_capture_preview" || name == "design_await_style_choice" || name == "design_session_open" {
 		timeout = 125 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -126,6 +128,9 @@ func (b *desktopDesignBridge) call(ctx context.Context, row acpSession, design j
 		}
 		return string(reply.Result), nil
 	case <-ctx.Done():
+		if name == "media_generate_image" || name == "media_edit_image" {
+			_ = b.send(map[string]string{"event": "design_tool_cancel", "id": id})
+		}
 		return "", errors.New("design_tool_unavailable")
 	}
 }

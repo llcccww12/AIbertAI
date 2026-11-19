@@ -2970,7 +2970,7 @@ paths:
   /api/admin/v1/models/{modelID}/probe:
     post:
       summary: 使用已保存配置测试系统大语言模型或向量模型
-      description: 按模型协议、Base URL、已保存密钥和网络代理向上游发送非流式请求，不缓存、不跟随重定向。大语言模型使用对应协议接口，返回提取的文本和响应有效性；向量模型将 message 作为 embedding 输入，返回维度、配置一致性、向量预览和 Token 用量。
+      description: 按模型协议、Base URL、已保存密钥和网络代理连接上游，不缓存、不跟随重定向。文本测试可用 Accept application/x-ndjson 启用逐段接收，按保存的流式策略请求。上游返回事件流时输出 start、delta、done 三种逐行 JSON 事件，否则返回 JSON 结果。向量测试仍返回维度、配置一致性、向量预览和 Token 用量。
       parameters:
         - {name: modelID, in: path, required: true, schema: {type: string, format: uuid}}
       requestBody:
@@ -2985,7 +2985,7 @@ paths:
                 message: {type: string, minLength: 1, maxLength: 4000, description: 大语言模型的测试消息或向量模型的 embedding 输入。}
       responses:
         '200':
-          description: 大语言模型或向量模型的 JSON 测试结果。
+          description: 文本测试返回逐行 JSON 事件流或完整 JSON。向量测试返回完整 JSON。
           content:
             application/json:
               schema:
@@ -2995,7 +2995,14 @@ paths:
                     properties:
                       content: {type: string}
                       valid: {type: boolean, description: 上游响应是否包含对应协议的合法文本内容。}
+                      output_mode: {type: string, enum: [buffered]}
+                      first_text_ms: {type: integer, minimum: 0, description: 首段正文可用时间。非流式有效响应等于总耗时。}
+                      total_ms: {type: integer, minimum: 0}
                   - $ref: '#/components/schemas/EmbeddingProbeResult'
+            application/x-ndjson:
+              schema:
+                type: string
+                description: start 事件包含 output_mode=stream。delta 事件包含 content，首段可见正文附带 first_text_ms。done 事件包含 valid、total_ms，失败时 content 为错误信息。
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
@@ -9008,6 +9015,11 @@ components:
           type: boolean
           default: false
           description: 模型是否支持推理能力；旧模型省略时视为 false。
+        stream_mode:
+          type: string
+          enum: [auto, 'off']
+          default: auto
+          description: 仅文本模型。自动优先请求流式，关闭时请求完整响应。旧模型省略时默认为自动。
     Authorization:
       type: object
       description: 可使用该模型的用户和分组。全零 UUID 根分组表示全员授权（包括后续新增用户），服务端入库时转为 all_users，管理端回包统一以 group_ids 中的根 UUID 表示。兼容输入 all_users=true，此时忽略其他授权 ID。

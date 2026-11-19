@@ -86,7 +86,7 @@ func (m *Manager) Current() (standalone.Files, error) {
 	if err := validateFiles(version, release, false); err != nil {
 		return standalone.Files{}, err
 	}
-	guest := filepath.Join("/var/lib/monkeyai", directory, "releases", release.Version)
+	guest := filepath.Join(lifecycle.RuntimeMount, directory, "releases", release.Version)
 	return standalone.Files{Binary: filepath.Join(guest, "aibertai-native"), Version: release.Version}, nil
 }
 func validateFiles(root string, release lifecycle.RuntimePackage, checksums bool) error {

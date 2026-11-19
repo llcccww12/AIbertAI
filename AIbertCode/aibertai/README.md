@@ -75,6 +75,18 @@ bash deploy/stack.sh up
 
 迁移已有平台前，备份并恢复 PostgreSQL、RustFS、运行时状态目录和部署私密配置。迁移时尽量保留统一域名和端口，以延续原设备身份。更换登录地址时，桌面端会按新地址重新注册设备。首次初始化数据库只能得到一个空团队。若曾使用手工部署的 5173 静态代理，切换到此入口前先为新实例选择独立监听端口，避免和正在运行的服务冲突。保持已有服务运行时，也可优先将代理换成仓库内的 `admin/scripts/serve-admin.mjs`。
 
+### 升级默认资源桶
+
+新配置默认使用 `aibertai-resources`。Compose 的 `stack.sh up` 会在后端停服期间迁移旧默认桶。自定义桶保持原配置。手工运行后端时，先停止所有使用这两个桶的后端进程，保持 RustFS 运行，使用已配置 S3 环境变量的新版服务执行：
+
+```bash
+aibertai-server migrate-resource-bucket
+```
+
+命令保留旧桶，按原对象键复制到新桶，相同对象复用，遇到同名异内容时保留两份并报错。复制完成后，取消显式的旧桶配置或设置 `AIBERTAI_S3_BUCKET=aibertai-resources`，再启动后端。对象存储凭据须能列出、读取和写入相应的桶。
+
+回滚时同样先停服，执行 `aibertai-server migrate-resource-bucket --rollback`，成功后设置 `AIBERTAI_S3_BUCKET=monkeyai-resources` 再启动。回滚会把新版新增对象同步到旧桶。若同一键的两个对象已各自更新，先确认应保留哪个版本再重试。Compose 可用 `docker compose --env-file deploy/.env -f deploy/compose.yaml run --rm --no-deps backend migrate-resource-bucket --rollback`，并把桶配置写入 `deploy/.env`。数据库里的资源引用保持原对象键。
+
 ### 部署设计案例缓存
 
 在服务器上准备完整的设计缓存目录，将已验收缓存中的 `catalog.json` 和 `assets/` 一起复制过去。也可以在服务器上使用[设计资源同步工具](design/design-resource-import.md#私有后端缓存)，从部署方选定的资源目录生成缓存。

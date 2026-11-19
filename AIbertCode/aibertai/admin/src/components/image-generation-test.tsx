@@ -191,6 +191,10 @@ export function ImageGenerationTest({
       !availableRatios.includes(aspect)
     )
       return
+    if (!key.startsWith("mk_") || key.length <= 3) {
+      setError(t("pages.models.testGenerationWarning"))
+      return
+    }
     if (operation === "edit" && references.length === 0) return
     setBusy(true)
     setError("")
@@ -238,7 +242,7 @@ export function ImageGenerationTest({
         <DialogHeader>
           <DialogTitle>{t("pages.models.testGeneration")}</DialogTitle>
         </DialogHeader>
-        <p className="text-sm text-muted-foreground">
+        <p id="image-test-key-description" className="text-sm text-muted-foreground">
           {t("pages.models.testGenerationWarning")}
         </p>
         <form className="flex flex-col gap-6" onSubmit={submit}>
@@ -252,7 +256,10 @@ export function ImageGenerationTest({
                 type="password"
                 autoComplete="off"
                 value={key}
-                onChange={(event) => setKey(event.target.value)}
+                onChange={(event) => setKey(event.target.value.trim())}
+                placeholder="mk_..."
+                pattern="mk_.+"
+                aria-describedby="image-test-key-description"
                 required
               />
             </Field>

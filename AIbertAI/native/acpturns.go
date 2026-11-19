@@ -69,7 +69,11 @@ func (s acpSession) modelHistory() []toolConversationMessage {
 			messages = append(messages, toolConversationMessage{Role: "user", Content: &input})
 			for _, run := range turn.workspaceTools() {
 				if run.Call != nil && run.Report.Failed == 0 {
-					messages = append(messages, toolConversationMessage{Role: "assistant", ToolCalls: []modelToolUse{*run.Call}, ResponseItems: run.ResponseItems},
+					assistant := toolConversationMessage{Role: "assistant", ToolCalls: []modelToolUse{*run.Call}, ResponseItems: run.ResponseItems}
+					if run.Preamble != "" {
+						assistant.Content = &run.Preamble
+					}
+					messages = append(messages, assistant,
 						toolConversationMessage{Role: "tool", Content: &run.Output, ToolCallID: run.Call.ID})
 				}
 			}
@@ -188,7 +192,7 @@ func (h *relaySessionHost) retryPendingReport(ctx context.Context, id string) er
 	return errors.Join(reportErr, live.save(session))
 }
 
-func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, request *http.Request, id, op, clientID, prompt string, files ...acpAttachment) (any, error) {
+func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, request *http.Request, id, op, clientID, prompt string, accepted func(acpSession) error, files ...acpAttachment) (any, error) {
 	if op == "" {
 		var err error
 		op, err = newUUID()
@@ -210,8 +214,21 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 	currentGoalAtStart := session.Goal
 	register := index == 0 && retry
 	if !retry {
-		turn.ReportText = h.collectTurnText(turnCtx)
-		if index == 0 {
+		// At this point the user message and cancellable turn are durable.
+		if clientID != "" {
+			err = notifyACPTurnState(ctx, ws, session, op, false)
+			if err == nil {
+				err = wsjson.Write(ctx, ws, map[string]any{"jsonrpc": "2.0", "method": "_monkeyai/session/message",
+					"params": map[string]any{"sessionId": id, "eventSeq": session.historySequence(), "message": session.promptMessage(index, nil)}})
+			}
+		}
+		if err == nil && accepted != nil {
+			err = accepted(session)
+		}
+		if err == nil {
+			turn.ReportText = h.collectTurnText(turnCtx)
+		}
+		if err == nil && index == 0 {
 			var auth authorization
 			auth, err = live.authorization(turnCtx)
 			if err == nil {
@@ -220,6 +237,9 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 			register = err != nil
 		}
 		if err == nil {
+			if clientID != "" {
+				turnCtx = context.WithValue(turnCtx, acpAnswerKey{}, session.responseID(index))
+			}
 			err = h.runACPModelTurn(turnCtx, ws, request, session, &turn, files)
 		}
 		if len(turn.Answer) > 128<<10 {
@@ -264,6 +284,15 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 			return nil, errors.New("session_write_failed")
 		}
 	}
+	if clientID != "" {
+		if turn.hasHistoryResponse() {
+			calls := map[string]any{}
+			message := session.responseMessage(index, calls)
+			_ = wsjson.Write(ctx, ws, map[string]any{"jsonrpc": "2.0", "method": "_monkeyai/session/message",
+				"params": map[string]any{"sessionId": id, "eventSeq": session.historySequence(), "message": message, "toolCalls": calls}})
+		}
+		_ = notifyACPTurnState(ctx, ws, session, op, true)
+	}
 	if turn.Failed {
 		if errors.Is(err, errSkillCommandUnavailable) {
 			return nil, errSkillCommandUnavailable
@@ -273,10 +302,23 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 	if turn.Interrupted {
 		return map[string]string{"stopReason": "cancelled"}, nil
 	}
-	if err := sendACPText(ctx, ws, id, "agent_message_chunk", turn.Answer); err != nil {
-		return nil, err
+	if clientID == "" {
+		if err := sendACPText(ctx, ws, id, "agent_message_chunk", turn.Answer); err != nil {
+			return nil, err
+		}
 	}
 	return map[string]string{"stopReason": "end_turn"}, nil
+}
+
+func notifyACPTurnState(ctx context.Context, ws *websocket.Conn, session acpSession, operation string, finished bool) error {
+	state := map[string]any{"status": session.State, "executionId": operation}
+	if finished {
+		state["executionId"] = nil
+		state["goal"] = session.Goal
+	}
+	return wsjson.Write(ctx, ws, map[string]any{"jsonrpc": "2.0", "method": "_monkeyai/session/state", "params": map[string]any{
+		"sessionId": session.ID, "eventSeq": session.historySequence(), "state": state, "finish": finished,
+	}})
 }
 
 func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Conn, request *http.Request, session acpSession, turn *acpTurn, files []acpAttachment) error {
@@ -347,9 +389,12 @@ func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Co
 		designExpertSelected := session.ExpertID == "" || session.ExpertID == designExpertID
 		if (designExpertSelected || len(importedExpert.DesignTools) != 0) && h.local != nil && h.designBridge != nil &&
 			h.acpScope(request.WithContext(ctx), "files:read") == nil {
-			if root, err := live.workspaces.sessionRoot(session); err == nil {
+			root, rootErr := live.workspaces.sessionRoot(session)
+			if rootErr == nil {
 				design = workspaceDesign(root, id)
 				root.Close()
+			} else if len(importedExpert.DesignTools) != 0 && allowWrite {
+				return rootErr
 			}
 			if design == nil && len(importedExpert.DesignTools) != 0 && allowWrite {
 				if _, err := h.designBridge.ensureCanvas(ctx, session); err != nil {
@@ -365,14 +410,17 @@ func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Co
 					return errors.New("design_canvas_unavailable")
 				}
 			}
-			if design != nil {
-				limit = 12
+			if design != nil || (designExpertSelected && rootErr == nil) {
+				if design != nil {
+					limit = 12
+				}
 				workspace.DesignTools, err = h.designBridge.tools(ctx, session, design)
 				if err != nil {
 					return err
 				}
 				if designExpertSelected {
-					workspace.Instructions = designExpertInstructions(design)
+					workspace.Instructions = designExpertInstructions(design) +
+						"\nWhen the user asks for an image, check the selected image model and call media_generate_image (or media_edit_image for edits). Report the generated result, or explain the tool error. Do not replace an image request with HTML."
 				} else {
 					workspace.DesignTools = slices.DeleteFunc(workspace.DesignTools, func(tool desktopDesignTool) bool {
 						return !slices.Contains(importedExpert.DesignTools, tool.Name)
@@ -458,7 +506,8 @@ func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Co
 		selected = modelID
 	}
 	var modelOptions map[string]any
-	if h.local != nil || selected != modelID {
+	stream := turn.ClientID != ""
+	if h.local != nil || live.cloudWorkspace != "" || selected != modelID {
 		auth, authErr := live.authorization(ctx)
 		if authErr != nil {
 			return authErr
@@ -469,6 +518,7 @@ func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Co
 		}
 		protocol, budget = config.Protocol, config.inputBudget()
 		modelOptions = session.Thinking.requestFields(config)
+		stream = stream && config.StreamMode != "off"
 	}
 	var goalRun *desktopGoalRun
 	if goal := session.Goal; h.local != nil && workspace != nil && goal != nil && goal.Current && goal.Status == "active" {
@@ -480,6 +530,20 @@ func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Co
 		workspace.Goal = goalRun
 		workspace.Instructions += "\nThe user's current goal is: " + goal.Objective +
 			"\nWork toward this goal. End your answer with a separate line [GOAL_COMPLETE] only when it is achieved. Otherwise report progress and any blockers."
+	}
+	var delta func(string) error
+	if stream {
+		sentBytes := 0
+		delta = func(text string) error {
+			sentBytes += len(text)
+			if sentBytes > 128<<10 {
+				return errors.New("session_answer_too_large")
+			}
+			return sendACPToolUpdate(ctx, ws, id, map[string]any{
+				"sessionUpdate": "agent_message_chunk",
+				"content":       map[string]string{"type": "text", "text": text},
+			})
+		}
 	}
 	turn.Answer, turn.Usage, turn.ToolRuns, err = live.client.completeWorkspaceToolTurn(ctx, protocol, h.modelKey(), id, selected, approved, modelPrompt,
 		session.modelHistory(), false, allowWrite, limit, connectors, workspace, budget, modelOptions, func(message toolConversationMessage, args toolArguments, step int) (output string, toolErr error) {
@@ -549,7 +613,7 @@ func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Co
 				}
 			}
 			return h.executeACPModelTool(ctx, request, session, turn.Operation, step, call.Function.Name, args, attachments)
-		})
+		}, delta)
 	if goalRun != nil {
 		turn.goalOutcome = goalRun.outcome
 	}
@@ -642,10 +706,14 @@ func workspaceCompatTitle(name string) string {
 	}
 }
 
+type acpAnswerKey struct{}
+
 func sendACPToolUpdate(ctx context.Context, ws *websocket.Conn, id string, update map[string]any) error {
-	return wsjson.Write(ctx, ws, map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
-		"sessionId": id, "update": update,
-	}})
+	params := map[string]any{"sessionId": id, "update": update}
+	if answerID, ok := ctx.Value(acpAnswerKey{}).(string); ok {
+		params["_meta"] = map[string]string{"messageId": answerID}
+	}
+	return wsjson.Write(ctx, ws, map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": params})
 }
 
 func (h *relaySessionHost) approveACPTool(ctx context.Context, ws *websocket.Conn, request *http.Request, sessionID string, call modelToolUse, args workspaceToolArguments) (reportedPermissions, error) {
@@ -769,6 +837,61 @@ func (session acpSession) toolHistoryID(turn acpTurn, index, step int) string {
 	return fmt.Sprintf("%s-tool-%d", turn.Operation, step+1)
 }
 
+func (session acpSession) promptMessage(index int, auth *relayAuthorization) map[string]any {
+	turn := session.Turns[index]
+	id := fmt.Sprintf("%s-%d", session.ID, index+1)
+	userParts := []map[string]any{{"type": "text", "text": turn.Prompt}}
+	for _, file := range turn.Attachments {
+		part := map[string]any{"type": "file", "name": file.Name}
+		if file.URI != "" {
+			if auth == nil {
+				part["uri"] = file.URI
+				part["employeeAttachment"] = true
+			} else if path := historyFilePath(file.URI, file.Name); path != "" {
+				part["fileRef"] = historyRelayRef(*auth, session.ID, path)
+			}
+		} else {
+			part["fileRef"] = file.Ref
+		}
+		userParts = append(userParts, part)
+	}
+	user := map[string]any{"id": id + "-prompt", "role": "user", "at": turn.Started.UnixMilli(), "parts": userParts}
+	if turn.ClientID != "" {
+		user["queueMessageId"] = turn.ClientID
+	}
+	return user
+}
+
+func (session acpSession) responseID(index int) string {
+	return fmt.Sprintf("%s-%d-response", session.ID, index+1)
+}
+
+func (session acpSession) responseMessage(index int, calls map[string]any) map[string]any {
+	turn := session.Turns[index]
+	parts := []map[string]string{}
+	for step, run := range turn.workspaceTools() {
+		if run.Preamble != "" {
+			parts = append(parts, map[string]string{"type": "text", "text": run.Preamble})
+		}
+		callID, state := session.toolHistoryID(turn, index, step), "completed"
+		if run.Report.Failed > 0 {
+			state = "failed"
+		}
+		kind := workspaceToolKind(run.Report.Name)
+		if run.Report.Category == "connector" {
+			kind = "other"
+		}
+		calls[callID] = map[string]any{"id": callID, "name": run.Report.Name, "title": run.Report.Name, "kind": kind, "status": state,
+			"output": run.Output, "isError": run.Report.Failed > 0}
+		parts = append(parts, map[string]string{"type": "tool_call", "toolCallId": callID})
+	}
+	if turn.Answer != "" {
+		parts = append(parts, map[string]string{"type": "text", "text": turn.Answer})
+	}
+	return map[string]any{"id": session.responseID(index), "role": "assistant",
+		"at": turn.Ended.UnixMilli(), "endedAt": turn.Ended.UnixMilli(), "parts": parts}
+}
+
 func (session acpSession) historyWindow(query historyQuery, auth *relayAuthorization) (map[string]any, error) {
 	count := session.historySequence()
 	start, end, older, newer, err := query.window("source", count)
@@ -787,52 +910,13 @@ func (session acpSession) historyWindow(query historyQuery, auth *relayAuthoriza
 		if position <= start || userPosition >= end {
 			continue
 		}
-		id := fmt.Sprintf("%s-%d", session.ID, index+1)
 		if userPosition >= start {
-			userParts := []map[string]any{{"type": "text", "text": turn.Prompt}}
-			for _, file := range turn.Attachments {
-				part := map[string]any{"type": "file", "name": file.Name}
-				if file.URI != "" {
-					if auth == nil {
-						part["uri"] = file.URI
-						part["employeeAttachment"] = true
-					} else if path := historyFilePath(file.URI, file.Name); path != "" {
-						part["fileRef"] = historyRelayRef(*auth, session.ID, path)
-					}
-				} else {
-					part["fileRef"] = file.Ref
-				}
-				userParts = append(userParts, part)
-			}
-			user := map[string]any{"id": id + "-prompt", "role": "user", "at": turn.Started.UnixMilli(), "parts": userParts}
-			if turn.ClientID != "" {
-				user["queueMessageId"] = turn.ClientID
-			}
-			messages = append(messages, user)
+			messages = append(messages, session.promptMessage(index, auth))
 		}
 		if !turn.hasHistoryResponse() || userPosition+1 >= end {
 			continue
 		}
-		parts := []map[string]string{}
-		for step, run := range turn.workspaceTools() {
-			callID, state := session.toolHistoryID(turn, index, step), "completed"
-			if run.Report.Failed > 0 {
-				state = "failed"
-			}
-			kind := workspaceToolKind(run.Report.Name)
-			if run.Report.Category == "connector" {
-				kind = "other"
-			}
-			calls[callID] = map[string]any{"id": callID, "name": run.Report.Name, "title": run.Report.Name, "kind": kind, "status": state,
-				"output": run.Output, "isError": run.Report.Failed > 0}
-			parts = append(parts, map[string]string{"type": "tool_call", "toolCallId": callID})
-		}
-		if turn.Answer != "" {
-			parts = append(parts, map[string]string{"type": "text", "text": turn.Answer})
-		}
-		if len(parts) > 0 {
-			messages = append(messages, map[string]any{"id": id + "-response", "role": "assistant", "at": turn.Ended.UnixMilli(), "parts": parts})
-		}
+		messages = append(messages, session.responseMessage(index, calls))
 	}
 	model := session.Model
 	if model == "" {

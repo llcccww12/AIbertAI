@@ -64,7 +64,7 @@ func (h *relaySessionHost) desktopModelSettings(ctx context.Context, method stri
 		}
 		probe, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		_, _, err = l.client.chat(probe, model.Protocol, l.key, "", model.ID, "Reply OK.", func(string) error { return nil })
+		_, _, err = l.client.chat(probe, model.Protocol, l.key, "", model.ID, "Reply OK.", model.StreamMode != "off", func(string) error { return nil })
 		if err != nil {
 			return map[string]any{"ok": false, "message": err.Error()}, nil
 		}

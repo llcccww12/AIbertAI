@@ -35,7 +35,7 @@ func NewS3(ctx context.Context) (*S3, error) {
 	endpoint := envconfig.Getenv("AIBERTAI_S3_ENDPOINT")
 	bucket := envconfig.Getenv("AIBERTAI_S3_BUCKET")
 	if bucket == "" {
-		bucket = "monkeyai-resources"
+		bucket = resourceBucket
 	}
 	region := envconfig.Getenv("AIBERTAI_S3_REGION")
 	if region == "" {
@@ -59,14 +59,38 @@ func NewS3(ctx context.Context) (*S3, error) {
 	}), bucket: bucket}, nil
 }
 func (s *S3) Init(ctx context.Context) error {
-	_, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: &s.bucket})
+	if err := s.ensureBucket(ctx, s.bucket); err != nil {
+		return err
+	}
+	if s.bucket != resourceBucket {
+		return nil
+	}
+	ready, err := s.bucketMigrationComplete(ctx)
+	if err != nil || ready {
+		return err
+	}
+	previous, err := s.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(legacyResourceBucket), MaxKeys: aws.Int32(1)})
+	if _, missing := errors.AsType[*types.NoSuchBucket](err); missing {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if len(previous.Contents) != 0 {
+		return errors.New("旧资源桶已有数据，请停服执行 migrate-resource-bucket 后再启动")
+	}
+	return nil
+}
+
+func (s *S3) ensureBucket(ctx context.Context, name string) error {
+	_, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: &name})
 	if err == nil {
 		return nil
 	}
 	if _, ok := errors.AsType[*types.NotFound](err); !ok {
 		return err
 	}
-	_, err = s.client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: &s.bucket})
+	_, err = s.client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: &name})
 	return err
 }
 func (s *S3) Put(ctx context.Context, key string, b []byte, mime string) error {

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"aibertai.local/engine/internal/hostpaths"
 )
 
 func remoteTask() UpgradeTask {
@@ -41,7 +43,7 @@ func TestRemoteUpgradeLaunchAndRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"--unit=monkeyai-engine-upgrade-" + task.ID, "--collect", "--property=RuntimeMaxSec=26min", "remote-upgrade\n" + task.ID} {
+	for _, want := range []string{"--unit=" + strings.TrimSuffix(hostpaths.Unit, ".service") + "-upgrade-" + task.ID, "--collect", "--property=RuntimeMaxSec=26min", "remote-upgrade\n" + task.ID} {
 		if !strings.Contains(string(before), want) {
 			t.Fatal("缺少独立服务参数", want)
 		}

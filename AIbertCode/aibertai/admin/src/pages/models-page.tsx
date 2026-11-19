@@ -226,6 +226,7 @@ type ModelBase = {
   maxOutputTokensK: number
   supportsVision: boolean
   supportsReasoning: boolean
+  streamMode: "auto" | "off"
   baseUrl: string
   proxyId: string
   protocol: ModelProtocol
@@ -266,6 +267,7 @@ type ApiModel = {
     max_output_tokens: number
     supports_vision: boolean
     supports_reasoning?: boolean
+    stream_mode?: "auto" | "off"
   }
   credit_multiplier: number
   tags?: { id: string; name: string }[]
@@ -295,6 +297,7 @@ function fromApiModel(model: ApiModel): Model {
     maxOutputTokensK: (model.advanced_config?.max_output_tokens ?? 0) / 1000,
     supportsVision: model.advanced_config?.supports_vision ?? false,
     supportsReasoning: model.advanced_config?.supports_reasoning ?? false,
+    streamMode: model.advanced_config?.stream_mode === "off" ? "off" : "auto",
     baseUrl: model.base_url,
     proxyId: model.proxy_id ?? "",
     protocol: model.protocol,
@@ -425,6 +428,12 @@ export function ModelsPage() {
   const [textModelToTest, setTextModelToTest] = useState<Model | null>(null)
   const [testMessage, setTestMessage] = useState("ping")
   const [testResponse, setTestResponse] = useState("")
+  const [testError, setTestError] = useState("")
+  const [testMetrics, setTestMetrics] = useState<{
+    output_mode?: "stream" | "buffered"
+    first_text_ms?: number
+    total_ms?: number
+  }>({})
   const [testSending, setTestSending] = useState(false)
   const [protocol, setProtocol] = useState<ModelProtocol>("openai_responses")
   const [kind, setKind] = useState<ModelKind>("text")
@@ -457,6 +466,7 @@ export function ModelsPage() {
   }))
   const [supportsVision, setSupportsVision] = useState(true)
   const [supportsReasoning, setSupportsReasoning] = useState(true)
+  const [streamMode, setStreamMode] = useState<"auto" | "off">("auto")
   const [tagsOpen, setTagsOpen] = useState(false)
   const [tagIds, setTagIds] = useState<string[]>([])
   const [authorizationOverride, setAuthorization] =
@@ -595,16 +605,74 @@ export function ModelsPage() {
     if (!target || !testMessage.trim() || testSending) return
     setTestSending(true)
     setTestResponse("")
+    setTestError("")
+    setTestMetrics({})
+    const started = performance.now()
     try {
       const response = await fetch(
         `/api/admin/v1/models/${target.id}/probe`,
         {
           method: "POST",
           credentials: "include",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Accept:
+              target.kind === "text"
+                ? "application/x-ndjson, application/json"
+                : "application/json",
+          },
           body: JSON.stringify({ message: testMessage.trim() }),
         }
       )
+      if (
+        response.ok &&
+        response.headers.get("Content-Type")?.startsWith("application/x-ndjson")
+      ) {
+        const reader = response.body
+          ?.pipeThrough(new TextDecoderStream())
+          .getReader()
+        if (!reader) throw new Error(t("pages.models.streamInterrupted"))
+        let pending = ""
+        let firstText = false
+        let completed = false
+        try {
+          while (!completed) {
+            const { value, done } = await reader.read()
+            if (done) break
+            pending += value
+            const lines = pending.split("\n")
+            pending = lines.pop() ?? ""
+            for (const line of lines) {
+              if (!line) continue
+              const event = JSON.parse(line)
+              if (event.type === "start") {
+                setTestMetrics({ output_mode: "stream" })
+              } else if (event.type === "delta") {
+                setTestResponse((text) => text + event.content)
+                if (!firstText && event.content.trim()) {
+                  firstText = true
+                  const elapsed = Math.round(performance.now() - started)
+                  setTestMetrics((metrics) => ({
+                    ...metrics,
+                    first_text_ms: elapsed,
+                  }))
+                }
+              } else if (event.type === "done") {
+                completed = true
+                const elapsed = Math.round(performance.now() - started)
+                setTestMetrics((metrics) => ({ ...metrics, total_ms: elapsed }))
+                if (!event.valid)
+                  setTestError(event.content || t("pages.models.streamInterrupted"))
+              }
+            }
+          }
+          if (!completed) throw new Error(t("pages.models.streamInterrupted"))
+        } finally {
+          await reader.cancel().catch(() => undefined)
+          reader.releaseLock()
+        }
+        return
+      }
       const payload = await response.json().catch(() => null)
       if (!response.ok) {
         throw new Error(payload?.error?.message ?? "模型测试失败")
@@ -628,9 +696,20 @@ export function ModelsPage() {
         setTestResponse(lines.join("\n"))
         return
       }
-      setTestResponse(payload?.content || "模型返回了空响应")
+      const elapsed = Math.round(performance.now() - started)
+      const hasText = payload?.valid !== false && Boolean(payload?.content)
+      setTestMetrics({
+        output_mode: "buffered",
+        first_text_ms: hasText ? elapsed : undefined,
+        total_ms: elapsed,
+      })
+      if (hasText) {
+        setTestResponse(payload.content)
+      } else {
+        setTestError(payload?.content || "模型返回了空响应")
+      }
     } catch (reason) {
-      setTestResponse(
+      setTestError(
         reason instanceof Error ? reason.message : "模型测试失败"
       )
     } finally {
@@ -761,10 +840,11 @@ export function ModelsPage() {
               kind: "text",
               protocol: model.protocol,
               advanced_config: {
-                context_window_tokens: model.contextSizeK * 1000,
-                max_output_tokens: model.maxOutputTokensK * 1000,
+                context_window_tokens: Math.round(model.contextSizeK * 1000),
+                max_output_tokens: Math.round(model.maxOutputTokensK * 1000),
                 supports_vision: model.supportsVision,
                 supports_reasoning: model.supportsReasoning,
+                stream_mode: model.streamMode,
               },
               credit_multiplier: model.multiplier,
             }
@@ -885,6 +965,7 @@ export function ModelsPage() {
     setImageRates({ ...DEFAULT_IMAGE_RATES })
     setSupportsVision(true)
     setSupportsReasoning(true)
+    setStreamMode("auto")
     setTagsOpen(false)
     setTagIds([])
     setAuthorization(null)
@@ -944,6 +1025,7 @@ export function ModelsPage() {
     })
     setSupportsVision(model.supportsVision)
     setSupportsReasoning(model.supportsReasoning)
+    setStreamMode(model.streamMode)
     setTagIds(model.tagIds)
     setAuthorization(model.authorization)
     setDialogOpen(true)
@@ -1104,10 +1186,11 @@ export function ModelsPage() {
               kind: "text",
               protocol,
               advanced_config: {
-                context_window_tokens: contextSizeK * 1000,
-                max_output_tokens: maxOutputTokensK * 1000,
+                context_window_tokens: Math.round(contextSizeK * 1000),
+                max_output_tokens: Math.round(maxOutputTokensK * 1000),
                 supports_vision: supportsVision,
                 supports_reasoning: supportsReasoning,
+                stream_mode: streamMode,
               },
               credit_multiplier: multiplier,
             }
@@ -1655,6 +1738,33 @@ export function ModelsPage() {
                                   />
                                 </ItemActions>
                               </Item>
+                              <Item
+                                variant="outline"
+                                size="sm"
+                                className="col-span-2 min-w-0 flex-nowrap px-2"
+                              >
+                                <ItemContent className="min-w-0">
+                                  <FieldLabel htmlFor="model-streaming">
+                                    {t("pages.models.streaming")}
+                                  </FieldLabel>
+                                  <FieldDescription>
+                                    {t(
+                                      streamMode === "auto"
+                                        ? "pages.models.streamingAuto"
+                                        : "pages.models.streamingOff"
+                                    )}
+                                  </FieldDescription>
+                                </ItemContent>
+                                <ItemActions>
+                                  <Switch
+                                    id="model-streaming"
+                                    checked={streamMode === "auto"}
+                                    onCheckedChange={(checked) =>
+                                      setStreamMode(checked ? "auto" : "off")
+                                    }
+                                  />
+                                </ItemActions>
+                              </Item>
                             </ItemGroup>
                           )}
 
@@ -1877,13 +1987,13 @@ export function ModelsPage() {
                                       </FieldLabel>
                                       <Input
                                         id="model-context-size"
-                                        min="1"
+                                        min="0.001"
                                         name="contextSizeK"
                                         defaultValue={
                                           formModel?.contextSizeK ?? 256
                                         }
                                         placeholder="256"
-                                        step="1"
+                                        step="0.001"
                                         type="number"
                                         required
                                       />
@@ -1894,13 +2004,13 @@ export function ModelsPage() {
                                       </FieldLabel>
                                       <Input
                                         id="model-max-output-tokens"
-                                        min="1"
+                                        min="0.001"
                                         name="maxOutputTokensK"
                                         defaultValue={
                                           formModel?.maxOutputTokensK ?? 16
                                         }
                                         placeholder="16384"
-                                        step="1"
+                                        step="0.001"
                                         type="number"
                                         required
                                       />
@@ -2315,6 +2425,8 @@ export function ModelsPage() {
             setTextModelToTest(null)
             setTestMessage("ping")
             setTestResponse("")
+            setTestError("")
+            setTestMetrics({})
           }
         }}
       >
@@ -2341,14 +2453,58 @@ export function ModelsPage() {
             <p className="text-sm font-medium">
               {textModelToTest?.kind === "embedding" ? "测试结果" : "响应内容"}
             </p>
+            {textModelToTest?.kind === "text" && (
+              <dl className="grid grid-cols-3 gap-2 text-sm">
+                <div>
+                  <dt className="text-muted-foreground">
+                    {t("pages.models.outputMode")}
+                  </dt>
+                  <dd>
+                    {testMetrics.output_mode
+                      ? t(
+                          testMetrics.output_mode === "stream"
+                            ? "pages.models.outputStream"
+                            : "pages.models.outputBuffered"
+                        )
+                      : "—"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">
+                    {t("pages.models.firstTextTime")}
+                  </dt>
+                  <dd>
+                    {testMetrics.first_text_ms === undefined
+                      ? "—"
+                      : `${testMetrics.first_text_ms} ms`}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">
+                    {t("pages.models.totalTestTime")}
+                  </dt>
+                  <dd>
+                    {testMetrics.total_ms === undefined
+                      ? "—"
+                      : `${testMetrics.total_ms} ms`}
+                  </dd>
+                </div>
+              </dl>
+            )}
             <div
               className="max-h-[min(20rem,40vh)] min-h-24 overflow-y-auto whitespace-pre-wrap break-all rounded-md border bg-muted/40 p-3 text-sm"
               aria-live="polite"
             >
-              {testResponse || (
-                <span className="text-muted-foreground">等待响应</span>
-              )}
+              {testResponse ||
+                (!testError && (
+                  <span className="text-muted-foreground">等待响应</span>
+                ))}
             </div>
+            {testError && (
+              <p role="alert" className="text-sm text-destructive">
+                {testError}
+              </p>
+            )}
           </div>
           <DialogFooter>
             <Button
@@ -2359,6 +2515,8 @@ export function ModelsPage() {
                 setTextModelToTest(null)
                 setTestMessage("ping")
                 setTestResponse("")
+                setTestError("")
+                setTestMetrics({})
               }}
             >
               关闭

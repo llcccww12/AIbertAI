@@ -223,6 +223,10 @@ func (w *desktopWorkspaces) allocate(id string) error {
 }
 
 func (w *desktopWorkspaces) sessionRoot(row acpSession) (*os.Root, error) {
+	return prepareWorkspaceBrand(w.openSessionRoot(row))
+}
+
+func (w *desktopWorkspaces) openSessionRoot(row acpSession) (*os.Root, error) {
 	if row.Workspace == "default" && row.CWD == w.defaultPath(row.ID) {
 		name := filepath.Join("workspaces", row.ID)
 		for _, path := range []string{"workspaces", name} {

@@ -60,6 +60,28 @@ macOS 构建使用本机的 Electron ARM64 和系统 DMG 工具，生成带临�
 
 使用 `build-employee-candidate.sh` 生成包含真实员工端界面的候选包。依次传入平台、合成文本文件或 `-`，以及输出目录。传入 `-` 时测试实际工作区。Windows 还需提供官方 Electron Windows x64 ZIP 及同目录的 `SHASUMS256.txt`。脚本输出 macOS DMG 或 Windows x64 便携 ZIP，以及 SHA-256 校验文件。回环后端地址适合在运行后端的同一台机器上验收。
 
+### 工作区目录迁移
+
+新版在首次访问已有工作区时，将 `.monkeyai` 原地改名为 `.aibertai`。新工作区统一写入 `.aibertai`。会话记录保留原有标识，应用打开历史记录时会解析旧路径。画布、媒体和附件随目录移动，无需重新导入。两个目录同时存在时会报告 `workspace_brand_conflict`，两边的数据都保留。
+
+需要撤销改名时，先退出应用并停止使用该工作区的运行时。在仓库根目录执行下方命令，将参数替换成工作区根目录的绝对路径。
+
+```bash
+./AIbertAI/AIbertAI.app/Contents/Resources/bin/aibertai-native rollback-workspace-brand "/实际工作区的绝对路径"
+```
+
+回滚仅适用于有迁移记录的工作区，可以重复执行。新版再次打开该工作区时会重新迁移。回退到旧版前应备份工作区，因为旧版可能无法打开新版生成的 `.aibertai` 路径引用。
+
+### 桌面数据目录标记迁移
+
+新版启动后会原地改名桌面数据目录的三个标记文件，保留原数据 ID、路径配置和恢复日志。已有标记使用旧名时仍可识别恢复状态。要回到旧版桌面端，退出 App 后在仓库根目录执行：
+
+```bash
+node AIbertAI/code/app/out/main/desktop-profile-brand.cjs rollback "/实际桌面数据目录的绝对路径"
+```
+
+如果存储设置里还有未结束的目录复制或清理，可对涉及的目录执行同一命令。两种名称都存在时会停止，原文件保留。新版重开时会再次切换到新名称。
+
 ## 员工端发行构建
 
 在上述命令的平台参数前加 `--release`，将合成文件参数设为 `-`。macOS 使用固定的应用标识 `com.aibertai.desktop` 和一组对应的 Electron 助手标识。构建机需有官方 `@electron/osx-sign` 提供的 `electron-osx-sign` 命令，以及可用的 Developer ID Application 签名身份。在 `AIBERTAI_MAC_SIGN_IDENTITY` 中指定该身份在本机钥匙串中的名称。脚本启用 Hardened Runtime，校验应用签名，并以同一身份签署含「应用程序」快捷入口的 `AIbertAI-mac-arm64.dmg`。在同一签名身份下完成退出重开、覆盖升级和旧资料读取验收。

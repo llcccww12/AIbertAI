@@ -1,14 +1,16 @@
 package cache
 
 import (
+	"aibertai.local/engine/internal/hostpaths"
 	"context"
 	"errors"
 	"sort"
 	"time"
 )
 
-const Root = "/var/lib/monkeyai-engine/containerd"
-const ConfigPath = "/etc/monkeyai-engine/cache.json"
+var Root = hostpaths.State + "/containerd"
+var ConfigPath = hostpaths.Config + "/cache.json"
+
 const ReserveBytes = int64(25 << 30)
 const ReserveInodes = uint64(1100000)
 

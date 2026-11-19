@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -29,7 +30,7 @@ type volumes []storage.Mount
 
 func (v volumes) Ensure(context.Context, lifecycle.Spec) ([]storage.Mount, error) { return v, nil }
 func mounts() volumes {
-	return volumes{{Source: "/data/project", Target: "/workspace"}, {Source: "/data/home", Target: "/home/monkey"}, {Source: "/data/runtime", Target: "/var/lib/monkeyai"}}
+	return volumes{{Source: "/data/project", Target: "/workspace"}, {Source: "/data/home", Target: "/home/aibertai"}, {Source: "/data/runtime", Target: "/var/lib/aibertai"}}
 }
 func TestDockerConfigProtectsIdentityAndLimits(t *testing.T) {
 	s := sample()
@@ -114,6 +115,8 @@ if [ "$1" = -j ]; then echo '{"nftables":[]}'; else cat >/dev/null; fi
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := strings.TrimPrefix(r.URL.Path, "/v1.47")
 		switch {
+		case p == "/info":
+			io.WriteString(w, `{"Runtimes":{"aibertai-runsc":{"Path":"/opt/aibertai-engine/current/bin/runsc","runtimeArgs":["--platform=systrap","--network=sandbox","--overlay2=none"]}}}`)
 		case strings.HasPrefix(p, "/networks/"):
 			if !network {
 				w.WriteHeader(404)
@@ -199,7 +202,7 @@ if [ "$1" = -j ]; then echo '{"nftables":[]}'; else cat >/dev/null; fi
 		s.RuntimePackage = &lifecycle.RuntimePackage{Version: "26.1119.3", Architecture: runtime.GOARCH,
 			RuntimeRevision: strings.Repeat("a", 40), Files: map[string]lifecycle.RuntimeFile{"aibertai-native": {SHA256: strings.Repeat("b", 64), Size: 1}}}
 		d.WithRuntimeSource(func(context.Context, lifecycle.Spec) (standalone.Files, error) {
-			return standalone.Files{Binary: "/var/lib/monkeyai/_engine/releases/26.1119.3/aibertai-native", Version: "26.1119.3"}, nil
+			return standalone.Files{Binary: "/var/lib/aibertai/_engine/releases/26.1119.3/aibertai-native", Version: "26.1119.3"}, nil
 		})
 	}
 
@@ -217,6 +220,27 @@ if [ "$1" = -j ]; then echo '{"nftables":[]}'; else cat >/dev/null; fi
 	current.State.Running = false
 	if _, err = d.Create(ctx, s); err != nil || creates != 1 {
 		t.Fatal(creates, err)
+	}
+	if persistent {
+		// Docker cannot modify a container's bind targets without replacing it.
+		original := *current
+		current.Config.Hostname = "monkeyai"
+		current.Config.Env = legacyContainerEnvironment(original.Config.Env)
+		current.HostConfig.Runtime = dockerapi.LegacyRuntime
+		current.HostConfig.Mounts = slices.Clone(original.HostConfig.Mounts)
+		current.Mounts = slices.Clone(original.Mounts)
+		for i := range current.HostConfig.Mounts {
+			current.HostConfig.Mounts[i].Target = legacyContainerPath(current.HostConfig.Mounts[i].Target)
+			current.Mounts[i].Destination = legacyContainerPath(current.Mounts[i].Destination)
+		}
+		if _, err := d.Create(ctx, s); err != nil || creates != 1 {
+			t.Fatalf("existing container was not reused: %d %v", creates, err)
+		}
+		program, args := runtimeCommand(*current, lifecycle.RuntimeMount+"/_engine/aibertai-native", []string{"status", "--state-dir", standalone.StateDir})
+		if program != lifecycle.LegacyRuntimeMount+"/_engine/aibertai-native" || args[2] != lifecycle.LegacyRuntimeMount+"/state" {
+			t.Fatalf("existing identity directory not selected: %s %v", program, args)
+		}
+		*current = original
 	}
 	if !owned(current.Config.Labels, s) || current.Config.Labels["org.opencontainers.image.title"] != "MonkeyAI 云环境" {
 		t.Fatal("镜像标签覆盖了归属标签或未被继承")

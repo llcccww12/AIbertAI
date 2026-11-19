@@ -42,7 +42,7 @@ func designExpertInstructions(design json.RawMessage) string {
 		instructions.WriteByte('\n')
 		instructions.Write(note)
 	}
-	instructions.WriteString("\nRead the current selections from this workspace-relative path when needed: .monkeyai/design/")
+	instructions.WriteString("\nRead the current selections from this workspace-relative path when needed: .aibertai/design/")
 	instructions.WriteString(task.CanvasID)
 	instructions.WriteString("/design-context.json")
 	return instructions.String()

@@ -149,7 +149,7 @@ func TestDesktopMediaGatewayUsesSessionModelAndAccountCatalog(t *testing.T) {
 		if r.URL.Path != "/api/v1/models" || r.Header.Get("Authorization") != "Bearer current-account" {
 			t.Error("gateway did not use the current account's catalog")
 		}
-		_, _ = w.Write([]byte(`{"models":[{"id":"` + image + `","kind":"image","model":"picture"},{"id":"` + video + `","kind":"video","model":"motion"}],"total_count":2}`))
+		_, _ = w.Write([]byte(`{"models":[{"id":"` + image + `","kind":"image","model":"picture@revision@` + image + `"},{"id":"` + video + `","kind":"video","model":"motion"}],"total_count":2}`))
 	}))
 	defer server.Close()
 	h := &relaySessionHost{live: &acpLive{client: &client{server.URL, server.Client()}, auth: authorization{Access: "current-account"},
@@ -162,6 +162,13 @@ func TestDesktopMediaGatewayUsesSessionModelAndAccountCatalog(t *testing.T) {
 	if config["model"] != "motion@"+video || config["baseUrl"] != server.URL+"/v1" ||
 		config["headers"].(map[string]string)["X-MAI-Session-ID"] != session {
 		t.Fatal("media call lost the selected model, private backend, or session attribution")
+	}
+	result, err = h.desktopMediaGateway(t.Context(), json.RawMessage(`{"sessionId":"`+session+`","kind":"image"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config := result.(map[string]any); config["model"] != "picture@revision@"+image {
+		t.Fatalf("catalog gateway identifier was changed: %v", config["model"])
 	}
 	if _, err := h.desktopMediaGateway(t.Context(), json.RawMessage(`{"sessionId":"`+session+`","kind":"video","modelId":"`+image+`"}`)); err == nil {
 		t.Fatal("an image model was issued as a video model")
@@ -293,6 +300,7 @@ func TestDesktopCancelInterruptsModelAndReportsTurn(t *testing.T) {
 	const model = "c1bd985c-9f71-4b85-937a-c41b1b104d38"
 	const machine = "c2bd985c-9f71-4b85-937a-c41b1b104d38"
 	const session = "c3bd985c-9f71-4b85-937a-c41b1b104d38"
+	const messageID = "c4bd985c-9f71-4b85-937a-c41b1b104d38"
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	started := make(chan struct{})
@@ -304,7 +312,12 @@ func TestDesktopCancelInterruptsModelAndReportsTurn(t *testing.T) {
 		case "/api/v1/models":
 			_, _ = w.Write([]byte(`{"models":[{"id":"` + model + `","kind":"text","protocol":"openai_chat_completions"}],"total_count":1}`))
 		case "/v1/chat/completions":
-			w.WriteHeader(http.StatusOK)
+			var request struct{ Stream bool }
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil || !request.Stream {
+				t.Errorf("desktop turn did not request streaming: %v", err)
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: " + `{"choices":[{"delta":{"content":"First fragment","reasoning_content":"internal fixture"}}]}` + "\n\n"))
 			w.(http.Flusher).Flush()
 			close(started)
 			select {
@@ -384,11 +397,60 @@ func TestDesktopCancelInterruptsModelAndReportsTurn(t *testing.T) {
 	turn, controls := dial(), dial()
 	defer turn.CloseNow()
 	defer controls.CloseNow()
-	send(turn, 2, "session/prompt", map[string]any{"sessionId": session, "prompt": []map[string]string{{"type": "text", "text": "Fixture"}}})
+	readNotice := func(method string) map[string]any {
+		t.Helper()
+		for {
+			var notice struct {
+				ID     json.RawMessage
+				Method string
+				Params map[string]any
+			}
+			if err := wsjson.Read(ctx, turn, &notice); err != nil {
+				t.Fatal(err)
+			}
+			if len(notice.ID) != 0 {
+				t.Fatalf("turn RPC replied before %s", method)
+			}
+			if notice.Method == method {
+				return notice.Params
+			}
+		}
+	}
+	send(turn, 2, "_monkeyai/session/queue", map[string]any{"sessionId": session, "action": "add", "sendIfIdle": true, "id": messageID, "text": "Fixture"})
+	execution := readNotice("_monkeyai/session/state")
+	state, _ := execution["state"].(map[string]any)
+	if state["status"] != "running" {
+		t.Fatalf("missing running state: %v", execution)
+	}
+	accepted := readNotice("_monkeyai/session/message")
+	message, _ := accepted["message"].(map[string]any)
+	row, err := host.live.load(session)
+	if err != nil || len(row.Turns) != 1 || row.Turns[0].ClientID != messageID ||
+		message["queueMessageId"] != messageID || message["id"] != session+"-1-prompt" {
+		t.Fatalf("submitted message was not durably acknowledged: %v %v", accepted, err)
+	}
+	if read(turn, 2)["clientMessageId"] != messageID {
+		t.Fatal("queue response no longer identifies the accepted message")
+	}
 	select {
 	case <-started:
 	case <-ctx.Done():
 		t.Fatal("model never started")
+	}
+	chunk := readNotice("session/update")
+	update, _ := chunk["update"].(map[string]any)
+	content, _ := update["content"].(map[string]any)
+	meta, _ := chunk["_meta"].(map[string]any)
+	if update["sessionUpdate"] != "agent_message_chunk" || content["text"] != "First fragment" || meta["messageId"] != session+"-1-response" {
+		t.Fatalf("model text was not displayed before completion: %v", chunk)
+	}
+	send(turn, 6, "_monkeyai/session/queue", map[string]any{"sessionId": session, "action": "get"})
+	if read(turn, 6)["sessionId"] != session {
+		t.Fatal("same connection could not read the queue during a model turn")
+	}
+	send(turn, 7, "_monkeyai/session/messages", map[string]any{"sessionId": session})
+	if got := read(turn, 7)["messages"]; got == nil {
+		t.Fatal("same connection could not read the message history during a model turn")
 	}
 	send(controls, 4, "_monkeyai/draft/set", map[string]any{"target": map[string]string{"sessionId": session},
 		"draft": map[string]any{"text": "draft during the turn", "files": []any{}}})
@@ -404,11 +466,16 @@ func TestDesktopCancelInterruptsModelAndReportsTurn(t *testing.T) {
 		t.Fatal("cancel affected the wrong session")
 	}
 	send(controls, 3, "session/cancel", map[string]string{"sessionId": session})
-	if read(controls, 3)["stopped"] != true || read(turn, 2)["stopReason"] != "cancelled" {
+	if read(controls, 3)["stopped"] != true {
 		t.Fatal("cancel did not interrupt the running turn")
 	}
-	row, err := host.live.load(session)
-	if err != nil || row.State != "idle" || !row.Pinned || !row.Turns[0].Acked || !row.Turns[0].Interrupted {
+	finished := readNotice("_monkeyai/session/state")
+	state, _ = finished["state"].(map[string]any)
+	if state["status"] != "idle" || state["executionId"] != nil || finished["finish"] != true {
+		t.Fatalf("canceled turn was not settled: %v", finished)
+	}
+	row, err = host.live.load(session)
+	if err != nil || row.State != "idle" || !row.Pinned || !row.Turns[0].Acked || !row.Turns[0].Interrupted || row.Turns[0].Answer != "First fragment" {
 		t.Fatal("interrupted turn was not persisted")
 	}
 	if stop := <-reported; stop != "interrupted" {

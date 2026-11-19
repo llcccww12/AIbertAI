@@ -117,7 +117,7 @@ func (s *Service) bootstrapScript(w http.ResponseWriter, r *http.Request, upgrad
 }
 func (s *Service) artifact(w http.ResponseWriter, r *http.Request) {
 	version, arch, name := chi.URLParam(r, "version"), chi.URLParam(r, "arch"), chi.URLParam(r, "file")
-	if name != "manifest.json" && name != "installer" && name != "monkeyai-engine" {
+	if name != "manifest.json" && name != "installer" && name != "aibertai-engine" && name != "monkeyai-engine" {
 		web.NotFound(w, r)
 		return
 	}
@@ -125,7 +125,7 @@ func (s *Service) artifact(w http.ResponseWriter, r *http.Request) {
 		web.NotFound(w, r)
 		return
 	}
-	if _, _, err := s.manifest(version, arch); err != nil {
+	if m, _, err := s.manifest(version, arch); err != nil || name != "manifest.json" && m.Files[name] == "" {
 		web.NotFound(w, r)
 		return
 	}
@@ -136,5 +136,5 @@ func (s *Service) artifact(w http.ResponseWriter, r *http.Request) {
 }
 
 func preparedHostRelease(files map[string]string) bool {
-	return len(files) == 2 && files["installer"] != "" && files["installer"] == files["monkeyai-engine"]
+	return len(files) == 2 && files["installer"] != "" && (files["installer"] == files["aibertai-engine"] || files["installer"] == files["monkeyai-engine"])
 }

@@ -6278,6 +6278,11 @@ components:
             supports_reasoning:
               type: boolean
               default: false
+            stream_mode:
+              type: string
+              enum: [auto, 'off']
+              default: auto
+              description: 仅文本模型。更新时省略则保留已保存的设置。
     CreateUserModelInput:
       allOf:
       - $ref: '#/components/schemas/UserModelInput'
@@ -6900,6 +6905,10 @@ components:
         supports_reasoning:
           type: boolean
           description: 模型是否支持推理能力。
+        stream_mode:
+          type: string
+          enum: [auto, 'off']
+          description: 文本模型的流式策略。旧配置默认为自动。
         credit_multiplier:
           type: number
           exclusiveMinimum: 0

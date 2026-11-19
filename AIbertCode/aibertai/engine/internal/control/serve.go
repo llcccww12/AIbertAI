@@ -1,6 +1,7 @@
 package control
 
 import (
+	"aibertai.local/engine/internal/hostpaths"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,11 +13,11 @@ import (
 	"aibertai.local/engine/internal/preflight"
 )
 
-const ConfigPath = "/etc/monkeyai-engine/config.json"
-const KeyPath = "/var/lib/monkeyai-engine/control/identity.key"
-const UpgradePath = "/var/lib/monkeyai-engine/control/upgrade.json"
-const SourceUpgradePath = "/var/lib/monkeyai-engine/control/source-upgrade.json"
-const HealthPath = "/var/lib/monkeyai-engine/control/health.json"
+var ConfigPath = hostpaths.Config + "/config.json"
+var KeyPath = hostpaths.State + "/control/identity.key"
+var UpgradePath = hostpaths.State + "/control/upgrade.json"
+var SourceUpgradePath = hostpaths.State + "/control/source-upgrade.json"
+var HealthPath = hostpaths.State + "/control/health.json"
 
 type Health struct {
 	Version string    `json:"version"`
@@ -41,7 +42,7 @@ func ServeVersion(ctx context.Context, log io.Writer, commands CommandLoop, vers
 		defer commands.Close()
 	}
 
-	unlock, err := Lock("/var/lib/monkeyai-engine/control/service.lock")
+	unlock, err := Lock(hostpaths.State + "/control/service.lock")
 	if err != nil {
 		return err
 	}
@@ -70,7 +71,7 @@ func ServeVersion(ctx context.Context, log io.Writer, commands CommandLoop, vers
 	}
 	pc := preflight.DefaultConfig()
 	pc.Architecture = cfg.Architecture
-	pc.DataDir = cfg.DataDir
+	pc.DataDir = hostpaths.SavedPath(cfg.DataDir)
 	var lastHeartbeat time.Time
 	var inspector preflight.Inspector
 	for {

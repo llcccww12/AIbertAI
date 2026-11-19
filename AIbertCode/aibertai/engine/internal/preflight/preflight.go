@@ -1,11 +1,12 @@
 package preflight
 
 import (
+	"aibertai.local/engine/internal/dockerapi"
+	"aibertai.local/engine/internal/hostpaths"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"aibertai.local/engine/internal/dockerapi"
 	"io"
 	"net"
 	"os"
@@ -26,7 +27,7 @@ type Config struct {
 }
 
 func DefaultConfig() Config {
-	return Config{Architecture: "amd64", DataDir: "/var/lib/monkeyai-engine", Socket: "/var/run/docker.sock", CgroupRoot: "/sys/fs/cgroup"}
+	return Config{Architecture: "amd64", DataDir: hostpaths.State, Socket: "/var/run/docker.sock", CgroupRoot: "/sys/fs/cgroup"}
 }
 
 func (c Config) Validate() error {
@@ -208,7 +209,7 @@ func inspect(ctx context.Context, c Config, s system, goos, arch string) Report 
 	if dockerErr == nil {
 		dockerErr = dockerInfo.Validate()
 	}
-	detail := "Docker API、cgroup v2 与 monkeyai-runsc runtime 已就绪"
+	detail := "Docker API、cgroup v2 与 gVisor runtime 已就绪"
 	if dockerErr != nil {
 		detail = dockerErr.Error()
 	}

@@ -12,14 +12,14 @@ make build
 make linux
 ```
 
-`bin/monkeyai-engine` 使用当前平台，`make linux` 生成 Linux AMD64 和 ARM64 二进制。ARM64 用于原生开发验证，不代表 AMD64 生产基线已经验收。
+`bin/aibertai-engine` 使用当前平台，`make linux` 生成 Linux AMD64 和 ARM64 二进制。ARM64 用于原生开发验证，不代表 AMD64 生产基线已经验收。
 
 ## 宿主预检
 
 ```bash
-sudo ./bin/monkeyai-engine doctor \
+sudo ./bin/aibertai-engine doctor \
   --architecture amd64 \
-  --data-dir /var/lib/monkeyai-engine \
+  --data-dir /var/lib/aibertai-engine \
   --docker-socket /var/run/docker.sock
 ```
 
@@ -40,7 +40,7 @@ sudo ./bin/monkeyai-engine doctor \
 ## 预设校验
 
 ```bash
-./bin/monkeyai-engine validate-preset --file /path/to/preset.json
+./bin/aibertai-engine validate-preset --file /path/to/preset.json
 ```
 
 预设协议版本 `version=1`，`revision` 表示管理员发布的不可变修订。字段如下：
@@ -51,7 +51,7 @@ sudo ./bin/monkeyai-engine doctor \
 | `image` | 完整仓库路径及固定 `@sha256:` 摘要 |
 | `architecture`、`driver` | `amd64/arm64`，首期只接受 `gvisor` |
 | `network_policy` | 宿主管理维护的策略标识，不允许传入任意规则 |
-| `runtime`、`task_engine` | 包含 `path/version/sha256`，路径在只读发行目录 `/opt/monkeyai/` 内 |
+| `runtime`、`task_engine` | 包含 `path/version/sha256`，路径在只读发行目录 `/opt/aibertai/` 内 |
 | `resources` | 下列所有数值必须显式提供，不使用隐式无限额默认值 |
 
 资源字段为 `cpu_millis`、`memory_bytes`、`workspace_bytes`、`home_bytes`、`runtime_bytes`、`volume_inodes`、`temporary_bytes`、`sandbox_tasks`。其中持久目录容量与 inode 字段仅兼容旧预设，可省略，不作为磁盘限额；临时目录预算包含在环境总内存内。
@@ -72,4 +72,4 @@ sudo ./bin/monkeyai-engine doctor \
 
 本分支的实施状态见[云环境实施记录](../design/cloud-environment-implementation.md)，安装器历史见[安装实施计划](../design/engine-installer-plan.md)。新建云电脑通过同一个源码运行时处理登录、远程会话和工具，详见 [运行时编排](RUNTIME.md)。
 
-宿主运维可运行 `monkeyai-engine cache inspect`／`cache gc` 核对镜像缓存，配置和回收边界见 [缓存治理](CACHE.md)。沙箱固定 512 个任务（含线程），与宿主 host_tasks 资源分开。
+宿主运维可运行 `aibertai-engine cache inspect`／`cache gc` 核对镜像缓存，配置和回收边界见 [缓存治理](CACHE.md)。沙箱固定 512 个任务（含线程），与宿主 host_tasks 资源分开。

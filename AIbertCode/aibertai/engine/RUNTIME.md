@@ -13,7 +13,7 @@
 
 镜像根只读；程序和动态库必须允许 UID/GID 1000 执行。托管规格忽略镜像 Entrypoint/Cmd，固定运行 `tini -g -- /bin/sleep infinity`，并使用固定的 PATH、HOME、USER、LOGNAME、LANG，不继承镜像的身份及执行环境变量。宿主按规格下载独立的、带版本和 SHA-256 的运行时。镜像提供系统依赖和工作负载工具。
 
-runtime 卷挂载在 `/var/lib/monkeyai`，实际传入 `--state-dir /var/lib/monkeyai/state`。设备身份、会话和待补传记录在该状态卷持久化。沿用原卷路径以便只读打开旧格式的会话存档。项目与用户目录分别为 `/workspace`、`/home/monkey`。
+新容器的 runtime 卷挂载在 `/var/lib/aibertai`，实际传入 `--state-dir /var/lib/aibertai/state`。设备身份、会话和待补传记录在该状态卷持久化。项目与用户目录分别为 `/workspace` 和 `/home/aibertai`。已有容器继续使用 `/var/lib/monkeyai` 和 `/home/monkey`。原容器的可写层和持久卷继续使用，运行时根据容器的挂载布局选择状态目录。
 
 托管规格必须使用 `public-only`，并确保固定 DNS、后台 HTTP(S)、中转 WS(S) 和所需服务可达。后台位于私网时由管理员配置固定服务例外；不自动放宽私网规则。`isolated` 保留给本地容器执行，不可用于客户端云电脑登录。
 

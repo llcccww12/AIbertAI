@@ -1,6 +1,7 @@
 package host
 
 import (
+	"aibertai.local/engine/internal/hostpaths"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,7 +20,7 @@ import (
 	"aibertai.local/engine/internal/storage"
 )
 
-const root = "/var/lib/monkeyai-engine/control/environments"
+var root = hostpaths.State + "/control/environments"
 
 func open() (*driver.Driver, error) {
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
@@ -33,7 +34,7 @@ func open() (*driver.Driver, error) {
 	if json.Unmarshal(raw, &cfg) != nil || cfg.HostID == "" || cfg.Architecture != runtime.GOARCH {
 		return nil, errors.New("宿主安装配置无效")
 	}
-	volumes, err := storage.New(cfg.DataDir)
+	volumes, err := storage.New(hostpaths.SavedPath(cfg.DataDir))
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +59,7 @@ func open() (*driver.Driver, error) {
 			return nil, err
 		}
 		for _, mount := range mounts {
-			if mount.Target == "/var/lib/monkeyai" {
+			if mount.Target == lifecycle.RuntimeMount {
 				return runtimeupdate.New(mount.Source, client), nil
 			}
 		}

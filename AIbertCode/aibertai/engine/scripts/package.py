@@ -27,11 +27,11 @@ if final.exists():
 with tempfile.TemporaryDirectory(prefix='.package-', dir=output) as work:
     stage = Path(work)
     subprocess.run(['go', 'build', '-buildvcs=false', '-trimpath', '-ldflags', f'-s -w -X main.version={args.version}',
-                    '-o', str(stage / 'monkeyai-engine'), './cmd/aibertai-engine'],
+                    '-o', str(stage / 'aibertai-engine'), './cmd/aibertai-engine'],
                    cwd=root, env={**os.environ, 'GOOS': 'linux', 'GOARCH': args.arch, 'CGO_ENABLED': '0'}, check=True)
-    shutil.copyfile(stage / 'monkeyai-engine', stage / 'installer')
+    shutil.copyfile(stage / 'aibertai-engine', stage / 'installer')
     digests = {}
-    for name in ['monkeyai-engine', 'installer']:
+    for name in ['aibertai-engine', 'installer']:
         path = stage / name
         with path.open('rb') as file:
             header = file.read(20)

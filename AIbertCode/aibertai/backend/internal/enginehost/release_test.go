@@ -120,8 +120,10 @@ func TestShortCommandReturnsFailureWhenDownloadFails(t *testing.T) {
 
 func TestPreparedHostReleaseAcceptsOnlySelfInstallingEnginePair(t *testing.T) {
 	const expected = "341e2d82ec51ad3c1baa19d0972da53aa845cc8eaa750778ce61c736818fd1d46"
-	if !preparedHostRelease(map[string]string{"installer": expected, "monkeyai-engine": expected}) {
-		t.Fatal("self-installing host release was rejected")
+	for _, name := range []string{"aibertai-engine", "monkeyai-engine"} {
+		if !preparedHostRelease(map[string]string{"installer": expected, name: expected}) {
+			t.Fatalf("self-installing host release %s was rejected", name)
+		}
 	}
 	for _, files := range []map[string]string{
 		{"installer": expected},

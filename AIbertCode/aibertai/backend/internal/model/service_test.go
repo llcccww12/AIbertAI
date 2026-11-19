@@ -180,3 +180,39 @@ func TestResolvePreservesCancellation(t *testing.T) {
 		}
 	}
 }
+
+func TestStreamingModeCatalogAndOldUpdates(t *testing.T) {
+	repository := &repositoryStub{}
+	service := NewService(repository)
+	input := validInput()
+	item, err := service.Create(t.Context(), "admin-1", input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertMode := func(want StreamMode) {
+		t.Helper()
+		models, err := service.AgentModels(t.Context(), "user-1")
+		if err != nil || len(models) != 1 || models[0].StreamMode != want {
+			t.Fatalf("catalog mode = %+v, error = %v", models, err)
+		}
+	}
+	assertMode(StreamAuto)
+	input.AdvancedConfig.StreamMode = StreamOff
+	item, err = service.Update(t.Context(), item.ID, "admin-1", input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository.models[0] = item
+	assertMode(StreamOff)
+	input.AdvancedConfig.StreamMode = ""
+	item, err = service.Update(t.Context(), item.ID, "admin-1", input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository.models[0] = item
+	assertMode(StreamOff)
+	input.AdvancedConfig.StreamMode = "unsupported"
+	if _, err := service.Update(t.Context(), item.ID, "admin-1", input); err == nil {
+		t.Fatal("accepted an invalid stream mode")
+	}
+}

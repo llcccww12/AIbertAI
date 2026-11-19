@@ -63,7 +63,8 @@ func TestDesktopDesignWorkspaceSurvivesRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	capabilities, _ := workspace.(map[string]any)["capabilities"].(map[string]json.RawMessage)
-	if string(capabilities["design"]) != marker {
+	expected := fmt.Sprintf(`{"canvasId":%q,"localDesignPath":%q}`, canvas, workspaceDataDir+"/design/"+canvas)
+	if string(capabilities["design"]) != expected {
 		t.Fatalf("workspace design did not survive restart: %s", capabilities["design"])
 	}
 	page, err := host.localQuery(t.Context(), "_monkeyai/session/messages", params)
@@ -71,10 +72,11 @@ func TestDesktopDesignWorkspaceSurvivesRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	meta := page.(map[string]any)["session"].(map[string]any)
-	if string(meta["capabilities"].(map[string]json.RawMessage)["design"]) != marker {
+	if string(meta["capabilities"].(map[string]json.RawMessage)["design"]) != expected {
 		t.Fatal("source history lost its canvas metadata")
 	}
-	if err := os.WriteFile(contextPath, []byte(fmt.Sprintf(`{"designSessionId":%q,"canvasId":%q}`, operation, canvas)), 0600); err != nil {
+	movedContext := filepath.Join(live.workspaces.defaultPath(id), workspaceDataDir, "design", canvas, "design-context.json")
+	if err := os.WriteFile(movedContext, []byte(fmt.Sprintf(`{"designSessionId":%q,"canvasId":%q}`, operation, canvas)), 0600); err != nil {
 		t.Fatal(err)
 	}
 	workspace, err = host.workspaceQuery(t.Context(), "_monkeyai/session/workspace", params)

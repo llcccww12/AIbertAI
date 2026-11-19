@@ -40,6 +40,7 @@ func statWorkspaceFile(rootName, name string) (workspaceFileStat, error) {
 		return result, errors.New("invalid_path")
 	}
 	defer root.Close()
+	relative = filepath.FromSlash(canonicalWorkspaceReference(filepath.ToSlash(relative)))
 	info, err := root.Stat(relative)
 	if err != nil || !info.Mode().IsRegular() {
 		return result, errors.New("invalid_path")

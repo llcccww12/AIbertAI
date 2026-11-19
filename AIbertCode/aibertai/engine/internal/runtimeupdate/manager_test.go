@@ -110,7 +110,7 @@ func testAtomicUpdate(t *testing.T, secure, override bool) {
 		t.Fatal(err)
 	}
 	current, err := manager.Current()
-	if err != nil || current.Version != first.Version || !strings.HasPrefix(current.Binary, "/var/lib/monkeyai/_engine/releases/") {
+	if err != nil || current.Version != first.Version || !strings.HasPrefix(current.Binary, "/var/lib/aibertai/_engine/releases/") {
 		t.Fatal(current, err)
 	}
 	corrupt.Store(true)

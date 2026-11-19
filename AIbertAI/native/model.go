@@ -2,11 +2,11 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 )
 
@@ -32,6 +32,7 @@ type selectedModelConfig struct {
 	ContextWindowTokens int     `json:"context_window_tokens"`
 	MaxOutputTokens     int     `json:"max_output_tokens"`
 	SupportsReasoning   bool    `json:"supports_reasoning"`
+	StreamMode          string  `json:"stream_mode"`
 }
 
 func (m selectedModelConfig) inputBudget() int {
@@ -97,28 +98,30 @@ func (c *client) createInvocationKey(ctx context.Context, auth authorization, sc
 	return key, err
 }
 
-func (c *client) chat(ctx context.Context, protocol, key, session, selected, prompt string, delta func(string) error) (modelUsage, string, error) {
+func (c *client) chat(ctx context.Context, protocol, key, session, selected, prompt string, stream bool, delta func(string) error) (modelUsage, string, error) {
 	var usage modelUsage
-	request := map[string]any{"model": selected, "stream": true}
+	request := map[string]any{"model": selected, "stream": stream}
 	path := "/v1/chat/completions"
 	if protocol == "openai_responses" {
 		path = "/v1/responses"
 		request["input"] = prompt
 	} else {
 		request["messages"] = []map[string]string{{"role": "user", "content": prompt}}
-		request["stream_options"] = map[string]bool{"include_usage": true}
+		if stream {
+			request["stream_options"] = map[string]bool{"include_usage": true}
+		}
 	}
-	body, err := json.Marshal(request)
-	if err != nil {
-		return usage, "", err
-	}
-	resp, err := c.request(ctx, "POST", path, key, "", session, "application/json", bytes.NewReader(body))
+	resp, err := c.requestModelRound(ctx, path, key, session, request)
 	if err != nil {
 		return usage, "", err
 	}
 	defer resp.Body.Close()
 	if !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
-		return usage, "", errors.New("指定模型未返回事件流")
+		usage, content, finish, err := readBufferedModelText(resp.Body, protocol)
+		if err != nil {
+			return usage, "", err
+		}
+		return usage, finish, delta(content)
 	}
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 4096), 1<<20)
@@ -176,6 +179,29 @@ func (c *client) chat(ctx context.Context, protocol, key, session, selected, pro
 		return usage, finish, nil
 	}
 	return usage, "", errors.New("模型事件流没有正常结束或未返回完整文本")
+}
+
+func readBufferedModelText(body io.Reader, protocol string) (modelUsage, string, string, error) {
+	var usage modelUsage
+	var message toolConversationMessage
+	var finish string
+	var err error
+	if protocol == "openai_responses" {
+		var result responsesToolResult
+		if json.NewDecoder(io.LimitReader(body, 2<<20)).Decode(&result) != nil {
+			return usage, "", "", errors.New("invalid_responses_tool_output")
+		}
+		usage, message, finish, err = result.message()
+	} else {
+		usage, message, finish, err = readChatToolResponse(body)
+	}
+	if err != nil {
+		return usage, "", "", err
+	}
+	if message.Content == nil || *message.Content == "" || (finish != "stop" && finish != "length") {
+		return usage, "", "", errors.New("指定模型没有完成文本输出")
+	}
+	return usage, *message.Content, finish, nil
 }
 
 func readResponses(scanner *bufio.Scanner, delta func(string) error) (modelUsage, string, error) {

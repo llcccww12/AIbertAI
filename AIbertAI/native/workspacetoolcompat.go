@@ -226,8 +226,8 @@ func resolveWorkspaceToolPath(cwd, requested string) (string, error) {
 		}
 		requested = filepath.ToSlash(requested)
 	}
-	_, err := workspaceRelative(requested)
-	return requested, err
+	relative, err := workspaceRelative(requested)
+	return filepath.ToSlash(relative), err
 }
 
 func (h *relaySessionHost) executeWorkspaceCompat(ctx context.Context, row acpSession, name string, call workspaceCompatCall, attachments map[string]string) (string, error) {

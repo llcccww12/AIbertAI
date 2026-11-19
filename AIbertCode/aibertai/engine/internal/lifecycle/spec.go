@@ -71,14 +71,19 @@ type Volume struct {
 	Inodes  int64  `json:"inodes"`
 }
 
+const HomeMount = "/home/aibertai"
+const RuntimeMount = "/var/lib/aibertai"
+const LegacyHomeMount = "/home/monkey"
+const LegacyRuntimeMount = "/var/lib/monkeyai"
+
 func (v Volume) Target() string {
 	switch v.Purpose {
 	case "workspace":
 		return "/workspace"
 	case "home":
-		return "/home/monkey"
+		return HomeMount
 	case "runtime":
-		return "/var/lib/monkeyai"
+		return RuntimeMount
 	}
 	return ""
 }

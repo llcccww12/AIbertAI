@@ -1,6 +1,7 @@
 package main
 
 import (
+	"aibertai.local/engine/internal/hostpaths"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,7 +19,8 @@ import (
 )
 
 const installedProgram = "/opt/aibertai-engine/aibertai-engine"
-const preparedHostUnit = "/etc/systemd/system/monkeyai-engine.service"
+
+var preparedHostUnit = "/etc/systemd/system/" + hostpaths.Unit
 
 var hostReleaseVersion = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$`)
 
@@ -30,7 +32,7 @@ func installPreparedHost(ctx context.Context, args []string, out, stderr io.Writ
 	flags.StringVar(&cfg.ServerURL, "server-url", "", "宿主实际访问的后台地址")
 	flags.StringVar(&cfg.Version, "release", "", "待安装版本")
 	flags.StringVar(&cfg.Architecture, "architecture", "", "宿主架构")
-	flags.StringVar(&cfg.DataDir, "data-dir", "/var/lib/monkeyai-engine/data", "持久数据目录")
+	flags.StringVar(&cfg.DataDir, "data-dir", hostpaths.State+"/data", "持久数据目录")
 	flags.BoolVar(&cfg.Insecure, "insecure", false, "使用后台指定的证书模式")
 	enrollment := flags.String("enrollment", "", "短期接入凭据")
 	checksum := flags.String("manifest-sha256", "", "发行清单摘要")
@@ -60,6 +62,7 @@ func installPreparedHost(ctx context.Context, args []string, out, stderr io.Writ
 		}
 		host := current.HostID
 		current.HostID = ""
+		current.DataDir, cfg.DataDir = hostpaths.SavedPath(current.DataDir), hostpaths.SavedPath(cfg.DataDir)
 		if current != cfg {
 			return errors.New("宿主已经登记，请使用现有的宿主配置")
 		}
@@ -82,7 +85,7 @@ func installPreparedHost(ctx context.Context, args []string, out, stderr io.Writ
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(cfg.DataDir, 0700); err != nil {
+	if err := os.MkdirAll(hostpaths.SavedPath(cfg.DataDir), 0700); err != nil {
 		return err
 	}
 	if cfg.HostID == "" {
@@ -109,7 +112,7 @@ func installPreparedHost(ctx context.Context, args []string, out, stderr io.Writ
 	if err := control.Write(preparedHostUnit, unit, 0644); err != nil {
 		return err
 	}
-	for _, args := range [][]string{{"daemon-reload"}, {"enable", "--now", "monkeyai-engine.service"}} {
+	for _, args := range [][]string{{"daemon-reload"}, {"enable", "--now", hostpaths.Unit}} {
 		cmd := exec.CommandContext(ctx, "systemctl", args...)
 		cmd.Stdout, cmd.Stderr = out, stderr
 		if err := cmd.Run(); err != nil {
@@ -149,7 +152,7 @@ func verifiedHostProgram(ctx context.Context, client *control.Client, version, a
 		return nil, err
 	}
 	digest := control.Digest(program)
-	if manifest.Files["installer"] != digest || manifest.Files["monkeyai-engine"] != digest {
+	if manifest.Files["installer"] != digest || (manifest.Files["aibertai-engine"] != digest && manifest.Files["monkeyai-engine"] != digest) {
 		return nil, errors.New("已下载的宿主程序与发行清单不符")
 	}
 	return program, nil

@@ -65,7 +65,7 @@ func TestPersistentDockerRuntimeIntegration(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, mount := range mounts {
-			if mount.Target == "/var/lib/monkeyai" {
+			if mount.Target == "/var/lib/aibertai" {
 				return runtimeupdate.New(mount.Source, client)
 			}
 		}
@@ -105,7 +105,7 @@ func TestPersistentDockerRuntimeIntegration(t *testing.T) {
 	if output, err := exec.Command("docker", "exec", "--user", "0", original, "sh", "-c", "printf preserved > /etc/monkeyai-persistence-check").CombinedOutput(); err != nil {
 		t.Fatal(err, string(output))
 	}
-	_ = exec.Command("docker", "exec", original, filepath.Join("/var/lib/monkeyai/_engine/releases", release.Version, "aibertai-native"), "login", "--device-code", "--state-dir", standalone.StateDir, "--server", "http://127.0.0.1:1", "--server-id", "40000000-0000-4000-8000-000000000001", "--user", "40000000-0000-4000-8000-000000000002").Run()
+	_ = exec.Command("docker", "exec", original, filepath.Join("/var/lib/aibertai/_engine/releases", release.Version, "aibertai-native"), "login", "--device-code", "--state-dir", standalone.StateDir, "--server", "http://127.0.0.1:1", "--server-id", "40000000-0000-4000-8000-000000000001", "--user", "40000000-0000-4000-8000-000000000002").Run()
 	before, err := driver.Status(t.Context(), spec)
 	if err != nil || !before.Valid() {
 		t.Fatal("runtime 初始化", before, err)

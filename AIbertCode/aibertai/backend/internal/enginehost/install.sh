@@ -33,10 +33,10 @@ cleanup() {
 trap cleanup EXIT
 probe=/bin/true
 [ -f "$probe" ] || probe=/usr/bin/true
-for root in /var/tmp /opt/monkeyai-engine/tmp; do
+for root in /var/tmp /opt/aibertai-engine/tmp /opt/monkeyai-engine/tmp; do
  [ ! -L "$root" ] || continue
  mkdir -p "$root" 2>/dev/null || continue
- candidate=$(mktemp -d "$root/monkeyai-engine.XXXXXX") || continue
+ candidate=$(mktemp -d "$root/aibertai-engine.XXXXXX") || continue
  if cp "$probe" "$candidate/true" && chmod 700 "$candidate/true" && "$candidate/true" 2>/dev/null; then
   work=$candidate
   break
@@ -62,7 +62,7 @@ case "$8" in
 esac
 [ -z "${server_url:-}" ] || [ "${bootstrap_mode:-install}" = upgrade ] || set -- "$@" --server-url "$server_url"
 # 完成回执避免依赖旧 systemd 保留已结束的任务状态。
-unit=monkeyai-engine-install-${work##*.}.service
+unit=aibertai-engine-install-${work##*.}.service
 printf '%s' "$$" > "$work/owner"
 {
  printf '#!/bin/sh\nexec'

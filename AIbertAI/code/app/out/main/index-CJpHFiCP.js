@@ -18063,20 +18063,27 @@ function requireDirectory(path) {
   const stat = node_fs.lstatSync(path);
   if (stat.isSymbolicLink() || !stat.isDirectory()) fail$2("canvas_storage_unsafe");
 }
+function canonicalDesignPath(value) {
+  return value.replace(/^\.monkeyai(?=[\\/]|$)/, ".aibertai");
+}
+function resolveDesignWorkspaceFile(workspace, sourcePath) {
+  const relative = require$$1$1.relative(workspace, require$$1$1.resolve(workspace, sourcePath));
+  return require$$1$1.resolve(workspace, canonicalDesignPath(relative));
+}
 class CanvasStore {
   root(workspace, canvasId, create = false) {
     validId(canvasId);
     const root = node_fs.realpathSync(workspace);
-    const monkeyai = require$$1$1.join(root, ".monkeyai");
-    const design = require$$1$1.join(monkeyai, "design");
+    const dataDir = require$$1$1.join(root, ".aibertai");
+    const design = require$$1$1.join(dataDir, "design");
     const canvas = require$$1$1.join(design, canvasId);
     if (create) {
-      ensureDirectory(monkeyai);
+      ensureDirectory(dataDir);
       ensureDirectory(design);
       ensureDirectory(canvas);
       for (const path of ["artifacts", "assets", "assets/images", "assets/videos", "assets/audio", "previews", "reviews", "history"]) ensureDirectory(require$$1$1.join(canvas, path));
     } else {
-      for (const path of [monkeyai, design, canvas]) requireDirectory(path);
+      for (const path of [dataDir, design, canvas]) requireDirectory(path);
     }
     return canvas;
   }
@@ -18106,7 +18113,7 @@ class CanvasStore {
   importImage(input, sourcePath) {
     if (typeof sourcePath !== "string" || !sourcePath || sourcePath.includes("\0")) fail$2("invalid_canvas_image_source");
     const workspace = node_fs.realpathSync(input.workspace);
-    const requested = require$$1$1.resolve(workspace, sourcePath);
+    const requested = resolveDesignWorkspaceFile(workspace, sourcePath);
     if (!inside$2(workspace, requested)) fail$2("invalid_canvas_image_source");
     const requestedStat = node_fs.lstatSync(requested);
     if (requestedStat.isSymbolicLink() || !requestedStat.isFile()) fail$2("invalid_canvas_image_source");
@@ -18123,7 +18130,7 @@ class CanvasStore {
   importVideo(input, sourcePath) {
     if (typeof sourcePath !== "string" || !sourcePath || sourcePath.includes("\0")) fail$2("invalid_canvas_video_source");
     const workspace = node_fs.realpathSync(input.workspace);
-    const requested = require$$1$1.resolve(workspace, sourcePath);
+    const requested = resolveDesignWorkspaceFile(workspace, sourcePath);
     if (!inside$2(workspace, requested) || !node_fs.existsSync(requested)) fail$2("invalid_canvas_video_source");
     const requestedStat = node_fs.lstatSync(requested);
     if (requestedStat.isSymbolicLink() || !requestedStat.isFile()) fail$2("invalid_canvas_video_source");
@@ -18140,7 +18147,7 @@ class CanvasStore {
   importAudio(input, sourcePath) {
     if (typeof sourcePath !== "string" || !sourcePath || sourcePath.includes("\0")) fail$2("invalid_canvas_audio_source");
     const workspace = node_fs.realpathSync(input.workspace);
-    const requested = require$$1$1.resolve(workspace, sourcePath);
+    const requested = resolveDesignWorkspaceFile(workspace, sourcePath);
     if (!inside$2(workspace, requested) || !node_fs.existsSync(requested)) fail$2("invalid_canvas_audio_source");
     const requestedStat = node_fs.lstatSync(requested);
     if (requestedStat.isSymbolicLink() || !requestedStat.isFile()) fail$2("invalid_canvas_audio_source");
@@ -18159,7 +18166,7 @@ class CanvasStore {
     validId(nodeId, "invalid_canvas_node_id");
     if (typeof sourcePath !== "string" || !sourcePath || sourcePath.includes("\0")) fail$2("invalid_canvas_artifact_asset");
     const workspace = node_fs.realpathSync(input.workspace);
-    const requested = require$$1$1.resolve(workspace, sourcePath);
+    const requested = resolveDesignWorkspaceFile(workspace, sourcePath);
     if (!inside$2(workspace, requested) || !node_fs.existsSync(requested)) fail$2("invalid_canvas_artifact_asset");
     const requestedStat = node_fs.lstatSync(requested);
     if (requestedStat.isSymbolicLink() || !requestedStat.isFile()) fail$2("invalid_canvas_artifact_asset");
@@ -18281,7 +18288,7 @@ class CanvasStore {
     checkCanvasRevision(this.get(input).revision ?? 0);
     const destination = this.htmlArtifactAsset(input, nodeId, assetPath);
     const workspace = node_fs.realpathSync(input.workspace);
-    const requestedSource = require$$1$1.resolve(workspace, sourcePath);
+    const requestedSource = resolveDesignWorkspaceFile(workspace, sourcePath);
     if (!inside$2(workspace, requestedSource) || !node_fs.existsSync(requestedSource)) fail$2("invalid_canvas_artifact_asset");
     const sourceStat = node_fs.lstatSync(requestedSource);
     if (sourceStat.isSymbolicLink() || !sourceStat.isFile()) fail$2("invalid_canvas_artifact_asset");
@@ -18430,8 +18437,8 @@ class MediaArtifactStore {
   async save(sessionId, input) {
     const session2 = await this.sessions.context(sessionId);
     const workspace = node_fs.realpathSync(session2.cwd);
-    const monkeyai = safeDirectory(workspace, ".monkeyai");
-    const media = safeDirectory(monkeyai, "media");
+    const dataDir = safeDirectory(workspace, ".aibertai");
+    const media = safeDirectory(dataDir, "media");
     const generated = safeDirectory(media, "generated");
     const records = safeDirectory(media, "records");
     const extension2 = extensionFor(input.mimeType);
@@ -18446,8 +18453,9 @@ class MediaArtifactStore {
     const session2 = await this.sessions.context(sessionId);
     if (!sourcePath || sourcePath.includes("\0") || require$$1$1.isAbsolute(sourcePath)) throw new Error("invalid_media_source");
     const workspace = node_fs.realpathSync(session2.cwd);
-    const requested = require$$1$1.resolve(workspace, sourcePath);
+    const requested = resolveDesignWorkspaceFile(workspace, sourcePath);
     if (!inside$1(workspace, requested)) throw new Error("invalid_media_source");
+    sourcePath = require$$1$1.relative(workspace, requested).split(require$$1$1.sep).join("/");
     let stat;
     try {
       stat = node_fs.lstatSync(requested);
@@ -18459,7 +18467,7 @@ class MediaArtifactStore {
     const path = node_fs.realpathSync(requested);
     if (!inside$1(workspace, path)) throw new Error("invalid_media_source");
     const data = node_fs.readFileSync(path);
-    const mimeType = (options.referenceMedia ? sniffReferenceMedia(data, options.referenceMedia) : sniffMime(data)) ?? (options.allowCanvasSvg && sourcePath.startsWith(".monkeyai/design/") && sourcePath.endsWith(".svg") && isSafeSvg(data) ? "image/svg+xml" : null);
+    const mimeType = (options.referenceMedia ? sniffReferenceMedia(data, options.referenceMedia) : sniffMime(data)) ?? (options.allowCanvasSvg && sourcePath.startsWith(".aibertai/design/") && sourcePath.endsWith(".svg") && isSafeSvg(data) ? "image/svg+xml" : null);
     if (!mimeType) throw new Error(options.artifact ? "media_artifact_changed" : "invalid_media_source");
     return { data, mimeType, sourcePath };
   }
@@ -19053,7 +19061,7 @@ class CanvasMediaAssets {
     const document = this.context.wrap(() => this.context.canvases.get(location));
     const node = document.nodes.find((item) => item.id === nodeId && item.type === "image");
     if (!node || !/\.gif$/i.test(node.source)) throw new CanvasError("invalid_canvas_gif_target");
-    const path = require$$1$1.join(location.workspace, ".monkeyai/design", location.canvasId, node.source);
+    const path = require$$1$1.join(location.workspace, ".aibertai/design", location.canvasId, node.source);
     const metadata = await (await imageProcessing.require())(path, { animated: true, limitInputPixels: 1e8 }).metadata();
     const frameCount = metadata.pages ?? 1;
     const frameHeight = metadata.pageHeight ?? metadata.height;
@@ -19188,7 +19196,7 @@ class CanvasMediaAssets {
         source2 = node.source;
         title = node.title?.trim() || title;
         if (/\.gif$/i.test(source2)) {
-          bytes = node_fs.readFileSync(require$$1$1.join(location.workspace, ".monkeyai/design", location.canvasId, source2));
+          bytes = node_fs.readFileSync(require$$1$1.join(location.workspace, ".aibertai/design", location.canvasId, source2));
           metadata = await (await imageProcessing.require())(bytes, { animated: true, limitInputPixels: 1e8 }).metadata();
         }
       } else {
@@ -19249,7 +19257,7 @@ class CanvasMediaAssets {
       const active = [...node.clips].reverse().find((clip) => clip.startMs <= start && clip.startMs + clip.durationMs > start);
       let frame2;
       if (active) {
-        const image = (await imageProcessing.require())(require$$1$1.join(location.workspace, ".monkeyai/design", location.canvasId, active.source), { limitInputPixels: 2e7 });
+        const image = (await imageProcessing.require())(require$$1$1.join(location.workspace, ".aibertai/design", location.canvasId, active.source), { limitInputPixels: 2e7 });
         if (canvas.fit === "cover") {
           const metadata = await image.metadata();
           const rotated = (metadata.orientation ?? 1) >= 5;
@@ -19362,7 +19370,7 @@ class CanvasMediaAssets {
         } catch {
         }
         if (document2) for (const path of files2) {
-          const referenced = document2.nodes.some((node) => (node.type === "video" || node.type === "audio") && node.source && require$$1$1.join(location.workspace, ".monkeyai/design", location.canvasId, node.source) === path);
+          const referenced = document2.nodes.some((node) => (node.type === "video" || node.type === "audio") && node.source && require$$1$1.join(location.workspace, ".aibertai/design", location.canvasId, node.source) === path);
           if (!referenced && node_fs.realpathSync(require$$1$1.join(path, "..")) === require$$1$1.join(path, "..")) node_fs.rmSync(path, { force: true });
         }
         throw error;
@@ -19546,11 +19554,11 @@ class CanvasPreviews {
   /** 模型要看的那一张。原图保持可编辑，标注只画在这份副本上。 */
   async markedView(location, node) {
     if (!node.markups?.length) return void 0;
-    const sourcePath = require$$1$1.join(location.workspace, ".monkeyai/design", location.canvasId, node.source);
+    const sourcePath = require$$1$1.join(location.workspace, ".aibertai/design", location.canvasId, node.source);
     if (!node_fs.existsSync(sourcePath) || !node_fs.lstatSync(sourcePath).isFile()) return void 0;
     const source2 = node_fs.lstatSync(sourcePath);
     const stamp = require$$2.createHash("sha256").update(JSON.stringify({ mtimeMs: source2.mtimeMs, size: source2.size, markups: node.markups, crop: node.crop ?? null, mask: node.mask ?? null, rotation: node.rotation ?? 0, flipX: node.flipX ?? false, flipY: node.flipY ?? false })).digest("hex").slice(0, 16);
-    const dir = require$$1$1.join(location.workspace, ".monkeyai/design", location.canvasId, "markup-views");
+    const dir = require$$1$1.join(location.workspace, ".aibertai/design", location.canvasId, "markup-views");
     const name = `${node.id}-${stamp}.png`;
     const path = require$$1$1.join(dir, name);
     try {
@@ -19579,7 +19587,7 @@ class CanvasPreviews {
     if (!node) throw RequestError.invalidParams({ reason: "canvas_node_not_found" });
     if (node.type !== "image" && node.type !== "html") throw RequestError.invalidParams({ reason: "canvas_preview_unsupported" });
     const path = node.type === "html" ? node.entry : node.source;
-    const workspacePath = (relativePath2) => `.monkeyai/design/${location.canvasId}/${relativePath2}`;
+    const workspacePath = (relativePath2) => `.aibertai/design/${location.canvasId}/${relativePath2}`;
     if (!includeNodeIds.length) return { path: workspacePath(path), width: Math.round(node.width), height: Math.round(node.height), ...node.type === "html" ? { contentWidth: node.contentWidth ?? node.width, contentHeight: node.contentHeight ?? node.height } : {} };
     const ids = [.../* @__PURE__ */ new Set([nodeId, ...includeNodeIds])];
     if (ids.length > 32) throw RequestError.invalidParams({ reason: "invalid_canvas_preview_layers" });
@@ -19961,7 +19969,7 @@ class CanvasExportUploads {
     if (!Number.isSafeInteger(bytes) || bytes <= 0 || bytes > MAX_CANVAS_EXPORT_BYTES || !["mp4", "webm", "wav", "mp3", "m4a", "png", "jpeg", "webp", "gif", "svg"].includes(format) || this.uploads.size >= 8) throw invalid();
     if (purpose === "import" && bytes > DESIGN_IMPORT_BYTES_MAX) throw RequestError.invalidParams({ reason: "canvas_media_too_large" });
     const workspace = node_fs.realpathSync(location.workspace);
-    const directory = safeDirectory(safeDirectory(safeDirectory(workspace, ".monkeyai"), "media"), "exports");
+    const directory = safeDirectory(safeDirectory(safeDirectory(workspace, ".aibertai"), "media"), "exports");
     const active = new Set([...this.uploads.values()].map((upload2) => upload2.path));
     for (const name of node_fs.readdirSync(directory)) {
       if (!/^[a-f0-9-]{36}\.(?:mp4|webm|wav|mp3|m4a|png|jpeg|webp|gif|svg)$/.test(name)) continue;
@@ -20001,8 +20009,9 @@ class CanvasExportUploads {
     const command = canvasCommandContext.getStore();
     let external;
     if (source2) {
-      if (!command?.remote || command.sessionId !== sessionId || !["design-import", "design-export"].includes(source2.purpose) || !Number.isSafeInteger(source2.size) || source2.size <= 0 || source2.size > (source2.purpose === "design-import" ? DESIGN_IMPORT_BYTES_MAX : MAX_CANVAS_EXPORT_BYTES) || !/^[a-f0-9-]{36}$/.test(id2) || !source2.path.startsWith(`.monkeyai/uploads/upload-${id2}/content.`) || source2.path.slice(`.monkeyai/uploads/upload-${id2}/content.`.length).includes("/") || source2.path.includes("\\")) throw invalid();
-      const path = require$$1$1.join(node_fs.realpathSync(location.workspace), source2.path), format = require$$1$1.extname(path).slice(1);
+      const sourcePath = canonicalDesignPath(source2.path);
+      if (!command?.remote || command.sessionId !== sessionId || !["design-import", "design-export"].includes(source2.purpose) || !Number.isSafeInteger(source2.size) || source2.size <= 0 || source2.size > (source2.purpose === "design-import" ? DESIGN_IMPORT_BYTES_MAX : MAX_CANVAS_EXPORT_BYTES) || !/^[a-f0-9-]{36}$/.test(id2) || !sourcePath.startsWith(`.aibertai/uploads/upload-${id2}/content.`) || sourcePath.slice(`.aibertai/uploads/upload-${id2}/content.`.length).includes("/") || source2.path.includes("\\")) throw invalid();
+      const path = require$$1$1.join(node_fs.realpathSync(location.workspace), sourcePath), format = require$$1$1.extname(path).slice(1);
       if (!["mp4", "webm", "wav", "mp3", "m4a", "png", "jpeg", "webp", "gif", "svg"].includes(format) || node_fs.realpathSync(path) !== path) throw invalid();
       external = { fd: node_fs.openSync(path, "r"), path, format, bytes: source2.size, received: source2.size };
     } else if (command?.remote) throw invalid();
@@ -20445,8 +20454,8 @@ function designState(context) {
 }
 async function initializeDesignTask(cwd, sessionId, selection, canvasStore = new CanvasStore(), template, resources, source2 = "respub", resourceTarget) {
   const canvasId = require$$2.randomUUID();
-  const localDesignPath = `.monkeyai/design/${canvasId}`;
-  const target = require$$1$1.resolve(cwd, ".monkeyai", "design", canvasId);
+  const localDesignPath = `.aibertai/design/${canvasId}`;
+  const target = require$$1$1.resolve(cwd, ".aibertai", "design", canvasId);
   const state = {
     ...selection,
     ...selection.styleRef ? { styleDecision: "selected" } : {},
@@ -20639,7 +20648,7 @@ class DesignCanvasService {
       const document = this.canvases.get(location);
       const { node, sourceIds } = composeMediaProject(document, input);
       this.activity.assertIdle(sessionId, sourceIds);
-      const root = node_fs.realpathSync(require$$1$1.join(location.workspace, ".monkeyai/design", location.canvasId));
+      const root = node_fs.realpathSync(require$$1$1.join(location.workspace, ".aibertai/design", location.canvasId));
       for (const clip of node.tracks.flatMap((track) => track.clips)) {
         if (clip.kind === "text") continue;
         try {
@@ -20831,7 +20840,7 @@ class DesignCanvasService {
     this.selections.set(sessionId, selection);
     const selectedNodes = document.nodes.filter((node) => nodeIds.includes(node.id) || node.groupId && nodeIds.includes(node.groupId));
     const nodes = await Promise.all(selectedNodes.map(async (node) => {
-      if (node.type === "html") return { ...node, artifact_path: require$$1$1.join(location.workspace, ".monkeyai/design", location.canvasId, "artifacts", node.id) };
+      if (node.type === "html") return { ...node, artifact_path: require$$1$1.join(location.workspace, ".aibertai/design", location.canvasId, "artifacts", node.id) };
       if (node.type !== "image" || !node.markups?.length) return node;
       const marked = await this.markedView(location, node);
       return marked ? { ...node, marked_source: marked.relativePath } : node;
@@ -20846,7 +20855,7 @@ class DesignCanvasService {
     if (selected.size > 128 || [...selected].some((id2) => typeof id2 !== "string" || !document.nodes.some((node) => node.id === id2))) throw RequestError.invalidParams({ reason: "invalid_canvas_selection" });
     const images = document.nodes.filter((node) => (selected.has(node.id) || node.groupId !== void 0 && selected.has(node.groupId)) && node.type === "image");
     return Promise.all(images.map(async (node) => {
-      const sourcePath = require$$1$1.join(location.workspace, ".monkeyai/design", location.canvasId, node.source);
+      const sourcePath = require$$1$1.join(location.workspace, ".aibertai/design", location.canvasId, node.source);
       const marked = node.markups?.length ? await this.markedView(location, node) : void 0;
       const path = marked?.path ?? sourcePath;
       return { name: node.title?.trim() || "画布图片", path, relativePath: require$$1$1.relative(location.workspace, path).split(require$$1$1.sep).join("/"), canvasNodeId: node.id };
@@ -20861,7 +20870,7 @@ class DesignCanvasService {
     const node = document.nodes.find((candidate) => candidate.id === nodeId);
     if (!node) throw RequestError.invalidParams({ reason: "canvas_node_not_found" });
     if (node.type !== "image") throw RequestError.invalidParams({ reason: "canvas_node_type_mismatch" });
-    const sourcePath = `.monkeyai/design/${location.canvasId}/${node.source}`;
+    const sourcePath = `.aibertai/design/${location.canvasId}/${node.source}`;
     if (visibleOnly && (node.crop || node.mask)) {
       const media = new MediaArtifactStore(this.sessions);
       const source2 = await media.read(sessionId, sourcePath);
@@ -21061,12 +21070,12 @@ class DesignCanvasService {
       if (slides.some((node, index) => node.slideIndex !== index + 1)) throw new CanvasError("invalid_pptx_slide_order");
       if (slides.some((node) => node.draft)) throw new CanvasError("pptx_slide_not_committed");
       const items = slides.map((node, index) => {
-        const artifactPath = require$$1$1.join(location.workspace, ".monkeyai/design", location.canvasId, "artifacts", node.id);
+        const artifactPath = require$$1$1.join(location.workspace, ".aibertai/design", location.canvasId, "artifacts", node.id);
         const file = require$$1$1.join(artifactPath, "index.html");
         if (!node_fs.existsSync(file) || !node_fs.lstatSync(file).isFile()) throw new CanvasError("pptx_slide_not_committed");
         return { slide_index: index + 1, artifact_path: artifactPath };
       });
-      const manifestPath = require$$1$1.join(location.workspace, ".monkeyai/design", location.canvasId, "slide-manifest.json");
+      const manifestPath = require$$1$1.join(location.workspace, ".aibertai/design", location.canvasId, "slide-manifest.json");
       atomicWrite(manifestPath, JSON.stringify({ workspace: location.workspace, slides: items }, null, 2));
       return { manifestPath, slideCount: slides.length };
     });
@@ -21094,7 +21103,7 @@ class DesignCanvasService {
         const content = normalizedPrototypeHtml(node_fs.readFileSync(entry, "utf8"));
         const duplicate = document.nodes.find((candidate) => {
           if (candidate.id === nodeId || candidate.type !== "html" || candidate.draft) return false;
-          const candidateEntry = require$$1$1.join(location.workspace, ".monkeyai/design", location.canvasId, candidate.entry);
+          const candidateEntry = require$$1$1.join(location.workspace, ".aibertai/design", location.canvasId, candidate.entry);
           return node_fs.existsSync(candidateEntry) && normalizedPrototypeHtml(node_fs.readFileSync(candidateEntry, "utf8")) === content;
         });
         if (duplicate) throw new CanvasError("duplicate_prototype_html");
@@ -21111,7 +21120,7 @@ class DesignCanvasService {
   migrateEmptyHtmlContainers(location, document) {
     const operations2 = document.nodes.flatMap((node) => {
       if (node.type !== "html" || node.empty !== void 0) return [];
-      const entry = require$$1$1.join(location.workspace, ".monkeyai/design", location.canvasId, node.entry);
+      const entry = require$$1$1.join(location.workspace, ".aibertai/design", location.canvasId, node.entry);
       try {
         return node_fs.existsSync(entry) && node_fs.readFileSync(entry, "utf8").includes("<!-- monkeyai-empty-container -->") ? [{ type: "node.update", nodeId: node.id, patch: { type: "html", empty: true } }] : [];
       } catch {
@@ -21205,7 +21214,7 @@ class CanvasGenerationService {
     const canvasId = context.payload.canvasId;
     if (!ID.test(sessionId) || !canvasId || !ID.test(canvasId)) throw new Error("invalid_canvas_generation_storage");
     let root = node_fs.realpathSync(context.cwd);
-    for (const part of [".monkeyai", "design", canvasId, "generation-tasks", sessionId]) {
+    for (const part of [".aibertai", "design", canvasId, "generation-tasks", sessionId]) {
       if (!readOnly) {
         root = safeDirectory(root, part);
         continue;
@@ -25308,7 +25317,7 @@ function readWorkspacePreview(cwd, path) {
   const unavailable = (reason2) => ({ path, kind: "unavailable", reason: reason2 });
   if (!path || path.includes("\0") || require$$1$1.isAbsolute(path)) return unavailable("missing");
   const root = node_fs.realpathSync(cwd);
-  const requested = require$$1$1.resolve(root, path);
+  const requested = resolveDesignWorkspaceFile(root, path);
   if (!inside(root, requested)) return unavailable("missing");
   let real;
   try {
@@ -25460,7 +25469,7 @@ const safeId = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
 const missing = (error) => error?.code === "ENOENT";
 const marker = (cwd, sessionId) => {
   if (!safeId.test(sessionId)) throw new Error("invalid_session_id");
-  return require$$1$1.join(cwd, ".monkeyai", "design", "sessions", sessionId + ".json");
+  return require$$1$1.join(cwd, ".aibertai", "design", "sessions", sessionId + ".json");
 };
 function readDesignWorkspaceJSON(path, limit = 64 * 1024) {
   const stat = node_fs.lstatSync(path);
@@ -25471,7 +25480,7 @@ function existingDesignWorkspace(cwd, sessionId, payload) {
   let saved = payload;
   if (!saved.canvasId) {
     try {
-      const design = require$$1$1.join(cwd, ".monkeyai");
+      const design = require$$1$1.join(cwd, ".aibertai");
       for (const path of [design, require$$1$1.join(design, "design"), require$$1$1.join(design, "design", "sessions")]) {
         const stat = node_fs.lstatSync(path);
         if (!stat.isDirectory()) throw new Error("invalid_design_workspace");
@@ -25482,11 +25491,12 @@ function existingDesignWorkspace(cwd, sessionId, payload) {
       throw error;
     }
   }
-  if (!saved.canvasId || !safeId.test(saved.canvasId) || saved.localDesignPath !== ".monkeyai/design/" + saved.canvasId) throw new Error("invalid_design_workspace");
+  const localDesignPath = typeof saved.localDesignPath === "string" ? canonicalDesignPath(saved.localDesignPath) : "";
+  if (!saved.canvasId || !safeId.test(saved.canvasId) || localDesignPath !== ".aibertai/design/" + saved.canvasId) throw new Error("invalid_design_workspace");
   new CanvasStore().get({ workspace: cwd, canvasId: saved.canvasId });
-  const context = readDesignWorkspaceJSON(require$$1$1.join(cwd, saved.localDesignPath, "design-context.json"), 8 * 1024 * 1024);
+  const context = readDesignWorkspaceJSON(require$$1$1.join(cwd, localDesignPath, "design-context.json"), 8 * 1024 * 1024);
   if (context.designSessionId !== sessionId || context.canvasId !== saved.canvasId) throw new Error("design_workspace_owner_mismatch");
-  return { ...payload, ...saved, profile: payload.profile, canvasId: saved.canvasId, localDesignPath: saved.localDesignPath };
+  return { ...payload, ...saved, profile: payload.profile, canvasId: saved.canvasId, localDesignPath };
 }
 function rememberDesignWorkspace(cwd, sessionId, payload) {
   ensureImplementationContext(cwd, payload);
@@ -25496,7 +25506,7 @@ function rememberDesignWorkspace(cwd, sessionId, payload) {
   atomicWrite(path, JSON.stringify(payload) + "\n");
 }
 function ensureImplementationContext(cwd, payload) {
-  if (!payload.canvasId || payload.localDesignPath !== ".monkeyai/design/" + payload.canvasId || !safeId.test(payload.canvasId)) return;
+  if (!payload.canvasId || payload.localDesignPath !== ".aibertai/design/" + payload.canvasId || !safeId.test(payload.canvasId)) return;
   new CanvasStore().get({ workspace: cwd, canvasId: payload.canvasId });
   const path = require$$1$1.join(cwd, payload.localDesignPath, "IMPLEMENTATION_CONTEXT.md");
   try {
@@ -52616,6 +52626,7 @@ function acceptPreflight(result) {
 }
 const privateDesignRenders = new Map();
 const privateMediaModels = new Map();
+const privateCatalogCalls = new Map();
 function requestPrivateMediaModel(method, input) {
   const kind = method === AIBERTAI_METHODS.gatewayImageModel.name ? "image"
     : method === AIBERTAI_METHODS.gatewayVideoModel.name ? "video" : null;
@@ -52698,6 +52709,18 @@ function createPrivateCatalog(origin) {
       });
     }
   });
+  const imageTools = MEDIA_TOOLS.filter(({ name }) => ["media_get_image_model", "media_generate_image", "media_edit_image"].includes(name));
+  const callImageTool = mediaTools({
+    media: workspace.media,
+    session: sessionHeader,
+    log,
+    imagePrompt: async (sessionId, prompt) => withImageVisualStyle(await workspace.sessions.context(sessionId), prompt),
+    canvasTarget: async (sessionId, nodeId, kind, work) => {
+      const { document } = await workspace.canvas.get(sessionId);
+      assertMediaTarget(document, nodeId, kind);
+      return workspace.canvas.activity.run(sessionId, [nodeId], "generating", work, true);
+    }
+  });
   const creating = new Map();
   const resourceTarget = async (ref) => {
     if (ref.kind !== "template" && !ASSET_SNAPSHOT.test(ref.version)) {
@@ -52708,7 +52731,7 @@ function createPrivateCatalog(origin) {
     return { client: resources, source: PUBLIC_DESIGN_CACHE };
   };
   const openCanvas = async ({ sessionId, cwd, selection }) => {
-    const designDir = require$$1$1.join(cwd, ".monkeyai");
+    const designDir = require$$1$1.join(cwd, ".aibertai");
     ensureDirectory(designDir);
     ensureDirectory(require$$1$1.join(designDir, "design"));
     ensureDirectory(require$$1$1.join(designDir, "design", "sessions"));
@@ -52746,14 +52769,28 @@ function createPrivateCatalog(origin) {
         return creating.get(key);
       }
       case "design_tool_catalog": {
-        const saved = existingDesignWorkspace(args.cwd, args.sessionId, args.design);
-        if (!saved) throw new Error("not_a_design_session");
-        return canvasToolsForDesignType(saved.designType);
+        const saved = existingDesignWorkspace(args.cwd, args.sessionId, args.design ?? {});
+        return saved ? [...canvasToolsForDesignType(saved.designType), ...imageTools] : imageTools;
       }
       case "design_model_tool": {
         const { cwd, design, sessionId, name, args: input } = args;
+        const saved = existingDesignWorkspace(cwd, sessionId, design ?? {});
+        if (imageTools.some((definition) => definition.name === name)) {
+          if (!saved && input.anchor_node_id != null) throw new Error("invalid_canvas_anchor");
+          workspace.sessions.created(sessionId, cwd, saved ?? {});
+          const result = await canvasCommandContext.run({ operationId: args.operationId, sessionId },
+            () => callImageTool(name, input, {
+              headers: { [CAPABILITY_SESSION_HEADER.toLowerCase()]: sessionId },
+              signal: args.signal
+                ? AbortSignal.any([args.signal, AbortSignal.timeout(20 * 60e3)])
+                : AbortSignal.timeout(18e3),
+              progress: () => {}
+            }));
+          if (result.isError) throw new Error(result.structuredContent?.submitted ? "media_generation_already_submitted" :
+            result.structuredContent?.error ?? result.content?.[0]?.text ?? "media_operation_failed");
+          return result.structuredContent;
+        }
         if (!CANVAS_TOOLS.some((definition) => definition.name === name)) throw new Error("invalid_design_model_tool");
-        const saved = existingDesignWorkspace(cwd, sessionId, design);
         if (!saved) throw new Error("not_a_design_session");
         workspace.sessions.created(sessionId, cwd, saved);
         const summary = (node) => ({
@@ -52875,12 +52912,15 @@ parentPort.on("message", ({ data }) => {
     if (message.type === "private-design-render-result") {
       privateDesignRenders.get(message.operationId)?.(message.error, message.data);
     }
+    if (message.type === "private-catalog-cancel") privateCatalogCalls.get(message.id)?.abort();
     if (message.type === "private-catalog") {
-      const { id, tool, args } = message;
-      void privateCatalog(tool, { ...args, operationId: id }).then(
+      const { id, tool, args, cancellable } = message;
+      const controller = cancellable ? new AbortController() : null;
+      if (controller) privateCatalogCalls.set(id, controller);
+      void privateCatalog(tool, { ...args, operationId: id, signal: controller?.signal }).then(
         (data) => parentPort.postMessage({ type: "private-catalog-result", id, data }),
         (error) => parentPort.postMessage({ type: "private-catalog-result", id, error: reasonOf(error) })
-      );
+      ).finally(() => privateCatalogCalls.delete(id));
     }
     return;
   }

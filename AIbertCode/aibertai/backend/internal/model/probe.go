@@ -59,7 +59,9 @@ func (s *Service) probeModel(w http.ResponseWriter, r *http.Request) {
 		modelJSON(w, http.StatusOK, result)
 		return
 	}
-	upstream, err := probeRequest(item, input.Message)
+	progressive := slices.ContainsFunc(strings.Split(r.Header.Get("Accept"), ","), func(value string) bool { return strings.TrimSpace(value) == "application/x-ndjson" })
+	stream := progressive && item.AdvancedConfig.StreamMode != StreamOff
+	upstream, err := probeRequest(item, input.Message, stream)
 	if err != nil {
 		modelError(r.Context(), w, http.StatusBadRequest, err.Error())
 		return
@@ -89,13 +91,24 @@ func (s *Service) probeModel(w http.ResponseWriter, r *http.Request) {
 		}
 		transport.Proxy = http.ProxyURL(proxyURL)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstream.URL, bytes.NewReader(upstream.Body))
-	if err != nil {
-		modelError(r.Context(), w, http.StatusBadRequest, "模型地址无效")
-		return
+	client := &http.Client{
+		Transport:     transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	req.Header = upstream.Header
-	response, err := (&http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(req)
+	started := time.Now()
+	response, err := upstream.send(ctx, client)
+	if err == nil && stream {
+		switch response.StatusCode {
+		case http.StatusBadRequest, http.StatusUnprocessableEntity, http.StatusNotImplemented:
+			if probeStreamRejected(response.Body) {
+				response.Body.Close()
+				upstream, err = probeRequest(item, input.Message, false)
+				if err == nil {
+					response, err = upstream.send(ctx, client)
+				}
+			}
+		}
+	}
 	if err != nil {
 		status, message := http.StatusBadGateway, "连接模型失败，请检查地址、协议和网络代理"
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -107,13 +120,30 @@ func (s *Service) probeModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer response.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-	if response.StatusCode != http.StatusOK || err != nil {
+	if response.StatusCode != http.StatusOK {
 		modelError(r.Context(), w, http.StatusBadGateway, fmt.Sprintf("模型返回 HTTP %d，请检查协议和密钥", response.StatusCode))
 		return
 	}
+	if progressive && strings.HasPrefix(response.Header.Get("Content-Type"), "text/event-stream") {
+		writeProbeStream(w, item.Protocol, response.Body, started)
+		return
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		status, message := http.StatusBadGateway, "读取模型响应失败"
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			status, message = http.StatusGatewayTimeout, "模型响应超时，请重试"
+		}
+		modelError(r.Context(), w, status, message)
+		return
+	}
 	content, valid := probeContent(item.Protocol, data)
-	modelJSON(w, http.StatusOK, map[string]any{"content": content, "valid": valid})
+	total := time.Since(started).Milliseconds()
+	result := map[string]any{"content": content, "valid": valid, "output_mode": "buffered", "total_ms": total}
+	if valid {
+		result["first_text_ms"] = total
+	}
+	modelJSON(w, http.StatusOK, result)
 }
 
 type probeUpstream struct {
@@ -122,7 +152,16 @@ type probeUpstream struct {
 	Body   []byte
 }
 
-func probeRequest(item Model, message string) (probeUpstream, error) {
+func (u probeUpstream) send(ctx context.Context, client *http.Client) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.URL, bytes.NewReader(u.Body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header = u.Header
+	return client.Do(req)
+}
+
+func probeRequest(item Model, message string, stream bool) (probeUpstream, error) {
 	if strings.ContainsAny(item.APIKey, "\r\n") || item.APIKey == "" {
 		return probeUpstream{}, errors.New("模型密钥无效")
 	}
@@ -134,21 +173,24 @@ func probeRequest(item Model, message string) (probeUpstream, error) {
 	var body any
 	header := make(http.Header)
 	header.Set("Accept", "application/json")
+	if stream {
+		header.Set("Accept", "text/event-stream, application/json")
+	}
 	header.Set("Content-Type", "application/json")
 	switch item.Protocol {
 	case ProtocolOpenAIChat:
 		endpoint = "chat/completions"
 		header.Set("Authorization", "Bearer "+item.APIKey)
-		body = map[string]any{"model": item.ModelID, "stream": false, "messages": []map[string]string{{"role": "user", "content": message}}}
+		body = map[string]any{"model": item.ModelID, "stream": stream, "messages": []map[string]string{{"role": "user", "content": message}}}
 	case ProtocolOpenAIResponses:
 		endpoint = "responses"
 		header.Set("Authorization", "Bearer "+item.APIKey)
-		body = map[string]any{"model": item.ModelID, "stream": false, "input": message}
+		body = map[string]any{"model": item.ModelID, "stream": stream, "input": message}
 	case ProtocolAnthropic:
 		endpoint = "messages"
 		header.Set("X-Api-Key", item.APIKey)
 		header.Set("Anthropic-Version", "2023-06-01")
-		body = map[string]any{"model": item.ModelID, "stream": false, "max_tokens": 256, "messages": []map[string]string{{"role": "user", "content": message}}}
+		body = map[string]any{"model": item.ModelID, "stream": stream, "max_tokens": 256, "messages": []map[string]string{{"role": "user", "content": message}}}
 	default:
 		return probeUpstream{}, errors.New("仅支持测试大语言模型协议")
 	}
@@ -180,6 +222,25 @@ func probeContent(protocol Protocol, data []byte) (string, bool) {
 	case ProtocolOpenAIResponses:
 		if content, ok := response["output_text"].(string); ok && strings.TrimSpace(content) != "" {
 			return content, true
+		}
+		items, _ := response["output"].([]any)
+		var content strings.Builder
+		for _, rawItem := range items {
+			item, _ := rawItem.(map[string]any)
+			if item["type"] != "message" || item["role"] != "assistant" {
+				continue
+			}
+			blocks, _ := item["content"].([]any)
+			for _, rawBlock := range blocks {
+				block, _ := rawBlock.(map[string]any)
+				if block["type"] == "output_text" {
+					text, _ := block["text"].(string)
+					content.WriteString(text)
+				}
+			}
+		}
+		if strings.TrimSpace(content.String()) != "" {
+			return content.String(), true
 		}
 	case ProtocolAnthropic:
 		blocks, _ := response["content"].([]any)

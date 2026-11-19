@@ -43,11 +43,19 @@ const (
 	ProtocolEmbedding       Protocol = "openai_embeddings"
 )
 
+type StreamMode string
+
+const (
+	StreamAuto StreamMode = "auto"
+	StreamOff  StreamMode = "off"
+)
+
 type AdvancedConfig struct {
-	ContextWindowTokens int64 `json:"context_window_tokens"`
-	MaxOutputTokens     int64 `json:"max_output_tokens"`
-	SupportsVision      bool  `json:"supports_vision"`
-	SupportsReasoning   bool  `json:"supports_reasoning"`
+	ContextWindowTokens int64      `json:"context_window_tokens"`
+	MaxOutputTokens     int64      `json:"max_output_tokens"`
+	SupportsVision      bool       `json:"supports_vision"`
+	SupportsReasoning   bool       `json:"supports_reasoning"`
+	StreamMode          StreamMode `json:"stream_mode,omitempty"`
 }
 
 type ImageConfig struct {
@@ -236,7 +244,7 @@ type AgentModel struct {
 	SharedUsers         *[]Subject         `json:"shared_users,omitempty"`
 	SharedGroups        *[]resource.Object `json:"shared_groups,omitempty"`
 	ID                  string             `json:"id"`
-	Model               string             `json:"model"`
+	Model               string             `json:"model"` // Gateway identifier: upstream model_id followed by @ and the catalog UUID.
 	DisplayName         string             `json:"display_name"`
 	Protocol            Protocol           `json:"protocol"`
 	Kind                Kind               `json:"kind"`
@@ -249,6 +257,7 @@ type AgentModel struct {
 	MaxOutputTokens     int64              `json:"max_output_tokens"`
 	SupportsVision      bool               `json:"supports_vision"`
 	SupportsReasoning   bool               `json:"supports_reasoning"`
+	StreamMode          StreamMode         `json:"stream_mode,omitempty"`
 	CreditMultiplier    float64            `json:"credit_multiplier"`
 	Tags                []resource.Object  `json:"tags"`
 	UpdatedAt           time.Time          `json:"-"`

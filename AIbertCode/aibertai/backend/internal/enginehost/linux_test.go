@@ -51,7 +51,7 @@ func TestLinuxInstallation(t *testing.T) {
 		}
 		return out
 	}
-	run("sudo test ! -e /etc/monkeyai-engine; sudo test ! -e /opt/monkeyai-engine; sudo test ! -e /var/lib/monkeyai-engine; sudo test ! -e /etc/docker; sudo test ! -e /var/lib/docker; ! sudo systemctl cat docker.service >/dev/null 2>&1")
+	run("sudo test ! -e /etc/aibertai-engine; sudo test ! -e /opt/monkeyai-engine; sudo test ! -e /var/lib/aibertai-engine; sudo test ! -e /etc/docker; sudo test ! -e /var/lib/docker; ! sudo systemctl cat docker.service >/dev/null 2>&1")
 	run("sudo systemctl start containerd")
 	original := run("sudo sha256sum /usr/local/bin/containerd /etc/containerd/config.toml; sudo systemctl is-active containerd; sudo test -S /run/containerd/containerd.sock")
 	arch := run("uname -m")
@@ -69,8 +69,8 @@ func TestLinuxInstallation(t *testing.T) {
 			t.Log(out)
 		}
 		_, err := vm(`sudo systemctl disable --now monkeyai-engine docker || true
-sudo rm -f /etc/systemd/system/monkeyai-engine.service /etc/systemd/system/docker.service
-sudo rm -rf /etc/monkeyai-engine /opt/monkeyai-engine /var/lib/monkeyai-engine /etc/docker /var/lib/docker
+sudo rm -f /etc/systemd/system/aibertai-engine.service /etc/systemd/system/docker.service
+sudo rm -rf /etc/aibertai-engine /opt/monkeyai-engine /var/lib/aibertai-engine /etc/docker /var/lib/docker
 sudo rm -f /usr/local/share/ca-certificates/monkeyai-engine-test.crt
 sudo sed -i '/# monkeyai-engine-test$/d' /etc/hosts
 sudo update-ca-certificates >/dev/null
@@ -150,13 +150,13 @@ sudo systemctl daemon-reload`)
 		t.Fatal("安装未报告成功")
 	}
 	lastSeen()
-	identity := run("sudo sha256sum /var/lib/monkeyai-engine/control/identity.key; sudo stat -c %a /var/lib/monkeyai-engine/control/identity.key; sudo cat /etc/monkeyai-engine/config.json")
+	identity := run("sudo sha256sum /var/lib/aibertai-engine/control/identity.key; sudo stat -c %a /var/lib/aibertai-engine/control/identity.key; sudo cat /etc/aibertai-engine/config.json")
 	if !strings.Contains(identity, enrollment.HostID) || !strings.Contains(identity, "\n600\n") {
 		t.Fatal("身份或权限错误")
 	}
 	t.Log("验证相同命令重试与身份保持")
 	run(enrollment.Command)
-	if run("sudo sha256sum /var/lib/monkeyai-engine/control/identity.key; sudo stat -c %a /var/lib/monkeyai-engine/control/identity.key; sudo cat /etc/monkeyai-engine/config.json") != identity {
+	if run("sudo sha256sum /var/lib/aibertai-engine/control/identity.key; sudo stat -c %a /var/lib/aibertai-engine/control/identity.key; sudo cat /etc/aibertai-engine/config.json") != identity {
 		t.Fatal("重试改变宿主身份")
 	}
 	t.Log("注入上报故障，验证安装失败后恢复既有服务")
@@ -169,7 +169,7 @@ sudo systemctl daemon-reload`)
 	waitHeartbeat(time.Now())
 	t.Log("验证服务重启")
 	before := time.Now()
-	run("sudo systemctl restart docker monkeyai-engine")
+	run("sudo systemctl restart docker aibertai-engine")
 	waitHeartbeat(before)
 	if after := run("sudo sha256sum /usr/local/bin/containerd /etc/containerd/config.toml; sudo systemctl is-active containerd; sudo test -S /run/containerd/containerd.sock"); after != original {
 		t.Fatal("安装或服务重启影响原有 containerd")

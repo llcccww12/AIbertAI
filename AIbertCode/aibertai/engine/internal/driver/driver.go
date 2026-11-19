@@ -19,6 +19,7 @@ import (
 	"aibertai.local/engine/internal/control"
 	"aibertai.local/engine/internal/dockerapi"
 	"aibertai.local/engine/internal/dockernet"
+	"aibertai.local/engine/internal/hostpaths"
 	"aibertai.local/engine/internal/lifecycle"
 	"aibertai.local/engine/internal/standalone"
 	"aibertai.local/engine/internal/storage"
@@ -246,7 +247,7 @@ func (d *Driver) Prepare(ctx context.Context, s lifecycle.Spec) error {
 	return d.touchImage(s.Image, true)
 }
 func build(s lifecycle.Spec, i imageInfo, mounts []storage.Mount, resolver string) createBody {
-	c := Config{Image: s.Image, User: "1000:1000", WorkingDir: "/workspace", Hostname: "monkeyai", Labels: labels(s), Entrypoint: i.Config.Entrypoint, Cmd: i.Config.Cmd}
+	c := Config{Image: s.Image, User: "1000:1000", WorkingDir: "/workspace", Hostname: "aibertai", Labels: labels(s), Entrypoint: i.Config.Entrypoint, Cmd: i.Config.Cmd}
 	// Docker 会继承镜像标签，engine 的归属标签始终覆盖同名镜像标签。
 	for key, value := range i.Config.Labels {
 		if _, managed := c.Labels[key]; !managed {
@@ -276,7 +277,7 @@ func build(s lifecycle.Spec, i imageInfo, mounts []storage.Mount, resolver strin
 		}
 		c.Env = append(c.Env, "PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin", "LANG=C.UTF-8")
 	}
-	c.Env = append(c.Env, "HOME=/home/monkey", "USER=monkey", "LOGNAME=monkey")
+	c.Env = append(c.Env, "HOME="+lifecycle.HomeMount, "USER=aibertai", "LOGNAME=aibertai")
 	h := HostConfig{Runtime: dockerapi.Runtime, ReadonlyRootfs: !s.PersistentContainer, NetworkMode: "none", CgroupnsMode: "private", IpcMode: "private", CapDrop: []string{"ALL"}, SecurityOpt: []string{"no-new-privileges:true"}, Memory: s.Resource.MemoryBytes, MemorySwap: s.Resource.MemoryBytes, NanoCpus: s.Resource.CPUMillis * 1000000, PidsLimit: s.Resource.HostTasks, ShmSize: s.Resource.TemporaryBytes / 4, Ulimits: []Ulimit{{"nofile", 4096, 4096}, {"nproc", sandboxTasks, sandboxTasks}}, Tmpfs: map[string]string{"/tmp": fmt.Sprintf("rw,nosuid,nodev,mode=1777,size=%d", s.Resource.TemporaryBytes/2), "/run": fmt.Sprintf("rw,nosuid,nodev,mode=1777,size=%d", s.Resource.TemporaryBytes/4)}}
 	h.RestartPolicy.Name = "no"
 	h.LogConfig.Type = "json-file"
@@ -336,7 +337,28 @@ func (d *Driver) load(ctx context.Context, s lifecycle.Spec, ref string) (contai
 	if err != nil {
 		return c, err
 	}
+	if c.Config.Hostname == "monkeyai" {
+		mounts = slices.Clone(mounts)
+		for index := range mounts {
+			mounts[index].Target = legacyContainerPath(mounts[index].Target)
+		}
+	}
 	want := build(s, i, mounts, filepath.Join(d.instanceDir(s), "resolv.conf"))
+	if c.Config.Hostname == "monkeyai" {
+		want.Hostname = c.Config.Hostname
+		want.Env = legacyContainerEnvironment(want.Env)
+	}
+	if c.HostConfig.Runtime == dockerapi.LegacyRuntime {
+		want.HostConfig.Runtime = dockerapi.LegacyRuntime
+	}
+	for i, expected := range want.HostConfig.Mounts {
+		for _, recorded := range c.HostConfig.Mounts {
+			if expected.Target == recorded.Target && hostpaths.SavedPath(recorded.Source) == expected.Source {
+				want.HostConfig.Mounts[i].Source = recorded.Source
+				break
+			}
+		}
+	}
 	// 已有只读容器可原样接管，根文件系统写权限仅在创建时设置。
 	if c.HostConfig.ReadonlyRootfs {
 		want.HostConfig.ReadonlyRootfs = true
@@ -361,7 +383,7 @@ func (d *Driver) load(ctx context.Context, s lifecycle.Spec, ref string) (contai
 	bindCount := 0
 	for _, m := range c.Mounts {
 		if m.Type == "bind" {
-			if s.NetworkPolicy == "public-only" && m.Source == filepath.Join(d.instanceDir(s), "resolv.conf") && m.Destination == "/etc/resolv.conf" && !m.RW {
+			if s.NetworkPolicy == "public-only" && hostpaths.SavedPath(m.Source) == filepath.Join(d.instanceDir(s), "resolv.conf") && m.Destination == "/etc/resolv.conf" && !m.RW {
 				continue
 			}
 			bindCount++
@@ -377,7 +399,7 @@ func (d *Driver) load(ctx context.Context, s lifecycle.Spec, ref string) (contai
 			Type, Source, Destination string
 			RW                        bool
 		}) bool {
-			return v.Type == "bind" && v.Source == m.Source && v.Destination == m.Target && v.RW
+			return v.Type == "bind" && hostpaths.SavedPath(v.Source) == m.Source && v.Destination == m.Target && v.RW
 		}) {
 			return c, errors.New("Docker 持久卷挂载发生变化")
 		}
@@ -473,7 +495,17 @@ func (d *Driver) Create(ctx context.Context, s lifecycle.Spec) (string, error) {
 	var out struct {
 		ID string `json:"Id"`
 	}
-	if err = d.client.Do(ctx, "POST", "/containers/create?name="+url.QueryEscape(containerName(s)), build(s, i, mounts, filepath.Join(d.instanceDir(s), "resolv.conf")), &out); err != nil {
+	info, err := d.client.Info(ctx)
+	if err != nil {
+		return "", err
+	}
+	runtimeName, err := info.RuntimeName()
+	if err != nil {
+		return "", err
+	}
+	request := build(s, i, mounts, filepath.Join(d.instanceDir(s), "resolv.conf"))
+	request.HostConfig.Runtime = runtimeName
+	if err = d.client.Do(ctx, "POST", "/containers/create?name="+url.QueryEscape(containerName(s)), request, &out); err != nil {
 		return "", err
 	}
 	return containerName(s), nil

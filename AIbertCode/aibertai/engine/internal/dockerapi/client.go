@@ -15,7 +15,8 @@ import (
 )
 
 const Socket = "/var/run/docker.sock"
-const Runtime = "monkeyai-runsc"
+const Runtime = "aibertai-runsc"
+const LegacyRuntime = "monkeyai-runsc"
 const Owner = "io.monkeyai.owner"
 
 type Client struct{ http *http.Client }
@@ -107,9 +108,8 @@ func (i Info) Validate() error {
 	if i.OSType != "linux" || i.CgroupVersion != "2" || !i.MemoryLimit || !i.SwapLimit || !i.CPUCfsQuota || !i.PidsLimit {
 		return errors.New("Docker 需要 Linux、cgroup v2 和 CPU/内存/swap/pids 限额支持")
 	}
-	r, ok := i.Runtimes[Runtime]
-	if !ok || r.Path != "/opt/monkeyai-engine/current/bin/runsc" || !slices.Equal(r.Args, []string{"--platform=systrap", "--network=sandbox", "--overlay2=none"}) {
-		return errors.New("Docker 未配置专用 monkeyai-runsc runtime")
+	if _, err := i.RuntimeName(); err != nil {
+		return err
 	}
 	for _, v := range i.SecurityOptions {
 		if v == "name=rootless" || v == "name=userns" {
@@ -117,4 +117,15 @@ func (i Info) Validate() error {
 		}
 	}
 	return nil
+}
+
+func (i Info) RuntimeName() (string, error) {
+	for _, name := range []string{Runtime, LegacyRuntime} {
+		r := i.Runtimes[name]
+		if (r.Path == "/opt/aibertai-engine/current/bin/runsc" || r.Path == "/opt/monkeyai-engine/current/bin/runsc") &&
+			slices.Equal(r.Args, []string{"--platform=systrap", "--network=sandbox", "--overlay2=none"}) {
+			return name, nil
+		}
+	}
+	return "", errors.New("Docker 未配置专用 aibertai-runsc runtime")
 }

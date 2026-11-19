@@ -155,7 +155,7 @@ func legacyAttachmentPath(archive legacySessionArchive, uri, name string) (strin
 		return "", errInvalidUpload
 	}
 	parts := strings.Split(filepath.ToSlash(relative), "/")
-	if len(parts) != 4 || parts[0] != ".monkeyai" || parts[1] != "uploads" ||
+	if len(parts) != 4 || (parts[0] != legacyWorkspaceDataDir && parts[0] != workspaceDataDir) || parts[1] != "uploads" ||
 		!strings.HasPrefix(parts[2], "attachment-") {
 		return "", errInvalidUpload
 	}
@@ -181,12 +181,12 @@ func openLegacyAttachment(profile string, archive legacySessionArchive, uri, nam
 	if err != nil || !info.IsDir() {
 		return nil, errInvalidUpload
 	}
-	root, err := profileRoot.OpenRoot(workspace)
+	root, err := prepareWorkspaceBrand(profileRoot.OpenRoot(workspace))
 	if err != nil {
 		return nil, err
 	}
 	defer root.Close()
-	relative = filepath.Join(parts[2:]...)
+	relative = filepath.FromSlash(canonicalWorkspaceReference(strings.Join(parts[2:], "/")))
 	return openAttachmentFile(root, relative, relayMaxUpload)
 }
 
@@ -212,11 +212,12 @@ func historyFilePath(uri, name string) string {
 		strings.ContainsAny(name, "/\\\x00\r\n") {
 		return ""
 	}
-	return fmt.Sprintf(".monkeyai/history-files/%x/%s", sha256.Sum256([]byte(uri)), name)
+	return fmt.Sprintf(workspaceHistoryFiles+"%x/%s", sha256.Sum256([]byte(uri)), name)
 }
 
 func (h *relaySessionHost) openHistoryFile(ref relayFileRef) (*os.File, string, error) {
-	if !strings.HasPrefix(ref.Path, ".monkeyai/history-files/") {
+	ref.Path = canonicalWorkspaceReference(ref.Path)
+	if !strings.HasPrefix(ref.Path, workspaceHistoryFiles) {
 		return nil, "", errInvalidUpload
 	}
 	session, err := h.live.load(ref.SessionID)

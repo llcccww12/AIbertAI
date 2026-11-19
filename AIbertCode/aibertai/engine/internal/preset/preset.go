@@ -137,7 +137,7 @@ func (p Preset) Validate() error {
 		return errors.New("必须指定由宿主管理的网络策略")
 	}
 	for name, a := range map[string]Artifact{"runtime": p.Runtime, "task_engine": p.TaskEngine} {
-		if a.Path == "/opt/monkeyai" || !strings.HasPrefix(a.Path, "/opt/monkeyai/") || path.Clean(a.Path) != a.Path || strings.ContainsAny(a.Path, "\x00\r\n\t ") || !digest.MatchString(a.SHA256) || a.Version == "" || a.Version == "latest" || len(a.Version) > 128 || strings.ContainsAny(a.Version, "\x00\r\n\t ") {
+		if !(strings.HasPrefix(a.Path, "/opt/aibertai/") || strings.HasPrefix(a.Path, "/opt/monkeyai/")) || path.Clean(a.Path) != a.Path || strings.ContainsAny(a.Path, "\x00\r\n\t ") || !digest.MatchString(a.SHA256) || a.Version == "" || a.Version == "latest" || len(a.Version) > 128 || strings.ContainsAny(a.Version, "\x00\r\n\t ") {
 			return fmt.Errorf("%s 必须指定只读发行目录内的路径、固定版本和 SHA-256", name)
 		}
 	}

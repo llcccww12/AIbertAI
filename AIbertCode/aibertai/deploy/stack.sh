@@ -46,6 +46,7 @@ CONFIG
     "${compose[@]}" up -d --wait --wait-timeout 90 postgres object-storage
     "${compose[@]}" stop admin backend
     "${compose[@]}" run --rm migrate
+    "${compose[@]}" run --rm --no-deps backend migrate-resource-bucket --if-default
     "${compose[@]}" up -d --wait --wait-timeout 180 backend admin
     ;;
   *) usage ;;

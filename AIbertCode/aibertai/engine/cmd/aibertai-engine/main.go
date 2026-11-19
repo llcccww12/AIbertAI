@@ -1,6 +1,7 @@
 package main
 
 import (
+	"aibertai.local/engine/internal/hostpaths"
 	"context"
 	"encoding/json"
 	"flag"
@@ -29,11 +30,22 @@ func main() {
 
 func run(ctx context.Context, args []string, out, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "用法：monkeyai-engine serve | environment | cache | doctor | validate-preset | version")
+		fmt.Fprintln(stderr, "用法：aibertai-engine serve | environment | cache | doctor | validate-preset | version")
 		return 2
 	}
 	switch args[0] {
-	case "monkeyai-engine":
+	case "migrate-host-brand":
+		rollback := len(args) == 2 && args[1] == "--rollback"
+		if len(args) != 1 && !rollback {
+			return 2
+		}
+		if err := migrateHostBrand(ctx, rollback, out, stderr); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		fmt.Fprintln(out, "宿主路径操作已完成")
+		return 0
+	case "aibertai-engine", "monkeyai-engine":
 		if len(args) < 2 {
 			return 2
 		}
@@ -62,7 +74,7 @@ func run(ctx context.Context, args []string, out, stderr io.Writer) int {
 		return 0
 	case "cache":
 		if len(args) != 2 || (args[1] != "inspect" && args[1] != "gc") {
-			fmt.Fprintln(stderr, "用法：monkeyai-engine cache inspect | gc")
+			fmt.Fprintln(stderr, "用法：aibertai-engine cache inspect | gc")
 			return 2
 		}
 		report, err := host.Cache(ctx, args[1] == "gc")
@@ -83,7 +95,7 @@ func run(ctx context.Context, args []string, out, stderr io.Writer) int {
 		if len(args) != 1 {
 			return 2
 		}
-		commands, err := worker.New("/var/lib/monkeyai-engine/control/commands", host.Executor{})
+		commands, err := worker.New(hostpaths.State+"/control/commands", host.Executor{})
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1

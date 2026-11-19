@@ -28092,7 +28092,9 @@ function EG(e) {
     s &&
     (ds(s) !== ds(r) ||
       s.sessionId !== t.sessionId ||
-      !s.path.startsWith(`.monkeyai/uploads/upload-${t.uploadId}/`))
+      ![".aibertai", ".monkeyai"].some((dir) =>
+        s.path.startsWith(`${dir}/uploads/upload-${t.uploadId}/`),
+      ))
   )
     throw new Error(Se.invalidUploadResponse);
   return {
@@ -49407,19 +49409,26 @@ function Oet(e) {
               nodeIds: s.map((g) => g.id),
             })
           : [];
-      (await e.queue(
-        {
-          sessionId: t,
-          action: "add",
-          id: d,
-          text: n,
-          attachments: [...Sve(r), ...m],
-          ...(s.length ? { canvasNodes: s } : {}),
-          sendIfIdle: !0,
-        },
-        { onUpload: p },
-      ),
-        e.current(o) && (await Kd.acknowledgeCreation(t)));
+      try {
+        await e.queue(
+          {
+            sessionId: t,
+            action: "add",
+            id: d,
+            text: n,
+            attachments: [...Sve(r), ...m],
+            ...(s.length ? { canvasNodes: s } : {}),
+            sendIfIdle: !0,
+          },
+          { onUpload: p },
+        );
+      } catch (error) {
+        // A long model turn may outlive the RPC deadline after the message was accepted.
+        if (u || !(error instanceof VYe) || !e.current(o) ||
+            !e.view(t)?.messages.some((message) => message.queueMessageId === d))
+          throw error;
+      }
+      if (e.current(o)) await Kd.acknowledgeCreation(t);
     } finally {
       e.current(o) &&
         e.patch(t, (m) => ({
@@ -51791,7 +51800,7 @@ function eoe(e, t) {
 }
 const ott = new Set(),
   att = new Set(["media_generate_image", "media_edit_image"]),
-  ltt = /^\.monkeyai\/media\/generated\/[a-zA-Z0-9-]+\.(?:png|jpe?g|webp)$/i;
+  ltt = /^\.(?:aibertai|monkeyai)\/media\/generated\/[a-zA-Z0-9-]+\.(?:png|jpe?g|webp)$/i;
 function ctt(e) {
   if (e.sessionUpdate !== "tool_call_update" || e.status !== "completed")
     return;
@@ -52019,7 +52028,12 @@ const zO = 20,
         (i(G, J),
           r.get(G)?.mode !== "older" &&
             n.get(G)?.push({ type: "message", value: P, seq: J }),
-          h(G, (Q) => mZe(Q, P)),
+          h(G, (Q) => {
+            const next = mZe(Q, P);
+            return Z.role === "user" && Q.submission && Q.submission.id === Z.queueMessageId
+              ? { ...next, submission: void 0, initializing: !1 }
+              : next;
+          }),
           Z.queueMessageId &&
             o.delete(G + ":" + Z.queueMessageId) &&
             !a(Z.origin) &&
@@ -115277,7 +115291,7 @@ const qwt = {
         unavailable: "无法访问 {{name}}，请重新选择",
         copy_failed: "无法将 {{name}} 复制到工作区，请检查文件和存储空间",
         directory_invalid:
-          "附件目录不可用，请检查工作区中的 .monkeyai/uploads 目录",
+          "附件目录不可用，请检查工作区中的 .aibertai/uploads 目录",
       },
       contextLabel: "上下文：已用 {{used}} / 容量 {{size}} tokens",
       contextHint: "会话最近一次统计的用量，不含当前草稿。",
@@ -118435,7 +118449,7 @@ Start with the conclusion, then explain the reasoning.`,
         copy_failed:
           "Cannot copy {{name}} into the workspace. Check the file and available storage.",
         directory_invalid:
-          "The attachment folder is unavailable. Check .monkeyai/uploads in the workspace.",
+          "The attachment folder is unavailable. Check .aibertai/uploads in the workspace.",
       },
       contextLabel: "Context: {{used}} used / {{size}} tokens",
       contextHint: "Latest context usage, excluding your draft.",
@@ -161649,6 +161663,7 @@ function PTt({
   onBeginQueuedEdit: L,
   onCancelQueuedEdit: z,
   onCancel: H,
+  stopDisabled = C,
   onCompact: P,
 }) {
   const { t: G } = Xe(),
@@ -162376,7 +162391,7 @@ function PTt({
         (it.preventDefault(), te(!1));
         return;
       }
-      if (it.key === "Escape" && A && se && !C) {
+      if (it.key === "Escape" && A && se && !stopDisabled) {
         (it.preventDefault(), se().catch(Ft));
         return;
       }
@@ -162688,7 +162703,7 @@ ${it.preview}`
                 variant: "ghost",
                 size: "xs",
                 className: "composer-stop",
-                disabled: C,
+                disabled: stopDisabled,
                 "aria-label": ie,
                 title: ie + (qe ? "" : " · Esc"),
                 onClick: () => {
@@ -171068,8 +171083,8 @@ function GMt(e) {
 function KMt(e) {
   return e.includes("..") || e.includes("\\") || e.includes("\0")
     ? !1
-    : /^\.monkeyai\/media\/generated\/[a-zA-Z0-9-]+\.(?:mp4|webm)$/i.test(e) ||
-        /^\.monkeyai\/design\/(?:[a-zA-Z0-9._-]+\/)+[a-zA-Z0-9._-]+\.(?:mp4|webm)$/i.test(
+    : /^\.(?:aibertai|monkeyai)\/media\/generated\/[a-zA-Z0-9-]+\.(?:mp4|webm)$/i.test(e) ||
+        /^\.(?:aibertai|monkeyai)\/design\/(?:[a-zA-Z0-9._-]+\/)+[a-zA-Z0-9._-]+\.(?:mp4|webm)$/i.test(
           e,
         );
 }
@@ -172610,7 +172625,7 @@ function uNt({ sessionId: e, call: t }) {
   );
 }
 const dNt = new Set(["media_generate_image", "media_edit_image"]),
-  fNt = /^\.monkeyai\/media\/generated\/[a-zA-Z0-9-]+\.(?:png|jpe?g|webp)$/i,
+  fNt = /^\.(?:aibertai|monkeyai)\/media\/generated\/[a-zA-Z0-9-]+\.(?:png|jpe?g|webp)$/i,
   hNt = /^([1-9]\d*)\s*[:/]\s*([1-9]\d*)$/;
 function l7e(e) {
   const t = e?.split("__").at(-1);
@@ -173254,7 +173269,8 @@ function _Nt(e, t, n, r) {
   return e.steps.flatMap(({ part: i }) => {
     if (i.type !== "tool_call" || s.has(i.toolCallId)) return [];
     const o = t[i.toolCallId];
-    return (n ? pNt(o) : mNt(o, r)) ? (s.add(i.toolCallId), [o]) : [];
+    const a = o?.status === "completed" && pNt(o) && gNt(o.output);
+    return (a || (n ? pNt(o) : mNt(o, r))) ? (s.add(i.toolCallId), [o]) : [];
   });
 }
 function TNt({
@@ -206976,7 +206992,7 @@ function nzt(e, t) {
     for (const { slot: p } of d) {
       const m = [
         ...p.matchAll(
-          /(?:\.monkeyai\/design\/[^/\s《》（）()；;]+\/)?assets\/[^\s《》（）()；;<>"`]+?\.(?:png|jpe?g|webp|gif|svg)\b/gi,
+          /(?:\.(?:aibertai|monkeyai)\/design\/[^/\s《》（）()；;]+\/)?assets\/[^\s《》（）()；;<>"`]+?\.(?:png|jpe?g|webp|gif|svg)\b/gi,
         ),
       ].map((g) => g[0]);
       for (const g of m) {
@@ -212893,7 +212909,7 @@ function qTe({
     $ = (_?.entries ?? []).filter(
       (ae) =>
         ae.kind !== "symlink" &&
-        (!ae.name.startsWith(".") || ae.name === ".monkeyai"),
+        (!ae.name.startsWith(".") || ae.name === ".aibertai" || ae.name === ".monkeyai"),
     ),
     L = $.flatMap((ae) => {
       const pe = ae.kind === "file" ? Ume(ae.name) : void 0;
@@ -274894,6 +274910,11 @@ function trn() {
       }
     },
     mt = async (Me) => {
+      if (ts()?.transport !== "relay") {
+        // Recording the decision releases the running design tool in the same turn.
+        if (h.status !== "running") await I(h.id, Me, []);
+        return;
+      }
       const It = crypto.randomUUID();
       (await q({ sessionId: h.id, action: "add", id: It, text: Me }),
         await q({ sessionId: h.id, action: "sendNow", id: It }));
@@ -275303,6 +275324,7 @@ function trn() {
                         }
                       },
                       onCancel: () => F(h.id),
+                      stopDisabled: !g,
                       onCompact: pt,
                       skillCommands: C,
                       onPrepareSkill: J,
@@ -275437,7 +275459,8 @@ function trn() {
                   onOpenFeedback: i,
                   textWorkflowDisabled: !w || mn || Oe || !!h.sending,
                   productionRequestDisabled:
-                    !w || !!h.sending || !!h.queue?.submittingId,
+                    !w || !!h.sending || !!h.queue?.submittingId ||
+                    (ts()?.transport !== "relay" && (Oe || mn)),
                   onSendProductionRequest: async (Me) => {
                     const It = Jt.getState(),
                       Gt = It.views[h.id];
@@ -275448,6 +275471,12 @@ function trn() {
                       Gt.queue?.submittingId
                     )
                       throw new Error("会话尚未就绪，请稍后重试");
+                    if (ts()?.transport !== "relay") {
+                      if (Gt.status === "running" || Gt.ask || Gt.question || mn)
+                        throw new Error("当前会话正在处理请求，请稍后重试");
+                      await I(h.id, Me, []);
+                      return;
+                    }
                     if (Gt.queue?.messages.some((un) => un.text === Me)) return;
                     const en = crypto.randomUUID();
                     await It.queue({

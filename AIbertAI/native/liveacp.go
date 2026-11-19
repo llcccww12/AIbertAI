@@ -325,7 +325,26 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 						result, fault = h.deleteDesktopSessions(ctx, ws, in.Method, in.Params)
 					}
 				case "_monkeyai/session/queue":
-					result, fault = h.handleQueue(ctx, ws, r, in.Params)
+					// A queued turn may run for minutes. Leave the ACP reader free for
+					// history, cancellation and other control requests on this connection.
+					go func(id, params json.RawMessage) {
+						replied := false
+						accept := func(result any) error {
+							replied = true
+							return wsjson.Write(ctx, ws, map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
+						}
+						result, err := h.handleQueue(ctx, ws, r, params, accept)
+						if replied {
+							return
+						}
+						if err == nil {
+							_ = accept(result)
+							return
+						}
+						_ = wsjson.Write(ctx, ws, map[string]any{"jsonrpc": "2.0", "id": id,
+							"error": map[string]any{"code": -32602, "message": err.Error()}})
+					}(in.ID, in.Params)
+					continue
 				case "_aibertai/runtime/prepare-restart":
 					if h.local == nil || h.live == nil || len(r.Header.Values("Origin")) != 0 {
 						code, fault = -32001, errRelayAccess
@@ -554,7 +573,7 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 						if err := h.acpScope(r, "files:read"); err != nil {
 							code, fault = -32001, errRelayAccess
 						} else {
-							result, fault = h.promptACP(ctx, ws, r, p.SessionID, p.Meta.OperationID, "", p.Prompt[0].Text)
+							result, fault = h.promptACP(ctx, ws, r, p.SessionID, p.Meta.OperationID, "", p.Prompt[0].Text, nil)
 						}
 					}
 				default:

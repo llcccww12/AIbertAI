@@ -58,6 +58,7 @@ type toolArguments struct {
 }
 
 type workspaceToolRun struct {
+	Preamble      string            `json:"preamble,omitempty"`
 	Call          *modelToolUse     `json:"call,omitempty"`
 	Report        reportedTool      `json:"report"`
 	Output        string            `json:"output,omitempty"`
@@ -75,7 +76,7 @@ func (c *client) completeToolTurn(ctx context.Context, protocol, key, session st
 	return answer, usage, &runs[0].Report, err
 }
 
-func (c *client) completeWorkspaceToolTurn(ctx context.Context, protocol, key, session, selected string, approved []string, prompt string, history []toolConversationMessage, requireTool, allowWrite bool, maxCalls int, connectors map[string]connectorTool, workspace *workspaceToolPolicy, inputBudget int, modelOptions map[string]any, call func(toolConversationMessage, toolArguments, int) (string, error)) (string, modelUsage, []workspaceToolRun, error) {
+func (c *client) completeWorkspaceToolTurn(ctx context.Context, protocol, key, session, selected string, approved []string, prompt string, history []toolConversationMessage, requireTool, allowWrite bool, maxCalls int, connectors map[string]connectorTool, workspace *workspaceToolPolicy, inputBudget int, modelOptions map[string]any, call func(toolConversationMessage, toolArguments, int) (string, error), deltas ...func(string) error) (string, modelUsage, []workspaceToolRun, error) {
 	talk := append(slices.Clone(history), toolConversationMessage{Role: "user", Content: &prompt})
 	fileParameter := map[string]any{"type": "string", "description": "A workspace-relative path or the exact name of a file attached to this turn"}
 	if len(approved) != 0 {
@@ -88,6 +89,10 @@ func (c *client) completeWorkspaceToolTurn(ctx context.Context, protocol, key, s
 		preferences = workspace.Preferences
 		instructions = workspace.Instructions
 		goal = workspace.Goal
+	}
+	var delta func(string) error
+	if len(deltas) != 0 && goal == nil {
+		delta = deltas[0]
 	}
 	tools := workspace.extraDefinitions()
 	if preferences.allows(workspaceReadTool) {
@@ -140,7 +145,7 @@ func (c *client) completeWorkspaceToolTurn(ctx context.Context, protocol, key, s
 			messages = fitModelHistory(messages, len(history), budget)
 		}
 		if protocol == "openai_responses" {
-			return c.responsesToolRound(ctx, key, session, selected, messages, tools, choice, modelOptions)
+			return c.responsesToolRound(ctx, key, session, selected, messages, tools, choice, modelOptions, delta)
 		}
 		request := map[string]any{"model": selected, "messages": messages, "stream": false}
 		maps.Copy(request, modelOptions)
@@ -155,7 +160,11 @@ func (c *client) completeWorkspaceToolTurn(ctx context.Context, protocol, key, s
 				request["parallel_tool_calls"] = false
 			}
 		}
-		return c.toolRound(ctx, key, session, request)
+		if delta != nil {
+			request["stream"] = true
+			request["stream_options"] = map[string]bool{"include_usage": true}
+		}
+		return c.toolRound(ctx, key, session, request, delta)
 	}
 	var usage modelUsage
 	var runs []workspaceToolRun
@@ -173,8 +182,12 @@ func (c *client) completeWorkspaceToolTurn(ctx context.Context, protocol, key, s
 		} else {
 			usage = addToolUsage(usage, nextUsage)
 		}
+		partial := ""
+		if delta != nil && answer.Content != nil {
+			partial = *answer.Content
+		}
 		if err != nil {
-			return "", usage, runs, err
+			return partial, usage, runs, err
 		}
 		if choice != "required" && finish == "stop" && len(answer.ToolCalls) == 0 && answer.Content != nil && *answer.Content != "" {
 			progress := strings.TrimSpace(*answer.Content)
@@ -208,15 +221,15 @@ func (c *client) completeWorkspaceToolTurn(ctx context.Context, protocol, key, s
 			return lastProgress, usage, runs, nil
 		}
 		if len(runs) == maxCalls {
-			return "", usage, runs, errors.New("model_tool_continuation_incomplete")
+			return partial, usage, runs, errors.New("model_tool_continuation_incomplete")
 		}
 		if finish != "tool_calls" || len(answer.ToolCalls) != 1 {
-			return "", usage, runs, errors.New("expected_one_model_tool_call")
+			return partial, usage, runs, errors.New("expected_one_model_tool_call")
 		}
 		invocation := answer.ToolCalls[0]
 		args, err := parseModelToolArguments(invocation, approved, allowWrite, connectors, builtins)
 		if err != nil || seen[invocation.ID] {
-			return "", usage, runs, errors.New("invalid_model_tool_call")
+			return partial, usage, runs, errors.New("invalid_model_tool_call")
 		}
 		seen[invocation.ID] = true
 		answer.Role = "assistant"
@@ -236,7 +249,7 @@ func (c *client) completeWorkspaceToolTurn(ctx context.Context, protocol, key, s
 				value = "Tool failed (" + safeDesktopTurnFailure(err) + "). Use the observed result to correct the request, choose another suitable action, or explain the failure."
 			}
 		}
-		runs = append(runs, workspaceToolRun{Call: &invocation, Report: fact, Output: value, ResponseItems: answer.ResponseItems})
+		runs = append(runs, workspaceToolRun{Preamble: partial, Call: &invocation, Report: fact, Output: value, ResponseItems: answer.ResponseItems})
 		if err != nil && (requireTool || ctx.Err() != nil || err.Error() == "tool_permission_cancelled" || err.Error() == "tool_approval_unavailable") {
 			return "", usage, runs, err
 		}
@@ -359,7 +372,27 @@ func addToolUsage(usage, next modelUsage) modelUsage {
 	return modelUsage{Input: combine(usage.Input, next.Input), Output: combine(usage.Output, next.Output)}
 }
 
-func (c *client) toolRound(ctx context.Context, key, session string, request map[string]any) (modelUsage, toolConversationMessage, string, error) {
+func (c *client) toolRound(ctx context.Context, key, session string, request map[string]any, deltas ...func(string) error) (modelUsage, toolConversationMessage, string, error) {
+	resp, err := c.requestModelRound(ctx, "/v1/chat/completions", key, session, request)
+	if err != nil {
+		return modelUsage{}, toolConversationMessage{}, "", err
+	}
+	defer resp.Body.Close()
+	var delta func(string) error
+	if len(deltas) != 0 {
+		delta = deltas[0]
+	}
+	if delta != nil && strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
+		return readChatToolStream(resp.Body, delta)
+	}
+	usage, message, finish, err := readChatToolResponse(resp.Body)
+	if err == nil && delta != nil && message.Content != nil && *message.Content != "" {
+		err = delta(*message.Content)
+	}
+	return usage, message, finish, err
+}
+
+func readChatToolResponse(body io.Reader) (modelUsage, toolConversationMessage, string, error) {
 	var result struct {
 		Usage   modelUsage
 		Choices []struct {
@@ -367,16 +400,7 @@ func (c *client) toolRound(ctx context.Context, key, session string, request map
 			Message toolConversationMessage `json:"message"`
 		}
 	}
-	data, err := json.Marshal(request)
-	if err != nil {
-		return result.Usage, toolConversationMessage{}, "", err
-	}
-	resp, err := c.request(ctx, "POST", "/v1/chat/completions", key, "", session, "application/json", bytes.NewReader(data))
-	if err != nil {
-		return result.Usage, toolConversationMessage{}, "", err
-	}
-	defer resp.Body.Close()
-	if json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&result) != nil || len(result.Choices) != 1 {
+	if json.NewDecoder(io.LimitReader(body, 2<<20)).Decode(&result) != nil || len(result.Choices) != 1 {
 		return result.Usage, toolConversationMessage{}, "", errors.New("invalid_tool_model_response")
 	}
 	return result.Usage, result.Choices[0].Message, result.Choices[0].Finish, nil

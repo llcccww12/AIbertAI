@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -34,6 +35,44 @@ type execution struct {
 	}
 }
 
+func legacyContainerPath(path string) string {
+	if path == lifecycle.HomeMount {
+		return lifecycle.LegacyHomeMount
+	}
+	if suffix, ok := strings.CutPrefix(path, lifecycle.RuntimeMount); ok && (suffix == "" || strings.HasPrefix(suffix, "/")) {
+		return lifecycle.LegacyRuntimeMount + suffix
+	}
+	return path
+}
+
+func legacyContainerEnvironment(env []string) []string {
+	env = slices.Clone(env)
+	for i, value := range env {
+		switch value {
+		case "HOME=" + lifecycle.HomeMount:
+			env[i] = "HOME=" + lifecycle.LegacyHomeMount
+		case "USER=aibertai":
+			env[i] = "USER=monkey"
+		case "LOGNAME=aibertai":
+			env[i] = "LOGNAME=monkey"
+		}
+	}
+	return env
+}
+
+func runtimeCommand(c container, binary string, args []string) (string, []string) {
+	if c.Config.Hostname != "monkeyai" {
+		return binary, args
+	}
+	args = slices.Clone(args)
+	for i, arg := range args {
+		if i > 0 && args[i-1] == "--state-dir" {
+			args[i] = legacyContainerPath(arg)
+		}
+	}
+	return legacyContainerPath(binary), args
+}
+
 func (d *Driver) runtimeContainer(ctx context.Context, s lifecycle.Spec) (container, error) {
 	if s.Runtime == nil {
 		return container{}, errors.New("环境未配置 standalone")
@@ -53,6 +92,9 @@ func (d *Driver) execCreate(ctx context.Context, c container, spec lifecycle.Spe
 		return "", err
 	}
 	environment := build(spec, image, nil, "").Env
+	if c.Config.Hostname == "monkeyai" {
+		environment = legacyContainerEnvironment(environment)
+	}
 	for index, value := range environment {
 		if strings.HasPrefix(value, "PATH=") {
 			environment[index] = "PATH=" + filepath.Dir(binary) + ":" + strings.TrimPrefix(value, "PATH=")
@@ -112,7 +154,8 @@ func (d *Driver) runRuntime(ctx context.Context, s lifecycle.Spec, args []string
 	if !runtimeInstalled(s, files) {
 		return 0, errors.New("目标 runtime 版本尚未安装")
 	}
-	id, err := d.execCreate(ctx, c, s, files.Binary, args)
+	binary, args := runtimeCommand(c, files.Binary, args)
+	id, err := d.execCreate(ctx, c, s, binary, args)
 	if err != nil {
 		return 0, err
 	}
@@ -151,7 +194,7 @@ func (d *Driver) runRuntime(ctx context.Context, s lifecycle.Spec, args []string
 		return 0, err
 	}
 	for {
-		e, err := d.execInfo(ctx, id, c.ID, files.Binary)
+		e, err := d.execInfo(ctx, id, c.ID, binary)
 		if err != nil {
 			return 0, err
 		}
@@ -235,14 +278,14 @@ func (d *Driver) Serve(ctx context.Context, s lifecycle.Spec, observe bool) erro
 		return errors.New("目标 runtime 版本尚未安装")
 	}
 	path := filepath.Join(d.instanceDir(s), "serve.json")
-	args := []string{"serve", "--state-dir", standalone.StateDir}
+	binary, args := runtimeCommand(c, files.Binary, []string{"serve", "--state-dir", standalone.StateDir})
 	raw, err := os.ReadFile(path)
 	if err == nil {
 		var saved struct{ ID, Fingerprint string }
 		if json.Unmarshal(raw, &saved) != nil || saved.Fingerprint != fingerprint(s) {
 			return errors.New("运行时进程记录无效")
 		}
-		e, err := d.execInfo(ctx, saved.ID, c.ID, files.Binary)
+		e, err := d.execInfo(ctx, saved.ID, c.ID, binary)
 		if err != nil {
 			return err
 		}
@@ -260,7 +303,7 @@ func (d *Driver) Serve(ctx context.Context, s lifecycle.Spec, observe bool) erro
 	if observe {
 		return errors.New("运行时进程记录消失，不自动重新执行")
 	}
-	id, err := d.execCreate(ctx, c, s, files.Binary, args)
+	id, err := d.execCreate(ctx, c, s, binary, args)
 	if err != nil {
 		return err
 	}

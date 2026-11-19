@@ -1,6 +1,7 @@
 package control
 
 import (
+	"aibertai.local/engine/internal/hostpaths"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -17,7 +18,7 @@ import (
 	"time"
 )
 
-const remoteUpgradePath remoteFile = "/var/lib/monkeyai-engine/control/remote-upgrade.json"
+var remoteUpgradePath = remoteFile(hostpaths.State + "/control/remote-upgrade.json")
 
 var releaseName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$`)
 var upgradeID = regexp.MustCompile(`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`)
@@ -82,7 +83,7 @@ func (f remoteFile) report(ctx context.Context) (*UpgradeResult, error) {
 	if v.Result.Status == "running" {
 		check, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		raw, err := exec.CommandContext(check, "systemctl", "show", "monkeyai-engine-upgrade-"+v.Task.ID+".service", "--property=ActiveState", "--value").Output()
+		raw, err := exec.CommandContext(check, "systemctl", "show", strings.TrimSuffix(hostpaths.Unit, ".service")+"-upgrade-"+v.Task.ID+".service", "--property=ActiveState", "--value").Output()
 		if err != nil {
 			return &v.Result, err
 		}
@@ -124,7 +125,7 @@ func (f remoteFile) launch(ctx context.Context, task UpgradeTask) error {
 	}
 	binary, err := os.Executable()
 	if err == nil {
-		err = exec.CommandContext(ctx, "systemd-run", "--unit=monkeyai-engine-upgrade-"+task.ID, "--collect", "--property=TimeoutStopSec=120", "--property=RuntimeMaxSec=26min", binary, "remote-upgrade", task.ID).Run()
+		err = exec.CommandContext(ctx, "systemd-run", "--unit="+strings.TrimSuffix(hostpaths.Unit, ".service")+"-upgrade-"+task.ID, "--collect", "--property=TimeoutStopSec=120", "--property=RuntimeMaxSec=26min", binary, "remote-upgrade", task.ID).Run()
 	}
 	if err != nil {
 		state.Result.Status = "failed"

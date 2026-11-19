@@ -71,7 +71,7 @@ func TestDockerIntegration(t *testing.T) {
 		t.Fatal(got, err)
 	}
 	t.Log("Docker + gVisor 容器实际启动，身份、只读根、资源配置与独立网络检查通过")
-	if out, err := exec.CommandContext(ctx, "docker", "exec", ref, "sh", "-c", "echo preserved > /workspace/preserved; echo home > /home/monkey/preserved").CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(ctx, "docker", "exec", ref, "sh", "-c", "echo preserved > /workspace/preserved; echo home > /home/aibertai/preserved").CombinedOutput(); err != nil {
 		t.Fatalf("持久目录写入失败：%v %s", err, out)
 	}
 	if s.Runtime != nil {
@@ -109,7 +109,7 @@ func TestDockerIntegration(t *testing.T) {
 	if err = d.Start(ctx, s, ref); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.CommandContext(ctx, "docker", "exec", ref, "sh", "-c", "test \"$(cat /workspace/preserved)\" = preserved && test \"$(cat /home/monkey/preserved)\" = home").CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(ctx, "docker", "exec", ref, "sh", "-c", "test \"$(cat /workspace/preserved)\" = preserved && test \"$(cat /home/aibertai/preserved)\" = home").CombinedOutput(); err != nil {
 		t.Fatalf("重建后持久目录未保留：%v %s", err, out)
 	}
 	t.Log("停止、删除实例后重建，项目及用户目录数据保留")

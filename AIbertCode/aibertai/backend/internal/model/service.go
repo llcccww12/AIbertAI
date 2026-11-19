@@ -207,6 +207,9 @@ func (s *Service) Update(ctx context.Context, id, actorUserID string, input Save
 	item.OwnerUserID = existing.OwnerUserID
 	item.GrantorUserID = actorUserID
 	item.Enabled = existing.Enabled
+	if item.Kind == KindText && item.AdvancedConfig.StreamMode == "" {
+		item.AdvancedConfig.StreamMode = existing.AdvancedConfig.StreamMode
+	}
 	if input.TagIDs == nil {
 		item.TagIDs = tagIDs(existing.Tags)
 	}
@@ -312,6 +315,12 @@ func (s *Service) AgentModels(ctx context.Context, userID string) ([]AgentModel,
 			Tags:                item.Tags,
 			UpdatedAt:           item.UpdatedAt,
 		}
+		if item.Kind == KindText {
+			entry.StreamMode = item.AdvancedConfig.StreamMode
+			if entry.StreamMode == "" {
+				entry.StreamMode = StreamAuto
+			}
+		}
 		if item.OwnershipType == "user" {
 			if item.OwnerUserID == userID {
 				users := item.SharedUsers
@@ -403,6 +412,9 @@ func modelFromInput(input SaveInput) (Model, error) {
 		return Model{}, errors.New("model_id、display_name 和 base_url 不能为空")
 	}
 	if kind == KindText {
+		if mode := item.AdvancedConfig.StreamMode; mode != "" && mode != StreamAuto && mode != StreamOff {
+			return Model{}, errors.New("stream_mode 必须为 auto 或 off")
+		}
 		if !slices.Contains([]Protocol{ProtocolOpenAIChat, ProtocolOpenAIResponses, ProtocolAnthropic}, item.Protocol) || provider != ProviderPassthrough || item.ImageConfig != nil || item.ImagePricing != nil || item.VideoConfig != nil || item.VideoPricing != nil {
 			return Model{}, errors.New("文本模型配置无效")
 		}
