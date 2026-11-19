@@ -58,7 +58,7 @@ func TestGoalCheckpointRecoversToolResultWithoutReplayingAction(t *testing.T) {
 			if err := json.Unmarshal(onDisk, saved); err != nil || (saved.Pending != nil) != uncertain || saved.Usage.Input == nil {
 				t.Fatalf("wrong checkpoint: %+v %v", saved, err)
 			}
-			g.checkpoint = saved
+			g.checkpoint, g.outcome = saved, ""
 			calls = 0
 			c.http.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 				calls++

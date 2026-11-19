@@ -432,7 +432,7 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 		local: &desktopRuntimeAccess{address: listener.Addr().String(), origin: init.WebOrigin,
 			protocol: "monkeyai.token." + init.Token, serverID: serverID, reportMachine: ready.MachineID,
 			userID: init.UserID, installedMachine: init.MachineID, clientVersion: init.ClientVersion, attachments: attachments},
-		live: live, designBridge: designBridge}
+		live: live, designBridge: designBridge, goals: newGoalRuntime()}
 	host.terminals, err = newDesktopTerminals()
 	if err != nil {
 		return err
@@ -467,6 +467,11 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 	}
 	remoteDone := make(chan struct{})
 	reportDone := make(chan struct{})
+	goalDone := make(chan struct{})
+	go func() {
+		defer close(goalDone)
+		host.superviseGoals(lifetime)
+	}()
 	go func() {
 		defer close(reportDone)
 		host.superviseDesktopReports(lifetime, 30*time.Second)
@@ -481,6 +486,7 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 		cancel()
 		<-remoteDone
 		<-reportDone
+		<-goalDone
 	}()
 	err = server.Serve(listener)
 	if errors.Is(err, http.ErrServerClosed) {

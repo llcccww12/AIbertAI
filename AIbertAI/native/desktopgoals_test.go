@@ -26,7 +26,7 @@ func TestDesktopGoalPersistsAndExecutesWithBudget(t *testing.T) {
 	l := &acpLive{store: &desktopSessionStore{Root: root}, sessions: map[string]acpSession{session: row}, settings: desktopSettings{GoalBudget: &budget}}
 	create := json.RawMessage(`{"sessionId":"` + session + `","action":"create","requestId":"` + createID + `","objective":"Summarize the fixture"}`)
 	for range 2 {
-		if _, err := l.desktopGoalAction(create); err != nil {
+		if _, err := l.saveGoalAction(create, false); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -35,7 +35,7 @@ func TestDesktopGoalPersistsAndExecutesWithBudget(t *testing.T) {
 		t.Fatalf("wrong goal snapshot %+v", row.Goal)
 	}
 	stale := json.RawMessage(`{"sessionId":"` + session + `","action":"edit","requestId":"` + editID + `","expectedGoalId":"` + createID + `","expectedGeneration":2,"objective":"Discard"}`)
-	if _, err := l.desktopGoalAction(stale); err == nil {
+	if _, err := l.saveGoalAction(stale, false); err == nil {
 		t.Fatal("accepted a stale goal edit")
 	}
 

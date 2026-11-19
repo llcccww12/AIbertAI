@@ -13,6 +13,7 @@ type desktopGoal struct {
 	Objective     string           `json:"objective"`
 	Status        string           `json:"status"`
 	Reason        string           `json:"reason_code,omitempty"`
+	ExecutionID   string           `json:"current_execution_id,omitempty"`
 	Generation    int64            `json:"generation"`
 	Version       int64            `json:"state_version"`
 	Current       bool             `json:"is_current"`
@@ -30,7 +31,7 @@ type desktopGoalLimit struct {
 	Tokens int64 `json:"token_budget"`
 }
 
-func (l *acpLive) desktopGoalAction(raw json.RawMessage) (any, error) {
+func (l *acpLive) saveGoalAction(raw json.RawMessage, background bool) (any, error) {
 	var p struct {
 		SessionID, Action, RequestID, Objective, ExpectedGoalID string
 		ExpectedGeneration                                      int64
@@ -46,7 +47,7 @@ func (l *acpLive) desktopGoalAction(raw json.RawMessage) (any, error) {
 	}
 	goal := row.Goal
 	if p.Action == "get" || p.RequestID == row.LastGoalRequest {
-		return map[string]any{"goal": goal}, nil
+		return map[string]any{"goal": goalView(row), "background": background}, nil
 	}
 	if p.Action != "create" && (goal == nil || !goal.Current || p.ExpectedGoalID != goal.ID || p.ExpectedGeneration != goal.Generation) {
 		return nil, errors.New("stale_goal")
@@ -77,21 +78,46 @@ func (l *acpLive) desktopGoalAction(raw json.RawMessage) (any, error) {
 	case "pause":
 		next.Status, next.Reason = "paused", "user_paused"
 	case "resume":
-		if next.Status == "active" || next.Usage.Tokens >= next.Limits.Tokens {
+		if next.Status == "active" || goalView(row).Usage.Tokens >= next.Limits.Tokens {
 			return nil, errors.New("goal_cannot_resume")
 		}
 		next.Status, next.Reason = "active", ""
 	case "clear":
 		next.Current, next.Status = false, "cleared"
+		if row.GoalRun != "" && row.State != "running" {
+			if n := len(row.Turns); n != 0 && row.Turns[n-1].Operation == row.GoalRun {
+				row.Turns = append([]acpTurn(nil), row.Turns...)
+				turn := &row.Turns[n-1]
+				active := turn.GoalCheckpoint
+				materializeGoalCheckpoint(turn)
+				turn.Ended, turn.Interrupted = time.Now().UTC(), true
+				row.Updated = turn.Ended
+				tokens, known := goalModelTokens(turn.Usage)
+				next.Usage.Tokens = min(next.Usage.Tokens+tokens, maxGoalBudget)
+				next.Uncertain = next.Uncertain || !known
+				if active != nil {
+					next.ActiveSeconds += int64(active.ActiveTime / time.Second)
+				}
+			}
+			row.GoalRun = ""
+		}
 	default:
 		return nil, errors.New("invalid_goal_action")
+	}
+	if background && (p.Action == "create" || p.Action == "resume") && row.GoalRun == "" {
+		row.GoalRun = p.RequestID
 	}
 	next.Version++
 	row.Goal, row.LastGoalRequest = &next, p.RequestID
 	if err := l.save(row); err != nil {
 		return nil, errors.New("session_write_failed")
 	}
-	return map[string]any{"goal": row.Goal}, nil
+	if background && (p.Action == "pause" || p.Action == "clear") {
+		if cancel := l.activeTurns[row.ID]; cancel != nil {
+			cancel()
+		}
+	}
+	return map[string]any{"goal": goalView(row), "background": background}, nil
 }
 
 func goalModelTokens(usage modelUsage) (int64, bool) {
@@ -110,13 +136,14 @@ type goalReplayMessage struct {
 }
 
 type goalCheckpoint struct {
-	Tail     []goalReplayMessage `json:"tail,omitempty"`
-	Runs     []workspaceToolRun  `json:"runs,omitempty"`
-	Usage    modelUsage          `json:"usage"`
-	Progress string              `json:"progress,omitempty"`
-	Rounds   int                 `json:"rounds,omitempty"`
-	Pending  *goalReplayMessage  `json:"pending,omitempty"`
-	Unknown  []modelToolUse      `json:"unknown,omitempty"`
+	Tail       []goalReplayMessage `json:"tail,omitempty"`
+	Runs       []workspaceToolRun  `json:"runs,omitempty"`
+	Usage      modelUsage          `json:"usage"`
+	ActiveTime time.Duration       `json:"active_time_ns,omitempty"`
+	Progress   string              `json:"progress,omitempty"`
+	Rounds     int                 `json:"rounds,omitempty"`
+	Pending    *goalReplayMessage  `json:"pending,omitempty"`
+	Unknown    []modelToolUse      `json:"unknown,omitempty"`
 }
 
 const goalContinuePrompt = "Continue the current goal from the recorded progress and tool results. Do not repeat work already completed. Take the next useful step and keep the same completion rule."
@@ -151,7 +178,11 @@ func settleDesktopGoal(row *acpSession, original *desktopGoal, turn acpTurn) {
 	tokens, known := goalModelTokens(turn.Usage)
 	next.Usage.Tokens = min(next.Usage.Tokens+tokens, maxGoalBudget)
 	next.Uncertain = next.Uncertain || !known
-	next.ActiveSeconds += int64(turn.Ended.Sub(turn.Started) / time.Second)
+	activeTime := turn.Ended.Sub(turn.Started)
+	if turn.GoalCheckpoint != nil {
+		activeTime = turn.GoalCheckpoint.ActiveTime
+	}
+	next.ActiveSeconds += int64(activeTime / time.Second)
 	if next.Current && next.Status == "active" {
 		switch {
 		case turn.Failed:

@@ -171,6 +171,9 @@ func (c *client) completeWorkspaceToolTurn(ctx context.Context, protocol, key, s
 	seen := make(map[string]bool, maxCalls)
 	checkpoints := 0
 	lastProgress := "目标已暂停。"
+	if goal != nil && goal.save != nil {
+		lastProgress = ""
+	}
 	var checkpoint goalCheckpoint
 	var recovered []workspaceToolRun
 	promptEnd := len(talk)
@@ -203,6 +206,9 @@ func (c *client) completeWorkspaceToolTurn(ctx context.Context, protocol, key, s
 			}
 		}
 		if pending := checkpoint.Pending; pending != nil {
+			if len(pending.ToolCalls) != 1 {
+				return lastProgress, usage, runs, errors.New("invalid_goal_checkpoint")
+			}
 			message := pending.toolConversationMessage
 			message.ResponseItems = pending.Items
 			invocation := message.ToolCalls[0]
@@ -316,14 +322,18 @@ func (c *client) completeWorkspaceToolTurn(ctx context.Context, protocol, key, s
 				}
 				continue
 			}
-			if err := saveProgress(&answer); err != nil {
+			var pending *toolConversationMessage
+			if !safeGoalRead(invocation.Function.Name) {
+				pending = &answer
+			}
+			if err := saveProgress(pending); err != nil {
 				return lastProgress, usage, runs, err
 			}
 		}
 		started := time.Now()
 		value, err := call(answer, args, len(runs))
-		if goal != nil && goal.save != nil && !safeGoalRead(invocation.Function.Name) &&
-			(ctx.Err() != nil || err != nil && strings.Contains(err.Error(), "already_submitted")) {
+		if err != nil && goal != nil && goal.save != nil && !safeGoalRead(invocation.Function.Name) &&
+			(ctx.Err() != nil || strings.Contains(err.Error(), "already_submitted")) {
 			goal.outcome = "resume_confirmation"
 			return lastProgress, usage, runs, err
 		}
