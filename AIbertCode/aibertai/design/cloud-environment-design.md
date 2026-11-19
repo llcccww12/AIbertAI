@@ -1,6 +1,6 @@
 # 云端执行环境设计方案
 
-状态：本文保留云环境原始设计目标，实际交付以[实施记录](cloud-environment-implementation.md)和[客户端接口](environment-client-api.md)为准。环境本地积分计费已按[执行引擎与计费记录](environment-engines-billing-discussion.md)实现并完成服务端数据库、鉴权和竞态回归；管理后台配置页已按反馈简化，最终浏览器验收待恢复。Firecracker仍为后续扩展方向，未部署或启用真实计费。
+状态：本文保留云环境原始设计目标，实际交付以[实施记录](cloud-environment-implementation.md)和[客户端接口](environment-client-api.md)为准。现行宿主路径与启动方式见[宿主安装](../engine/INSTALL.md)和[运行时编排](../engine/RUNTIME.md)。环境本地积分计费已按[执行引擎与计费记录](environment-engines-billing-discussion.md)实现并完成服务端数据库、鉴权和竞态回归；管理后台配置页已按反馈简化，最终浏览器验收待恢复。Firecracker仍为后续扩展方向，未部署或启用真实计费。
 
 日期：2026-10-28。代码核对基线：后台仓库 `74166746`；运行时仓库 `MonkeyAI/apps/runtime` 当前 `b66614cd`。文中路径相对 `monkeyai/`，运行时路径单独注明。
 
@@ -109,16 +109,9 @@ Firecracker 是宿主执行驱动的扩展；Kubernetes 是环境供应后端的
 | `internal/host/` | 当前 Electron／宿主到 runtime 的 stdin/stdout 启动握手 | 首期不使用该入口；通过现有 standalone CLI 启动，无需修改 runtime |
 | `internal/installation/` | 独立安装根、账号、凭据和状态目录 | 不直接复用独立设备安装流程；云环境身份由后台按实例签发 |
 
-因此，方案中的“环境内运行时”应解释为现有 `apps/runtime` 的 Linux headless 构建，而不是另写一个只负责执行命令的服务。首期不修改该仓库，容器入口直接使用已有命令：
+原方案规划复用当时的 Linux standalone CLI。现行宿主负责调用 `aibertai-native` 完成设备授权和启动，新容器的状态目录为 `/var/lib/aibertai/state`。实际参数和迁移流程见[运行时编排](../engine/RUNTIME.md)。
 
-```text
-monkeyai-runtime login --device-code --state-dir /var/lib/monkeyai-runtime \
-    --server <后台地址> --name <环境名称>
-monkeyai-runtime serve --state-dir /var/lib/monkeyai-runtime \
-    --engine-bin /opt/monkeyai/ohmyagent
-```
-
-宿主管理程序负责运行第一个命令。首期由用户创建环境这一明确动作触发后台自动批准对应的设备授权，runtime 仍按原协议轮询并保存凭据，宿主随后启动 `serve`；客户端不再出现第二次设备码确认。长期执行私钥和 OAuth 凭据由现有 runtime 保存在 state-dir 内的受限目录，不能把后台管理 token、宿主 token 或用户 refresh token 放入镜像环境变量。
+按原方案，宿主管理程序负责启动授权流程。首期由用户创建环境这一明确动作触发后台自动批准对应的设备授权，runtime 仍按原协议轮询并保存凭据，宿主随后启动 `serve`；客户端不再出现第二次设备码确认。长期执行私钥和 OAuth 凭据由现有 runtime 保存在 state-dir 内的受限目录，不能把后台管理 token、宿主 token 或用户 refresh token 放入镜像环境变量。
 
 首期数据库将环境绑定到 runtime 返回的 `machine_id`，后台按该 machine ID 使用已有 endpoint、connection ticket 和 relay 能力。这样后台知道“哪个 standalone endpoint 属于哪个环境”，但协议层仍将它视为独立执行端。后续需要无交互引导、实例级授权或更严格的云环境身份时，再增加 `cloud_managed` 部署来源；那时才同步修改 runtime 的部署模式校验、远程状态文件、设备声明、授权兑换和启动测试。
 
@@ -414,7 +407,9 @@ stopped → preparing
 
 再次显式启动才可批准恢复云环境登记，按既有登记版本检查处理。管理员资源治理不能顺带签发用户连接 ticket。
 
-## 10. 镜像契约与运行时注入
+## 10. 原方案的镜像契约与运行时注入
+
+当前镜像、运行时注入和挂载规则见[镜像与目录契约](../engine/RUNTIME.md#镜像与目录契约)。
 
 首期兼容范围建议为 Linux AMD64、经验证的 Debian／Ubuntu 类镜像；支持外部 OCI 仓库，宿主架构必须匹配，不启用模拟执行。版本清单记录 containerd、runsc、shim、CNI、宿主内核及运行时版本，禁止使用浮动 `latest` 作为部署锁定值。
 
@@ -438,7 +433,9 @@ stopped → preparing
 
 ## 11. 持久化与容量控制
 
-### 11.1 挂载布局
+### 11.1 原方案的挂载布局
+
+新容器采用[当前挂载布局](../engine/RUNTIME.md#镜像与目录契约)。
 
 | 环境路径 | 内容 | 生命周期与配额 |
 | --- | --- | --- |

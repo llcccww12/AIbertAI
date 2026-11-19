@@ -1,3 +1,4 @@
+import { saveTestScreenshot } from "./test-screenshot.mjs"
 import assert from "node:assert/strict"
 import { readFile, stat } from "node:fs/promises"
 import path from "node:path"
@@ -384,9 +385,7 @@ try {
             .count(),
           1
         )
-        await page.screenshot({
-          path: `/tmp/monkeyai-account-fixed-${source}-${width}-${path.basename(executablePath)}.png`,
-        })
+        await saveTestScreenshot(page, `account-fixed-${source}-${width}-${path.basename(executablePath)}.png`)
         const buttons = await page
           .locator('[role="dialog"] [data-slot="account-dialog-actions"] > *')
           .allTextContents()
@@ -495,10 +494,7 @@ try {
           `PASS account analysis link ${source} ${width}: fixed header/actions, body wheel scroll, button order, member analysis/navigation/close, exact UUID, same names, reload, draft, history, clear`
         )
       } catch (error) {
-        await page.screenshot({
-          path: `/tmp/monkeyai-account-task-${source}-${width}-failed.png`,
-          fullPage: true,
-        })
+        await saveTestScreenshot(page, `account-task-${source}-${width}-failed.png`, { fullPage: true })
         throw error
       } finally {
         await page.close()

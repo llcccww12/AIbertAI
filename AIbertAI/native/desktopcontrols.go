@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -17,18 +18,40 @@ type desktopSessionPresentation struct {
 	ReadAt     *time.Time `json:"readAt,omitempty"`
 }
 
-func (p desktopSessionPresentation) displayTitle() string {
-	if p.Title != "" {
-		return p.Title
-	}
-	return "AIbertAI 会话"
+func promptTitle(text string) string {
+	text = strings.Join(strings.FieldsFunc(text, func(r rune) bool {
+		return unicode.IsControl(r) || unicode.IsSpace(r)
+	}), " ")
+	runes := []rune(text)
+	return string(runes[:min(len(runes), 40)])
 }
 
-func (p desktopSessionPresentation) titleSource() string {
-	if p.Title != "" {
-		return "user"
+func (row acpSession) sessionTitle() (string, string) {
+	if row.Title != "" {
+		return row.Title, "user"
 	}
-	return ""
+	if len(row.Turns) != 0 {
+		first := row.Turns[0]
+		if title := promptTitle(first.Prompt); title != "" {
+			return title, "prompt"
+		}
+		for _, node := range first.CanvasNodes {
+			if title := promptTitle(node.Title); title != "" {
+				return title, "prompt"
+			}
+		}
+		for _, file := range first.Attachments {
+			if title := promptTitle(file.Name); title != "" {
+				return title, "prompt"
+			}
+		}
+	}
+	if row.Goal != nil {
+		if title := promptTitle(row.Goal.Objective); title != "" {
+			return title, "prompt"
+		}
+	}
+	return "AIbertAI 会话", ""
 }
 
 func (h *relaySessionHost) updateDesktopSessionPresentation(method string, raw json.RawMessage) (any, error) {
@@ -77,7 +100,8 @@ func (h *relaySessionHost) updateDesktopSessionPresentation(method string, raw j
 			return nil, errors.New("session_write_failed")
 		}
 	}
-	return map[string]any{"title": row.displayTitle(), "titleSource": row.titleSource(), "pinned": row.Pinned, "archivedAt": row.ArchivedAt, "readAt": row.ReadAt}, nil
+	title, source := row.sessionTitle()
+	return map[string]any{"title": title, "titleSource": source, "pinned": row.Pinned, "archivedAt": row.ArchivedAt, "readAt": row.ReadAt}, nil
 }
 
 func validACPMode(mode string) bool {

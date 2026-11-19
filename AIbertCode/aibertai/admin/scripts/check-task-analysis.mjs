@@ -1,3 +1,4 @@
+import { saveTestScreenshot } from "./test-screenshot.mjs"
 import assert from "node:assert/strict"
 import { readFile, stat } from "node:fs/promises"
 import path from "node:path"
@@ -701,10 +702,7 @@ try {
         ),
         theme === "dark"
       )
-      await page.screenshot({
-        path: `/tmp/monkeyai-task-analysis-${width}-${theme}.png`,
-        fullPage: true,
-      })
+      await saveTestScreenshot(page, `task-analysis-${width}-${theme}.png`, { fullPage: true })
       mode = "empty"
       await page.reload()
       for (const name of [

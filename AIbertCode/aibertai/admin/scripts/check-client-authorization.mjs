@@ -1,3 +1,4 @@
+import { saveTestScreenshot } from "./test-screenshot.mjs"
 import assert from "node:assert/strict"
 import { readFile, stat } from "node:fs/promises"
 import path from "node:path"
@@ -463,10 +464,7 @@ try {
           hasEmail: scenario !== "logged-out-sso-only",
           formFirst: true,
         })
-        await page.screenshot({
-          path: `/tmp/monkeyai-client-login-${scenario}-${(await browser.version()).split(".")[0]}.png`,
-          fullPage: true,
-        })
+        await saveTestScreenshot(page, `client-login-${scenario}-${(await browser.version()).split(".")[0]}.png`, { fullPage: true })
         await page.evaluate(() =>
           document.querySelector('button[title="企业统一登录"]').click()
         )

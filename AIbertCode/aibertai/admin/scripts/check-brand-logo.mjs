@@ -1,3 +1,4 @@
+import { saveTestScreenshot } from "./test-screenshot.mjs"
 import assert from "node:assert/strict"
 import { readFile, stat } from "node:fs/promises"
 import path from "node:path"
@@ -345,13 +346,7 @@ try {
           .count(),
         0
       )
-      if (process.env.SCREENSHOT_DIR)
-        await card().screenshot({
-          path: path.join(
-            process.env.SCREENSHOT_DIR,
-            `brand-logo-${width}-${dark ? "dark" : "light"}.png`
-          ),
-        })
+      await saveTestScreenshot(card(), `brand-logo-${width}-${dark ? "dark" : "light"}.png`)
       assert.equal(await page.locator("#tool-name").inputValue(), "最终产品")
       // Leaving without saving discards the staged image and leaves the server alone.
       await select()

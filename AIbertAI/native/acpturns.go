@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/coder/websocket"
@@ -18,13 +19,17 @@ import (
 
 const maxACPToolCalls = 4
 
-var errSessionReportPending = errors.New("session_report_pending")
+var (
+	errSessionReportPending = errors.New("session_report_pending")
+	errGoalSessionBusy      = errors.New("goal_session_busy")
+)
 
 type acpTurn struct {
 	goalOutcome    string
 	Operation      string              `json:"operationId"`
 	ClientID       string              `json:"clientMessageId,omitempty"`
 	Model          string              `json:"model,omitempty"`
+	CanvasNodes    []acpCanvasNode     `json:"canvasNodes,omitempty"`
 	Attachments    []acpAttachment     `json:"attachments,omitempty"`
 	Started        time.Time           `json:"startedAt"`
 	Ended          time.Time           `json:"endedAt,omitzero"`
@@ -88,10 +93,10 @@ func (s acpSession) modelHistory() []toolConversationMessage {
 }
 
 func (l *acpLive) beginTurn(id, op, clientID, prompt string, attachments []acpAttachment, cancel context.CancelFunc) (acpSession, int, bool, error) {
-	return l.reserveTurn(id, op, clientID, prompt, attachments, cancel, false)
+	return l.reserveTurn(id, op, clientID, prompt, attachments, cancel, false, nil)
 }
 
-func (l *acpLive) reserveTurn(id, op, clientID, prompt string, attachments []acpAttachment, cancel context.CancelFunc, background bool) (acpSession, int, bool, error) {
+func (l *acpLive) reserveTurn(id, op, clientID, prompt string, attachments []acpAttachment, cancel context.CancelFunc, background bool, queued *desktopQueuedMessage) (acpSession, int, bool, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	session, ok := l.sessions[id]
@@ -111,16 +116,26 @@ func (l *acpLive) reserveTurn(id, op, clientID, prompt string, attachments []acp
 			return session, n - 1, false, nil
 		}
 	} else if session.GoalRun != "" {
-		return session, 0, false, errors.New("goal_session_busy")
+		return session, 0, false, errGoalSessionBusy
 	}
-	if session.State == "running" {
+	if session.State == "running" || !background && queued == nil && l.queueWorkers[id] != nil {
 		return session, 0, false, errors.New("session_unavailable_for_prompt")
+	}
+	var canvasNodes []acpCanvasNode
+	fromQueue := queued != nil
+	if fromQueue {
+		if len(session.Queue.Messages) == 0 || session.Queue.Messages[0].ID != clientID ||
+			session.Queue.Messages[0].editID != "" || session.Queue.Messages[0].Text != prompt ||
+			!slices.Equal(session.Queue.Messages[0].Attachments, attachments) {
+			return session, 0, false, errSessionQueueChanged
+		}
+		canvasNodes = queued.CanvasNodes
 	}
 	for index, turn := range session.Turns {
 		if turn.Operation != op {
 			continue
 		}
-		if turn.Prompt != prompt || turn.ClientID != clientID || !slices.Equal(turn.Attachments, attachments) || turn.Ended.IsZero() {
+		if turn.Prompt != prompt || turn.ClientID != clientID || !slices.Equal(turn.Attachments, attachments) || !slices.Equal(turn.CanvasNodes, canvasNodes) || turn.Ended.IsZero() {
 			return session, 0, false, errors.New("session_operation_conflict")
 		}
 		if !turn.Acked {
@@ -144,11 +159,15 @@ func (l *acpLive) reserveTurn(id, op, clientID, prompt string, attachments []acp
 		session.ConnectorPreferences = &prefs
 	}
 	index := len(session.Turns)
-	turn := acpTurn{Operation: op, ClientID: clientID, Model: session.Model, Started: started, Prompt: prompt, Attachments: attachments}
+	turn := acpTurn{Operation: op, ClientID: clientID, Model: session.Model, Started: started, Prompt: prompt, Attachments: attachments, CanvasNodes: canvasNodes}
 	if background {
 		turn.GoalCheckpoint = &goalCheckpoint{}
 	}
 	session.Turns = append(slices.Clone(session.Turns), turn)
+	if fromQueue {
+		session.Queue.Messages = session.Queue.Messages[1:]
+		session.advanceQueue()
+	}
 	if err := l.save(session); err != nil {
 		return session, 0, false, errors.New("session_write_failed")
 	}
@@ -226,7 +245,7 @@ func (h *relaySessionHost) retryPendingReport(ctx context.Context, id string) er
 	return errors.Join(reportErr, live.save(session))
 }
 
-func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, request *http.Request, id, op, clientID, prompt string, accepted func(acpSession) error, files ...acpAttachment) (any, error) {
+func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, request *http.Request, id, op, clientID, prompt string, accepted func(acpSession) error, queued *desktopQueuedMessage, files ...acpAttachment) (any, error) {
 	if op == "" {
 		var err error
 		op, err = newUUID()
@@ -238,9 +257,9 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 	turnCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	_, background := ctx.Value(goalRuntimeContext{}).(*goalRuntime)
-	session, index, retry, err := live.reserveTurn(id, op, clientID, prompt, files, cancel, background)
+	session, index, retry, err := live.reserveTurn(id, op, clientID, prompt, files, cancel, background, queued)
 	if errors.Is(err, errSessionReportPending) && h.retryPendingReport(ctx, id) == nil {
-		session, index, retry, err = live.reserveTurn(id, op, clientID, prompt, files, cancel, background)
+		session, index, retry, err = live.reserveTurn(id, op, clientID, prompt, files, cancel, background, queued)
 	}
 	if err != nil {
 		return nil, err
@@ -314,6 +333,7 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 		session.Mode, session.desktopSessionPresentation = current.Mode, current.desktopSessionPresentation
 		session.Goal, session.LastGoalRequest = current.Goal, current.LastGoalRequest
 		session.GoalRun = current.GoalRun
+		session.Queue = current.Queue
 		session.Turns = slices.Clone(session.Turns)
 		paused := background && current.Goal.Current && (current.Goal.Status == "paused" || turn.Interrupted || turn.Failed)
 		if paused {
@@ -360,6 +380,7 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 		current := live.sessions[id]
 		session.Mode, session.desktopSessionPresentation = current.Mode, current.desktopSessionPresentation
 		session.Goal, session.LastGoalRequest = current.Goal, current.LastGoalRequest
+		session.Queue = current.Queue
 		session.Turns = slices.Clone(session.Turns)
 		session.Turns[index] = turn
 		writeErr := live.save(session)
@@ -400,7 +421,8 @@ func notifyACPReply(ctx context.Context, ws *websocket.Conn, session acpSession,
 }
 
 func notifyACPTurnState(ctx context.Context, ws *websocket.Conn, session acpSession, operation string, finished bool) error {
-	state := map[string]any{"status": session.State, "executionId": operation}
+	title, source := session.sessionTitle()
+	state := map[string]any{"status": session.State, "executionId": operation, "title": title, "titleSource": source}
 	if finished {
 		state["executionId"] = nil
 	}
@@ -428,6 +450,12 @@ func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Co
 	}
 	if modelPrompt != turn.Prompt {
 		turn.ModelInput = modelPrompt
+	}
+	if len(turn.CanvasNodes) != 0 {
+		modelPrompt += "\n\nThe user attached references to these canvas nodes. Use canvas_get_selection to inspect the attached selection when needed:"
+		for _, node := range turn.CanvasNodes {
+			modelPrompt += fmt.Sprintf("\n- %q (%s, node ID %q)", node.Title, node.NodeType, node.ID)
+		}
 	}
 	approved := append([]string{h.approvedFile}, slices.Sorted(maps.Keys(attachments))...)
 	limit, allowWrite := 1, false
@@ -561,7 +589,7 @@ func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Co
 					return err
 				}
 				callID := turn.Operation + "-local-mcp-" + connectorID
-				permission, err := h.requestACPToolApproval(ctx, ws, request, id, callID, "启动本机连接器 "+entry.Name, entry.Name, "execute",
+				permission, err := h.requestACPToolApproval(ctx, ws, id, callID, "启动本机连接器 "+entry.Name, entry.Name, "execute",
 					map[string]any{"command": executable, "arguments": entry.Args})
 				turn.Permissions.Asked += permission.Asked
 				turn.Permissions.Allowed += permission.Allowed
@@ -667,13 +695,13 @@ func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Co
 				if skillPackage == nil || !workspace.SkillScript {
 					return "", errRelayAccess
 				}
-				permissions, permissionErr = h.requestACPToolApproval(ctx, ws, request, id, call.ID, "运行技能脚本 "+skillPackage.Name+" / "+args.SkillScript.Path, call.Function.Name, "execute", args.JSON)
+				permissions, permissionErr = h.requestACPToolApproval(ctx, ws, id, call.ID, "运行技能脚本 "+skillPackage.Name+" / "+args.SkillScript.Path, call.Function.Name, "execute", args.JSON)
 			} else if tool := args.Connector; tool != nil {
 				title := tool.ConnectorName + " / " + tool.Name
-				permissions, permissionErr = h.requestACPToolApproval(ctx, ws, request, id, call.ID, title, tool.Name, "other",
+				permissions, permissionErr = h.requestACPToolApproval(ctx, ws, id, call.ID, title, tool.Name, "other",
 					map[string]any{"connector": tool.ConnectorName, "tool": tool.Name, "arguments": args.JSON})
 			} else if args.Design {
-				permissions, permissionErr = h.requestACPToolApproval(ctx, ws, request, id, call.ID, call.Function.Name, call.Function.Name, workspaceToolKind(call.Function.Name), args.JSON)
+				permissions, permissionErr = h.requestACPToolApproval(ctx, ws, id, call.ID, call.Function.Name, call.Function.Name, workspaceToolKind(call.Function.Name), args.JSON)
 			} else if args.Compat != nil {
 				if args.Compat.Patch != nil {
 					if h.acpScope(request.WithContext(ctx), "files:read") != nil ||
@@ -686,9 +714,9 @@ func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Co
 					}
 					args.Compat.PatchPlan = &plan
 				}
-				permissions, permissionErr = h.requestACPToolApproval(ctx, ws, request, id, call.ID, workspaceCompatTitle(call.Function.Name), call.Function.Name, workspaceToolKind(call.Function.Name), args.JSON)
+				permissions, permissionErr = h.requestACPToolApproval(ctx, ws, id, call.ID, workspaceCompatTitle(call.Function.Name), call.Function.Name, workspaceToolKind(call.Function.Name), args.JSON)
 			} else {
-				permissions, permissionErr = h.approveACPTool(ctx, ws, request, id, call, args.Workspace)
+				permissions, permissionErr = h.approveACPTool(ctx, ws, id, call, args.Workspace)
 			}
 			turn.Permissions.Asked += permissions.Asked
 			turn.Permissions.Allowed += permissions.Allowed
@@ -712,6 +740,13 @@ func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Co
 				return live.client.executeSkillScript(ctx, auth, *skillPackage, *args.SkillScript, root.Name())
 			}
 			if args.Design {
+				if call.Function.Name == designSelectionTool && len(turn.CanvasNodes) != 0 {
+					nodeIDs := make([]string, 0, len(turn.CanvasNodes))
+					for _, node := range turn.CanvasNodes {
+						nodeIDs = append(nodeIDs, node.ID)
+					}
+					args.JSON, _ = json.Marshal(map[string][]string{"node_ids": nodeIDs})
+				}
 				return h.designBridge.call(ctx, session, design, call.Function.Name, args.JSON)
 			}
 			if args.Connector != nil {
@@ -823,37 +858,37 @@ func sendACPToolUpdate(ctx context.Context, ws *websocket.Conn, id string, updat
 	return writeTurnNotification(ctx, ws, "session/update", params)
 }
 
-func (h *relaySessionHost) approveACPTool(ctx context.Context, ws *websocket.Conn, request *http.Request, sessionID string, call modelToolUse, args workspaceToolArguments) (reportedPermissions, error) {
+func (h *relaySessionHost) approveACPTool(ctx context.Context, ws *websocket.Conn, sessionID string, call modelToolUse, args workspaceToolArguments) (reportedPermissions, error) {
 	title := "读取会话文件"
 	input := map[string]string{"path": args.Path}
 	if args.Content != nil {
 		title = "写入工作区文件"
 		input["content"] = *args.Content
 	}
-	return h.requestACPToolApproval(ctx, ws, request, sessionID, call.ID, title, call.Function.Name, workspaceToolKind(call.Function.Name), input)
+	return h.requestACPToolApproval(ctx, ws, sessionID, call.ID, title, call.Function.Name, workspaceToolKind(call.Function.Name), input)
 }
 
-func (h *relaySessionHost) requestACPToolApproval(ctx context.Context, ws *websocket.Conn, request *http.Request, sessionID, callID, title, name, kind string, input any) (reportedPermissions, error) {
+func (h *relaySessionHost) requestACPToolApproval(ctx context.Context, ws *websocket.Conn, sessionID, callID, title, name, kind string, input any) (reportedPermissions, error) {
+	pending := map[string]any{"toolCallId": callID, "title": title, "name": name,
+		"kind": kind, "status": "pending", "rawInput": input}
+	update := maps.Clone(pending)
+	update["sessionUpdate"] = "tool_call"
+
 	if h.local != nil && h.live != nil {
 		row, err := h.live.load(sessionID)
 		if err == nil && row.permissionMode() == "bypassPermissions" {
-			err := sendACPToolUpdate(ctx, ws, sessionID, map[string]any{"sessionUpdate": "tool_call", "toolCallId": callID,
-				"title": title, "name": name, "kind": kind, "status": "pending", "rawInput": input})
-			return reportedPermissions{}, err
+			return reportedPermissions{}, sendACPToolUpdate(ctx, ws, sessionID, update)
 		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	permissionID := "permission-" + callID
-	if err := sendACPToolUpdate(ctx, ws, sessionID, map[string]any{"sessionUpdate": "tool_call", "toolCallId": callID,
-		"title": title, "name": name, "kind": kind, "status": "pending", "rawInput": input}); err != nil {
+	if err := sendACPToolUpdate(ctx, ws, sessionID, update); err != nil {
 		return reportedPermissions{}, errors.New("tool_approval_unavailable")
 	}
 	permission := map[string]any{
 		"jsonrpc": "2.0", "id": permissionID, "method": "session/request_permission",
-		"params": map[string]any{"sessionId": sessionID,
-			"toolCall": map[string]any{"toolCallId": callID, "title": title, "name": name,
-				"kind": kind, "status": "pending", "rawInput": input},
+		"params": map[string]any{"sessionId": sessionID, "toolCall": pending,
 			"options": []map[string]string{
 				{"optionId": "allow", "kind": "allow_once", "name": "允许一次"},
 				{"optionId": "deny", "kind": "reject_once", "name": "拒绝"},
@@ -873,66 +908,41 @@ func (h *relaySessionHost) requestACPToolApproval(ctx context.Context, ws *webso
 		}
 		return reportedPermissions{}, err
 	}
+	permissions, ok := ctx.Value(acpPermissionContextKey{}).(*sync.Map)
+	if !ok {
+		return reportedPermissions{}, errors.New("tool_approval_unavailable")
+	}
+	waiter := &acpPermissionWaiter{sessionID: sessionID, reply: make(chan acpPermissionReply, 1)}
+	permissions.Store(permissionID, waiter)
+	defer permissions.Delete(permissionID)
 	if err := wsjson.Write(ctx, ws, permission); err != nil {
 		return reportedPermissions{}, errors.New("tool_approval_unavailable")
 	}
 	counts := reportedPermissions{Asked: 1}
-	for {
-		var reply struct {
-			JSONRPC string `json:"jsonrpc"`
-			ID      json.RawMessage
-			Method  string
-			Params  json.RawMessage
-			Result  struct {
-				Outcome struct{ Outcome, OptionID string }
-			}
-			Error json.RawMessage
-		}
-		if wsjson.Read(ctx, ws, &reply) != nil {
-			return counts, errors.New("tool_approval_unavailable")
-		}
-		if reply.JSONRPC != "2.0" {
-			continue
-		}
-		if reply.Method == "session/set_mode" && len(reply.ID) != 0 && string(reply.ID) != "null" && h.local != nil {
-			result, err := h.setACPPermissionMode(request, reply.Params, sessionID)
-			response := map[string]any{"jsonrpc": "2.0", "id": reply.ID, "result": result}
-			if err != nil {
-				delete(response, "result")
-				response["error"] = map[string]any{"code": -32602, "message": err.Error()}
-			}
-			if wsjson.Write(ctx, ws, response) != nil {
-				return counts, errors.New("tool_approval_unavailable")
-			}
-			if err == nil && result["modeId"] == "bypassPermissions" {
-				counts.Allowed = 1
-				return counts, nil
-			}
-			continue
-		}
-		if reply.Method != "" && len(reply.ID) != 0 && string(reply.ID) != "null" {
-			if wsjson.Write(ctx, ws, map[string]any{"jsonrpc": "2.0", "id": reply.ID,
-				"error": map[string]any{"code": -32000, "message": "session_waiting_for_permission"}}) != nil {
-				return counts, errors.New("tool_approval_unavailable")
-			}
-			continue
-		}
-		var id string
-		if reply.Method != "" || json.Unmarshal(reply.ID, &id) != nil || id != permissionID {
-			continue
-		}
-		if len(reply.Error) != 0 || reply.Result.Outcome.Outcome != "selected" {
-			return counts, errors.New("tool_permission_cancelled")
-		}
-		if reply.Result.Outcome.OptionID == "deny" {
-			counts.Denied = 1
-			return counts, errors.New("tool_permission_denied")
-		}
-		if reply.Result.Outcome.OptionID != "allow" {
-			return counts, errors.New("invalid_tool_permission")
-		}
+	select {
+	case reply := <-waiter.reply:
+		return applyACPPermissionReply(counts, reply)
+	case <-ctx.Done():
+		return counts, errors.New("tool_approval_unavailable")
+	}
+}
+
+func applyACPPermissionReply(counts reportedPermissions, reply acpPermissionReply) (reportedPermissions, error) {
+	var result struct {
+		Outcome struct{ Outcome, OptionID string }
+	}
+	if len(reply.Error) != 0 || json.Unmarshal(reply.Result, &result) != nil || result.Outcome.Outcome != "selected" {
+		return counts, errors.New("tool_permission_cancelled")
+	}
+	switch result.Outcome.OptionID {
+	case "allow":
 		counts.Allowed = 1
 		return counts, nil
+	case "deny":
+		counts.Denied = 1
+		return counts, errors.New("tool_permission_denied")
+	default:
+		return counts, errors.New("invalid_tool_permission")
 	}
 }
 
@@ -963,6 +973,9 @@ func (session acpSession) promptMessage(index int, auth *relayAuthorization) map
 	userParts := []map[string]any{{"type": "text", "text": turn.Prompt}}
 	for _, file := range turn.Attachments {
 		part := map[string]any{"type": "file", "name": file.Name}
+		if file.CanvasNodeID != "" {
+			part["canvasNodeId"] = file.CanvasNodeID
+		}
 		if file.URI != "" {
 			if auth == nil {
 				part["uri"] = file.URI
@@ -974,6 +987,9 @@ func (session acpSession) promptMessage(index int, auth *relayAuthorization) map
 			part["fileRef"] = file.Ref
 		}
 		userParts = append(userParts, part)
+	}
+	for _, node := range turn.CanvasNodes {
+		userParts = append(userParts, map[string]any{"type": "canvas_node", "id": node.ID, "title": node.Title, "nodeType": node.NodeType})
 	}
 	user := map[string]any{"id": id + "-prompt", "role": "user", "at": turn.Started.UnixMilli(), "parts": userParts}
 	if turn.ClientID != "" {
@@ -1050,7 +1066,7 @@ func (session acpSession) historyWindow(query historyQuery, auth *relayAuthoriza
 		model = modelID
 	}
 	metadata := session.workspaceMetadata()
-	metadata["id"], metadata["title"], metadata["model"] = session.ID, session.displayTitle(), model
+	metadata["id"], metadata["model"] = session.ID, model
 	metadata["createdAt"], metadata["updatedAt"] = session.Created, session.Updated
 	return map[string]any{"session": metadata, "messages": messages,
 		"toolCalls": calls, "eventSeq": count, "olderCursor": older, "newerCursor": newer}, nil

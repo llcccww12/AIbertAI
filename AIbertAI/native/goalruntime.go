@@ -167,7 +167,7 @@ func (h *relaySessionHost) superviseGoals(ctx context.Context) {
 		request := &http.Request{Host: h.local.address, Header: http.Header{}}
 		request.Header.Set("Sec-WebSocket-Protocol", "monkeyai.v1, "+h.local.protocol)
 		run := context.WithValue(ctx, goalRuntimeContext{}, g)
-		if _, err := h.promptACP(run, nil, request, selected.ID, selected.GoalRun, selected.GoalRun, selected.Goal.Objective, nil); err != nil && ctx.Err() == nil {
+		if _, err := h.promptACP(run, nil, request, selected.ID, selected.GoalRun, selected.GoalRun, selected.Goal.Objective, nil, nil); err != nil && ctx.Err() == nil {
 			slog.Debug("持续目标执行结束", "session_id", selected.ID, "reason", safeDesktopTurnFailure(err))
 		}
 	}

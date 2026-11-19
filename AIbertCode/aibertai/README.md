@@ -116,4 +116,10 @@ pnpm -C admin test
 pnpm -C admin build
 ```
 
-接口契约见 [OpenAPI](backend/api/README.md)，后端技术说明见 [Backend README](backend/README.md)。`design/` 中的设计和实施计划用于查看背景，操作步骤以本页及链接的指南为准。
+## 文档入口
+
+- 部署、地址、环境变量与升级由本页维护。宿主安装与运行时路径见 [宿主说明](engine/README.md)。
+- 接口以 [OpenAPI](backend/api/README.md) 为准，排障、数据库和后端配置见 [后端说明](backend/README.md)。
+- 页面组件和浏览器验证见 [管理后台说明](admin/README.md)，桌面开发与构建见 [桌面端说明](../../AIbertAI/packaging/README.md)。
+
+`design/` 中带日期的方案和实施记录供查阅历史。交付改动直接更新对应的现行入口，验证截图和本机编译缓存留在临时目录。已由现行指南覆盖的过程清单可从仓库移除，历史在 Git 中查询。

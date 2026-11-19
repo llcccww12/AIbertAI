@@ -30,6 +30,8 @@ CHROME_BIN=/path/to/current-chrome pnpm test:browser
 CHROME_BIN=/path/to/chrome86 ADMIN_DEV_URL=http://localhost:5173 pnpm test:browser
 ```
 
+浏览器检查默认只输出断言结果。排查界面时可设置 `SCREENSHOT_DIR="$TMPDIR/aibertai-admin-check"` 保存截图，排查结束后清理该目录。
+
 依赖补丁变更后需停止旧开发服务器，执行 `pnpm install --frozen-lockfile` 再运行 `pnpm dev --force`，避免 Vite 的旧预构建仍使用未修复代码。
 
 浏览器检查使用真实可执行文件，不通过修改 User-Agent 模拟旧浏览器。覆盖首页、普通 HTTP 下 UUID、深浅主题、48px 表格行、下拉菜单、日期面板、动态 `:has()`、饼图有效高度、内容宽度断点、移动布局，以及 Switch 的鼠标、空格键、确认/取消和保存期间禁用。回归中使用 Chromium 86.0.4240.0 与 141.0.7390.37；不据此声明其他浏览器已完成全量验证。浏览器测试不会访问真实业务接口。

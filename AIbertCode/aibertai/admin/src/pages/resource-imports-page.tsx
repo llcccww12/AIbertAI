@@ -90,7 +90,7 @@ export function ResourceImportsPage() {
             <Button type="button" onClick={() => setDialog({ upload: null })}>导入资源包</Button>
           </div>
           {historyError && <div role="alert" className="mx-[var(--card-spacing)] flex items-center justify-between gap-4 rounded-lg border border-destructive/30 p-4 text-sm text-destructive"><span>{historyError}</span><Button size="sm" variant="outline" onClick={() => setRefresh((value) => value + 1)}>重试</Button></div>}
-          <ScrollArea horizontal className="min-h-0 min-w-0 flex-1 [&_[data-slot=table-container]]:h-full [&_[data-slot=table-container]]:overflow-visible">
+          <ScrollArea horizontal className="data-table-scroll">
             <Table aria-busy={historyLoading} className={`${!history?.items.length ? "h-full " : ""}[&_th:first-child]:ps-[var(--card-spacing)] [&_td:first-child]:ps-[var(--card-spacing)] [&_th:last-child]:pe-[var(--card-spacing)] [&_td:last-child]:pe-[var(--card-spacing)]`}>
               <TableHeader className="sticky top-0 z-10"><TableRow>{["导入时间", "版本", "状态", "资源内容"].map((column) => <TableHead key={column}>{column}</TableHead>)}</TableRow></TableHeader>
               <TableBody className={!history?.items.length ? "h-full" : undefined}>{history?.items.map((batch) => <TableRow key={batch.id}>

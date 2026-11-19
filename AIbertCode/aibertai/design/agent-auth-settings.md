@@ -1,4 +1,4 @@
-# MonkeyAI Agent 登录、用户与 Settings 方案
+# 客户端登录、用户与 Settings 方案
 
 ## 1. 客户端注册
 
@@ -36,15 +36,7 @@ OAuth 元数据位于 `GET /.well-known/oauth-authorization-server`，客户端�
 
 管理员同时可以登录客户端，使用已启用的密码、邮箱验证码或 OAuth/OIDC 登录方式。普通用户提升为管理员后，继续复用原用户身份和第三方绑定完成客户端登录、授权码交换及令牌刷新。
 
-空数据库首次启动时必须使用以下环境变量创建第一个管理员：
-
-```bash
-export MONKEYAI_INITIAL_ADMIN_NAME='AIbertAI 管理员'
-export MONKEYAI_INITIAL_ADMIN_EMAIL='admin@example.com'
-export MONKEYAI_INITIAL_ADMIN_PASSWORD='至少十二个字符的初始密码'
-```
-
-用户表为空且未配置首次管理员凭据时，服务拒绝启动，避免产生无法管理的实例。服务只在用户表为空时创建管理员，后续启动不会重置已有密码。初始化成功后应移除密码环境变量。
+空数据库首次启动的管理员配置见[管理平台启动指南](../README.md#准备配置与依赖服务)和[环境变量示例](../.env.example)。服务只在用户表为空时创建管理员。初始化成功后应移除密码环境变量。
 
 ## 4. OAuth 配置
 

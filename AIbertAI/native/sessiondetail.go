@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
-	"unicode"
 )
 
 func (h *relaySessionHost) sessionFilePreview(ctx context.Context, raw json.RawMessage) (any, error) {
@@ -54,6 +52,7 @@ func (h *relaySessionHost) sessionState(id string) (map[string]any, error) {
 	if row.GoalRun != "" && row.State == "running" {
 		state["executionId"] = row.GoalRun
 	}
+	state["title"], state["titleSource"] = row.sessionTitle()
 	return map[string]any{"sessionId": id, "eventSeq": row.historySequence(), "state": state, "finish": false}, nil
 }
 
@@ -86,14 +85,12 @@ func (h *relaySessionHost) sessionDetail(r *http.Request, method string, raw jso
 	case "_monkeyai/session/subscribe":
 		return map[string]any{"sessionId": row.ID, "eventSeq": row.historySequence()}, nil
 	case "_monkeyai/session/generate-title":
-		title := strings.Join(strings.FieldsFunc(p.Prompt, func(r rune) bool {
-			return unicode.IsControl(r) || unicode.IsSpace(r)
-		}), " ")
+		title := promptTitle(p.Prompt)
 		if title == "" {
-			title = row.displayTitle()
+			title, _ = row.sessionTitle()
+			title = promptTitle(title)
 		}
-		runes := []rune(title)
-		return map[string]any{"title": string(runes[:min(len(runes), 40)]), "titleSource": "prompt"}, nil
+		return map[string]any{"title": title, "titleSource": "prompt"}, nil
 	case "_monkeyai/session/task":
 		if p.Action == "cancel" {
 			if h.acpScope(r, "session:control") != nil {

@@ -1,3 +1,4 @@
+import { saveTestScreenshot } from "./test-screenshot.mjs"
 import assert from "node:assert/strict"
 import { readFile, stat } from "node:fs/promises"
 import path from "node:path"
@@ -474,9 +475,7 @@ try {
         `Avatar requests should be bounded: ${avatarRequests.size}`
       )
       await page.waitForTimeout(200)
-      await page.screenshot({
-        path: `/tmp/monkeyai-group-select-${config.size}-${config.width}-${config.language}-${(await browser.version()).split(".")[0]}.png`,
-      })
+      await saveTestScreenshot(page, `group-select-${config.size}-${config.width}-${config.language}-${(await browser.version()).split(".")[0]}.png`)
       await click(page, "#model-authorization")
       for (const [id, value] of [
         ["model-id", "test-model"],
@@ -608,7 +607,7 @@ try {
           }
         })
       )
-      await page.screenshot({ path: "/tmp/monkeyai-group-select-failed.png" })
+      await saveTestScreenshot(page, "group-select-failed.png")
       throw new Error(`${JSON.stringify(config)}: ${error.message}`, {
         cause: error,
       })

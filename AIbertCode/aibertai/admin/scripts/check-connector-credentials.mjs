@@ -1,5 +1,6 @@
+import { saveTestScreenshot } from "./test-screenshot.mjs"
 import assert from "node:assert/strict"
-import { readFile, stat, mkdir } from "node:fs/promises"
+import { readFile, stat } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { chromium } from "playwright-core"
@@ -449,15 +450,7 @@ try {
       .fill("initial-secret")
     assert.equal(writes.length, 0)
     await layout()
-    if (process.env.SCREENSHOT_DIR) {
-      await mkdir(process.env.SCREENSHOT_DIR, { recursive: true })
-      await page.screenshot({
-        path: path.join(
-          process.env.SCREENSHOT_DIR,
-          `connector-credentials-${width}.png`
-        ),
-      })
-    }
+    await saveTestScreenshot(page, `connector-credentials-${width}.png`)
     failCredential = true
     await submit()
     await page.getByText("凭证保存失败测试", { exact: true }).waitFor()

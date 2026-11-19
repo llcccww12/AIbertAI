@@ -23,10 +23,12 @@ func TestDesktopGoalRunsAfterDisconnectAndRecoversOnRestart(t *testing.T) {
 	const model = "020f4590-bdd7-4df8-b584-c0cd32601ad4"
 	const operation = "b65f2c45-2e7e-412d-a071-2afdf434a8d8"
 	const goalID = "bf0b238c-c079-4d0f-9b26-4c7e5354eacd"
+	const queuedID = "99133b41-63bf-4b4f-96b5-47ffbfdac3b1"
 	const origin = "http://renderer.test"
 	const protocol = "monkeyai.token.fixture"
 	profile := t.TempDir()
 	allowModel := make(chan struct{})
+	allowRecovery := make(chan struct{})
 	checkpointReached := make(chan struct{})
 	var calls atomic.Int32
 	toolCall := func(id string) string {
@@ -38,7 +40,11 @@ func TestDesktopGoalRunsAfterDisconnectAndRecoversOnRestart(t *testing.T) {
 		case r.URL.Path == "/api/v1/models":
 			_, _ = io.WriteString(w, `{"models":[{"id":"`+model+`","kind":"text","protocol":"openai_chat_completions","stream_mode":"off"}],"total_count":1}`)
 		case strings.HasSuffix(r.URL.Path, "/turns"):
-			_, _ = io.WriteString(w, `{"acked_turn":1}`)
+			acked := 1
+			if r.URL.Query().Get("after_turn") == "1" {
+				acked = 2
+			}
+			_ = json.NewEncoder(w).Encode(map[string]int{"acked_turn": acked})
 		case r.URL.Path == "/api/v1/settings", strings.HasPrefix(r.URL.Path, "/api/v1/sessions/"):
 			_, _ = io.WriteString(w, "{}")
 		case r.URL.Path == "/v1/chat/completions":
@@ -57,9 +63,18 @@ func TestDesktopGoalRunsAfterDisconnectAndRecoversOnRestart(t *testing.T) {
 				if !strings.Contains(string(body), `"role":"tool"`) || !strings.Contains(string(body), `"tool_call_id":"first"`) {
 					t.Error("model did not receive the recorded tool result after restart")
 				}
-				_, _ = io.WriteString(w, toolCall("retried"))
+				select {
+				case <-allowRecovery:
+					_, _ = io.WriteString(w, toolCall("retried"))
+				case <-r.Context().Done():
+				}
 			case 4:
 				_, _ = io.WriteString(w, `{"usage":{"prompt_tokens":20,"completion_tokens":5},"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"Report complete\n[GOAL_COMPLETE]"}}]}`)
+			case 5:
+				if !strings.Contains(string(body), "Queued after the goal") || !strings.Contains(string(body), "Fixture canvas node") {
+					t.Error("queued message or its canvas reference was lost")
+				}
+				_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"stop","message":{"content":"Queue complete"}}]}`)
 			default:
 				t.Error("unexpected model request")
 				http.Error(w, "unexpected request", http.StatusBadRequest)
@@ -195,9 +210,28 @@ func TestDesktopGoalRunsAfterDisconnectAndRecoversOnRestart(t *testing.T) {
 	defer second.store.Close()
 	defer second.workspaces.root.Close()
 	resumedHost := hostFor(second)
-	resumedHost.local.address = "localhost"
+	resumedServer := httptest.NewServer(http.HandlerFunc(resumedHost.acp))
+	defer resumedServer.Close()
+	resumedHost.local.address = strings.TrimPrefix(resumedServer.URL, "http://")
 	stopSecond := start(resumedHost)
 	defer stopSecond()
+	ws, _, err = websocket.Dial(ctx, "ws://"+resumedHost.local.address, &websocket.DialOptions{
+		Subprotocols: []string{"monkeyai.v1", protocol}, HTTPHeader: http.Header{"Origin": {origin}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.CloseNow()
+	rpc(3, "initialize", map[string]any{"protocolVersion": 1})
+	queued := rpc(4, "_monkeyai/session/queue", map[string]any{
+		"sessionId": id, "action": "add", "id": queuedID, "sendIfIdle": true,
+		"text":        "Queued after the goal",
+		"canvasNodes": []acpCanvasNode{{ID: queuedID, Title: "Fixture canvas node", NodeType: "text"}},
+	})
+	if !strings.Contains(string(queued), queuedID) || calls.Load() > 3 {
+		t.Fatalf("follow-up was not acknowledged while the goal owned the session: %s", queued)
+	}
+	close(allowRecovery)
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -205,10 +239,12 @@ func TestDesktopGoalRunsAfterDisconnectAndRecoversOnRestart(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if row.Goal.Status == "completed" && row.Turns[0].Acked {
-			if len(row.Turns) != 1 || row.Turns[0].Operation != before.Turns[0].Operation ||
+		if row.Goal.Status == "completed" && len(row.Turns) == 2 && row.Turns[1].Acked {
+			if !row.Turns[0].Acked || row.Turns[0].Operation != before.Turns[0].Operation ||
 				row.Turns[0].Answer != "Report complete" || row.Goal.Usage.Tokens != 75 || row.GoalRun != "" ||
-				row.Turns[0].Permissions != (reportedPermissions{Asked: 1, Allowed: 1}) {
+				row.Turns[0].Permissions != (reportedPermissions{Asked: 1, Allowed: 1}) ||
+				row.Turns[1].ClientID != queuedID || row.Turns[1].Answer != "Queue complete" ||
+				len(row.Queue.Messages) != 0 {
 				t.Fatalf("incorrect recovered turn: %+v", row)
 			}
 			break
@@ -216,7 +252,7 @@ func TestDesktopGoalRunsAfterDisconnectAndRecoversOnRestart(t *testing.T) {
 		select {
 		case <-ticker.C:
 		case <-ctx.Done():
-			t.Fatalf("goal did not complete after restart: %+v", row.Goal)
+			t.Fatalf("goal and its queued follow-up did not complete after restart: %+v", row.Goal)
 		}
 	}
 	if contents, err := os.ReadFile(path); err != nil || string(contents) != "edited during restart" {
@@ -246,7 +282,7 @@ func TestDesktopGoalPausesWithUnconfirmedAction(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	if _, _, _, err := live.reserveTurn(id, runOp, runOp, "Run a tool", nil, cancel, true); err != nil {
+	if _, _, _, err := live.reserveTurn(id, runOp, runOp, "Run a tool", nil, cancel, true, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := live.checkpointGoal(id, runOp, goalCheckpoint{Pending: &goalReplayMessage{}}); err != nil {
@@ -270,7 +306,7 @@ func TestDesktopGoalPausesWithUnconfirmedAction(t *testing.T) {
 		row.GoalRun != runOp || row.Turns[0].GoalCheckpoint.Pending == nil {
 		t.Fatalf("unconfirmed action was not held for confirmation: %+v, %v", row, err)
 	}
-	if _, _, _, err := resumed.reserveTurn(id, runOp, runOp, "Run a tool", nil, nil, true); err == nil {
+	if _, _, _, err := resumed.reserveTurn(id, runOp, runOp, "Run a tool", nil, nil, true, nil); err == nil {
 		t.Fatal("started an unconfirmed action automatically")
 	}
 }

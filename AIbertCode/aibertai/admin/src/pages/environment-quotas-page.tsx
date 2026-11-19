@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
-import { BillingUserSearch } from "@/components/billing/user-search"
+import { UserSearch } from "@/components/user-search"
 import { EnvironmentFrame, LoadState } from "@/components/environments/common"
 import { LimitsForm } from "@/components/environments/limits-form"
 import { useEnvironmentData } from "@/hooks/use-environment-data"
@@ -62,7 +62,8 @@ export function EnvironmentQuotasPage() {
           {t("environmentAdmin.user")}
         </label>
         <fieldset disabled={busy}>
-          <BillingUserSearch
+          <UserSearch
+            id="billing-user"
             {...selection}
             onChange={(value) => {
               if (!busy) setSelection(value)

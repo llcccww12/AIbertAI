@@ -215,6 +215,21 @@
   }
 }
 
+@layer components {
+  .resource-page-layout {
+    @apply flex h-[calc(100vh-4rem)] min-h-0 flex-none flex-col gap-4 p-4 pt-0 md:h-[calc(100vh-5rem)];
+  }
+  .data-table-page-layout {
+    @apply flex min-h-0 flex-1 flex-col p-4 pt-px md:h-[calc(100vh-5rem)] md:flex-none md:overflow-hidden;
+  }
+  .data-table-scroll {
+    @apply min-h-0 min-w-0 flex-1;
+  }
+  .data-table-scroll [data-slot="table-container"] {
+    @apply h-full overflow-visible;
+  }
+}
+
 /* Chrome 86 has no aspect-ratio. Keep chart and illustration boxes measurable
    before Recharts reads their size, without replacing fixed-height chart layouts. */
 @supports not (aspect-ratio: 1 / 1) {

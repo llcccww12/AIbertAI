@@ -4,11 +4,11 @@
 
 ## 使用入口
 
-安装器生成的 `/etc/monkeyai-engine/config.json` 决定数据目录。执行层只连接本地 `/var/run/docker.sock`，不接受任意 socket、运行时名称、宿主路径、挂载参数或宿主命令。
+安装器生成的 `/etc/aibertai-engine/config.json` 决定数据目录。执行层只连接本地 `/var/run/docker.sock`，不接受任意 socket、运行时名称、宿主路径、挂载参数或宿主命令。
 
 ```bash
-sudo /opt/monkeyai-engine/current/bin/monkeyai-engine environment apply --file environment.json
-sudo /opt/monkeyai-engine/current/bin/monkeyai-engine environment inspect --id env-demo
+sudo /opt/aibertai-engine/aibertai-engine environment apply --file environment.json
+sudo /opt/aibertai-engine/aibertai-engine environment inspect --id env-demo
 ```
 
 [规格示例](examples/environment.json)中的镜像和摘要是占位值，人工验收时替换成真实的、匹配宿主架构的镜像。镜像必须有持续运行的 Entrypoint/Cmd，允许 UID/GID 1000 访问；宿主不会执行镜像内安装脚本或覆盖其启动命令。
@@ -33,11 +33,13 @@ sudo /opt/monkeyai-engine/current/bin/monkeyai-engine environment inspect --id e
 
 ## 存储与资源
 
+下表适用于新建容器。已经存在的容器继续使用创建时的挂载目标，保留原有可写层与数据。
+
 | 资源 | 实现 |
 | --- | --- |
 | 项目目录 | `/workspace`，独立持久卷 |
-| 用户目录 | `/home/monkey`，HOME 固定指向此处 |
-| runtime 数据 | `/var/lib/monkeyai`，独立持久卷，编排以其 state 子目录传给现有 standalone state-dir |
+| 用户目录 | `/home/aibertai`，HOME 固定指向此处 |
+| runtime 数据 | `/var/lib/aibertai`，独立持久卷，编排以其 state 子目录传给现有 standalone state-dir |
 | 系统根目录 | 持久模式的新容器可写，停止／启动保留；已有只读容器保留原配置 |
 | CPU | 实例父 cgroup 的 `cpu.max` |
 | 内存 | 实例父 cgroup 的 `memory.max`，swap=0，包含辅助进程与临时文件 |

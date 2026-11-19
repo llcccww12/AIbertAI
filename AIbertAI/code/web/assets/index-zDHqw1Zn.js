@@ -49061,7 +49061,7 @@ async function Jr(e, t, n) {
   if (
     !i &&
     [
-      "design_state", "canvas_get", "canvas_apply", "canvas_select", "canvas_create_text",
+      "design_state", "canvas_get", "canvas_apply", "canvas_select", "canvas_create_text", "canvas_selected_sources",
     "canvas_create_image", "canvas_create_video",
       "canvas_create_media_project", "canvas_duplicate", "canvas_export_upload", "canvas_upload_status",
       "canvas_import_video", "canvas_import_audio", "canvas_import_extracted_media", "canvas_append_media_project",

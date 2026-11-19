@@ -5,7 +5,6 @@ import (
 	"flag"
 	"io"
 	"log/slog"
-	"time"
 )
 
 func startupFlags(cfg *Config, level *string) *flag.FlagSet {
@@ -52,8 +51,8 @@ func ParseLogLevel(args []string) (slog.Level, error) {
 
 // PrintUsage uses static defaults, never secrets from the current environment.
 func PrintUsage(output io.Writer) {
-	cfg := Config{HTTP: HTTP{Addr: ":8080", PprofAddr: "127.0.0.1:6060", ShutdownTimeout: 10 * time.Second},
-		EndpointMaxConnections: 1000, PublicURL: "http://localhost:8080"}
+	cfg := Config{HTTP: HTTP{Addr: defaultHTTPAddress, PprofAddr: defaultPprofAddress, ShutdownTimeout: defaultShutdown},
+		EndpointMaxConnections: defaultEndpointLimit, PublicURL: defaultPublicURL}
 	level := defaultLogLevel.String()
 	flags := startupFlags(&cfg, &level)
 	flags.SetOutput(output)

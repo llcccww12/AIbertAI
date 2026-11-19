@@ -35,6 +35,6 @@
 | HTTP `ReadTimeout` / `WriteTimeout` | 未设置 | 没有整个请求体读取或整个响应写入的固定时限 |
 | 计费结算 | 30 秒 | 上游结束后的后台结算，忽略原请求取消信号 |
 | 上游 Responses 对账 | 每次 30 秒 | 由 billing 对账任务给查询操作设置 deadline |
-| 服务优雅退出 | 默认 10 秒 | 服务停止时等待在途请求；可通过 `MONKEYAI_SHUTDOWN_TIMEOUT` 或 `--shutdown-timeout` 调整 |
+| 服务优雅退出 | 默认 10 秒 | 服务停止时等待在途请求；可通过 `AIBERTAI_SHUTDOWN_TIMEOUT` 或 `--shutdown-timeout` 调整 |
 
 转发总时限从 Transport 开始，不包含此前的客户端请求体读取、模型解析、会话确认和预计费。反向代理、网关或调用方自身配置的更短超时仍可先行结束连接。

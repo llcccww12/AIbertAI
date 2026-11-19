@@ -7,8 +7,9 @@ test("operation log card keeps its top ring inside the clipped viewport", async 
     new URL("../src/pages/operation-logs-page.tsx", import.meta.url),
     "utf8"
   )
-  assert.match(source, /flex-col p-4 pt-px md:h-\[calc\(100vh-5rem\)\]/)
-  assert.doesNotMatch(source, /flex-col p-4 pt-0/)
+  const styles = await readFile(new URL("../src/index.css", import.meta.url), "utf8")
+  assert.match(source, /className="data-table-page-layout"/)
+  assert.match(styles, /\.data-table-page-layout\s*\{[^}]*\bpt-px\b/)
 })
 
 test("operation logs inherit the shared table height, header and dividers", async () => {
@@ -279,13 +280,13 @@ test("only the operation log table scrolls and its header stays visible", async 
   )
   assert.match(
     source,
-    /<section className="flex min-h-0 flex-1 flex-col p-4 pt-px md:h-\[calc\(100vh-5rem\)\] md:flex-none md:overflow-hidden">/
+    /<section className="data-table-page-layout">/
   )
   assert.match(source, /<Card className="min-h-0 flex-1">/)
   assert.match(source, /<CardContent className="min-h-0 flex-1 gap-4 px-0">/)
   assert.match(
     source,
-    /<ScrollArea\s+horizontal\s+className="min-h-0 min-w-0 flex-1 \[&_\[data-slot=table-container\]\]:h-full \[&_\[data-slot=table-container\]\]:overflow-visible"/
+    /<ScrollArea\s+horizontal\s+className="data-table-scroll"/
   )
   const dashboard = await readFile(
     new URL("../src/components/dashboard.tsx", import.meta.url),

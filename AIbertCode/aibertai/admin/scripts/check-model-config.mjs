@@ -1,3 +1,4 @@
+import { saveTestScreenshot } from "./test-screenshot.mjs"
 import assert from "node:assert/strict"
 import { chromium } from "playwright-core"
 import { fileURLToPath } from "node:url"
@@ -933,9 +934,7 @@ try {
         assert.equal(writes.length, 0)
         while (!capabilityReleases[0]) await page.waitForTimeout(10)
         await assertPending()
-        await page.screenshot({
-          path: `/tmp/monkeyai-model-${kind}-skeleton-${(await browser.version()).split(".")[0]}.png`,
-        })
+        await saveTestScreenshot(page, `model-${kind}-skeleton-${(await browser.version()).split(".")[0]}.png`)
         capabilityReleases[0]()
         if (scenario.capabilityFailure) {
           await page.waitForFunction(() =>
@@ -1171,9 +1170,7 @@ try {
       }
       if (scenario.name === "add-defaults" || scenario.screenshots) {
         await page.waitForTimeout(150)
-        await page.screenshot({
-          path: `/tmp/monkeyai-model-advanced-${kind}-${scenario.width || 1440}-closed-${(await browser.version()).split(".")[0]}.png`,
-        })
+        await saveTestScreenshot(page, `model-advanced-${kind}-${scenario.width || 1440}-closed-${(await browser.version()).split(".")[0]}.png`)
         await click(page, "#model-advanced-trigger")
         await opened(page)
         const labels = await page.evaluate(() => ({
@@ -1185,9 +1182,7 @@ try {
         assert.equal(labels.label, "网络代理")
         assert.ok(labels.proxy.includes("不使用代理"))
         await page.waitForTimeout(150)
-        await page.screenshot({
-          path: `/tmp/monkeyai-model-advanced-${kind}-${scenario.width || 1440}-open-${(await browser.version()).split(".")[0]}.png`,
-        })
+        await saveTestScreenshot(page, `model-advanced-${kind}-${scenario.width || 1440}-open-${(await browser.version()).split(".")[0]}.png`)
         await click(page, "#model-advanced-trigger")
         await closed(page)
       }
@@ -1429,7 +1424,7 @@ try {
       )
       console.log("PASS", scenario.name)
     } catch (error) {
-      await page.screenshot({ path: "/tmp/monkeyai-model-advanced-failed.png" })
+      await saveTestScreenshot(page, "model-advanced-failed.png")
       throw new Error(`${scenario.name}: ${error.message}`, { cause: error })
     } finally {
       for (const release of discoveryReleases) release?.()
