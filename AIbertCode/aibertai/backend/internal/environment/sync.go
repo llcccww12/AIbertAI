@@ -85,7 +85,7 @@ func (s *Service) ExchangeAt(ctx context.Context, host string, raw json.RawMessa
 		var capabilities struct {
 			Protocol int `json:"runtime_update_protocol"`
 		}
-		if json.Unmarshal(status.Report, &capabilities) == nil && capabilities.Protocol >= 1 && capabilities.Protocol <= 2 {
+		if json.Unmarshal(status.Report, &capabilities) == nil && capabilities.Protocol >= 1 && capabilities.Protocol <= 3 {
 			out.RuntimeUpdateProtocol = capabilities.Protocol
 		}
 		if status.Status != "active" {

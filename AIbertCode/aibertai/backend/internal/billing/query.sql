@@ -110,7 +110,7 @@ SELECT
             NULLIF (value ->> 'workspace_name', '')
         FROM settings
         WHERE
-            KEY = 'branding'), 'Monkey AI')::text;
+            KEY = 'branding'), 'AIbertAI')::text;
 
 -- name: SetRootQuota :execresult
 UPDATE

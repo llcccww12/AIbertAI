@@ -162,7 +162,12 @@ func TestResourceIntegration(t *testing.T) {
 			if code != 200 || len(out) != fields || out[kind] == nil || out.String("version") == "" {
 				t.Fatalf("%s 包含无关资源或缺少目录: %d %v", path, code, out)
 			}
-			if kind != "settings" && len(out[kind].([]any)) != 0 {
+			if kind == "connectors" {
+				rows := out[kind].([]any)
+				if len(rows) != 1 || resource.Object(rows[0].(map[string]any)).String("id") != "c7b5d0e2-4a1f-4f3e-9b2a-0d6e8c5f1a73" {
+					t.Fatalf("初始目录应只有内置知识库连接器: %v", rows)
+				}
+			} else if kind != "settings" && len(out[kind].([]any)) != 0 {
 				t.Fatalf("初始目录应为空数组: %v", out)
 			}
 			req := httptest.NewRequest("GET", path, nil)
@@ -532,8 +537,15 @@ DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION reject_test_tag();`)
 			t.Fatal("未支持的方法应返回协议错误")
 		}
 		catalog := must("GET", "/api/v1/connectors", nil, "a", "")
-		entry := catalog["connectors"].([]any)[0].(map[string]any)
-		proxy := entry["mcp_gateway"].(map[string]any)
+		var entry resource.Object
+		for _, raw := range catalog["connectors"].([]any) {
+			item := resource.Object(raw.(map[string]any))
+			if item.String("id") == conn.String("id") {
+				entry = item
+				break
+			}
+		}
+		proxy, _ := entry["mcp_gateway"].(map[string]any)
 		if proxy["url"] != "http://localhost:8080"+gateway || proxy["transport"] != "streamable_http" || proxy["required_scope"] != "mcp:invoke" || len(entry["capabilities"].([]any)) != 2 {
 			t.Fatalf("未下发可执行代理: %v", entry)
 		}
@@ -568,7 +580,7 @@ DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION reject_test_tag();`)
 			for _, raw := range catalog["connectors"].([]any) {
 				entry := resource.Object(raw.(map[string]any))
 				if entry.String("id") == connector.String("id") {
-					found = len(entry["tools"].([]any)) == 1 && entry.String("tools_version") != "" && entry["mcp_gateway"] != nil
+					found = len(entry["tools"].([]any)) == 0 && entry.String("tools_version") != "" && entry["mcp_gateway"] != nil
 				}
 			}
 			if !found {
@@ -873,7 +885,7 @@ DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION reject_test_tag();`)
 	refreshable := must("GET", "/api/v1/connectors", nil, "a", "")
 	for _, raw := range refreshable["connectors"].([]any) {
 		entry := resource.Object(raw.(map[string]any))
-		if entry.String("id") == c3.String("id") && (entry.String("authorization_status") != "authorized" || len(entry["tools"].([]any)) == 0) {
+		if entry.String("id") == c3.String("id") && (entry.String("authorization_status") != "authorized" || entry["mcp_gateway"] == nil) {
 			t.Fatal("可自动刷新的 OAuth 凭证不应要求手工重新授权")
 		}
 	}
@@ -1314,7 +1326,18 @@ DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION reject_test_tag();`)
 		}
 	}
 	var remaining int
-	if err = pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM pg_class WHERE relnamespace=current_schema()::regnamespace)+(SELECT count(*) FROM pg_proc WHERE pronamespace=current_schema()::regnamespace)`).Scan(&remaining); err != nil || remaining != 0 {
+	// The vector extension is deliberately left installed on rollback.
+	if err = pool.QueryRow(ctx, `
+		WITH objects(catalog, oid) AS (
+			SELECT 'pg_class'::regclass, oid FROM pg_class WHERE relnamespace = $1::regnamespace
+			UNION ALL
+			SELECT 'pg_proc'::regclass, oid FROM pg_proc WHERE pronamespace = $1::regnamespace
+		)
+		SELECT count(*) FROM objects o
+		WHERE NOT EXISTS (SELECT 1 FROM pg_depend d
+			WHERE d.classid = o.catalog AND d.objid = o.oid
+			AND d.refclassid = 'pg_extension'::regclass AND d.deptype = 'e')
+	`, schema).Scan(&remaining); err != nil || remaining != 0 {
 		t.Fatalf("回滚后仍有数据库对象: %d %v", remaining, err)
 	}
 	for _, path := range migrations {

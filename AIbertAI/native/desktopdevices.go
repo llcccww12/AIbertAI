@@ -40,7 +40,7 @@ func (h *relaySessionHost) desktopDevices(ctx context.Context) (any, error) {
 		}
 		for _, device := range result.Items {
 			if !validUUID(device.MachineID) || device.MachineID == h.local.reportMachine ||
-				device.MachineID == h.local.installedMachine || device.Name == "" {
+				device.MachineID == h.local.installedMachine || device.Status == "revoked" || device.Name == "" {
 				continue
 			}
 			devices = append(devices, map[string]any{

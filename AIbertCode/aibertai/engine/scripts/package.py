@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""将审核后的固定版本依赖与 engine 打包为后台可分发的目录。"""
+"""将自有宿主安装器编译为后台可分发的固定版本目录。"""
 import argparse
 import hashlib
 import json
@@ -14,13 +14,10 @@ import tempfile
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--version', required=True)
 parser.add_argument('--arch', choices=['amd64', 'arm64'], required=True)
-parser.add_argument('--installer', type=Path, required=True)
-parser.add_argument('--dependencies', type=Path, required=True)
 parser.add_argument('--output', type=Path, default=Path('dist'))
 args = parser.parse_args()
 if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}', args.version):
     parser.error('版本号无效')
-files = ['docker', 'docker-proxy', 'dockerd', 'containerd', 'ctr', 'containerd-shim-runc-v2', 'docker-init', 'runc', 'runsc', 'checkpointgofer', 'gvisor-proc-umounter', 'gvisor-sentry-prewarmer', 'gvisor_sentry', 'runsc-fd-parking', 'runsc-metric-server']
 root = Path(__file__).resolve().parent.parent
 output = args.output.resolve() / args.version
 output.mkdir(parents=True, exist_ok=True)
@@ -29,19 +26,12 @@ if final.exists():
     parser.error('目标发行目录已存在，禁止覆盖已发布版本')
 with tempfile.TemporaryDirectory(prefix='.package-', dir=output) as work:
     stage = Path(work)
-    for name in files:
-        source = args.dependencies / name
-        if source.is_symlink() or not source.is_file():
-            parser.error(f'缺少已审核的依赖文件：{name}')
-        shutil.copyfile(source, stage / name)
     subprocess.run(['go', 'build', '-buildvcs=false', '-trimpath', '-ldflags', f'-s -w -X main.version={args.version}',
-                    '-o', str(stage / 'monkeyai-engine'), './cmd/monkeyai-engine'],
+                    '-o', str(stage / 'monkeyai-engine'), './cmd/aibertai-engine'],
                    cwd=root, env={**os.environ, 'GOOS': 'linux', 'GOARCH': args.arch, 'CGO_ENABLED': '0'}, check=True)
-    if args.installer.is_symlink() or not args.installer.is_file():
-        parser.error('缺少统一 installer 发行文件')
-    shutil.copyfile(args.installer, stage / 'installer')
+    shutil.copyfile(stage / 'monkeyai-engine', stage / 'installer')
     digests = {}
-    for name in ['monkeyai-engine', 'installer', *files]:
+    for name in ['monkeyai-engine', 'installer']:
         path = stage / name
         with path.open('rb') as file:
             header = file.read(20)
@@ -50,12 +40,6 @@ with tempfile.TemporaryDirectory(prefix='.package-', dir=output) as work:
             file.seek(0)
             digests[name] = hashlib.file_digest(file, 'sha256').hexdigest()
         path.chmod(0o755)
-    provenance = args.dependencies / 'provenance.json'
-    if provenance.exists():
-        record = json.loads(provenance.read_text())
-        if record['architecture'] != args.arch or record['files'] != {name: digests[name] for name in files}:
-            parser.error('依赖文件与来源记录不一致')
-        shutil.copyfile(provenance, stage / 'provenance.json')
     (stage / 'manifest.json').write_text(json.dumps({'version': args.version, 'architecture': args.arch, 'files': digests}, indent=2) + '\n')
     # 仅在所有文件构建和校验通过后发布完整目录。
     stage.rename(final)

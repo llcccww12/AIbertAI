@@ -25,7 +25,7 @@ type reportingFilter struct {
 	fingerprint                                                                                    string
 	groupID, userID, modelID, expertID, clientType, platform, resourceID, resourceVersion, outcome string
 	userQuery, resourceKind                                                                        string
-	placeholders, purged                                                                           bool
+	placeholders, purged, usedOnly                                                                 bool
 }
 
 func parseReportingFilter(r *http.Request, now time.Time, maxLimit int) (reportingFilter, error) {
@@ -100,7 +100,7 @@ func parseReportingFilter(r *http.Request, now time.Time, maxLimit int) (reporti
 	for _, item := range []struct {
 		name   string
 		target *bool
-	}{{"include_placeholders", &f.placeholders}, {"include_purged", &f.purged}} {
+	}{{"include_placeholders", &f.placeholders}, {"include_purged", &f.purged}, {"used_only", &f.usedOnly}} {
 		if q.Has(item.name) {
 			value, err := strconv.ParseBool(q.Get(item.name))
 			if err != nil {
@@ -181,7 +181,7 @@ func (f reportingFilter) sqlParams(c reportCursor, sessionID string) []byte {
 		"client_type": optional(f.clientType), "platform": optional(f.platform),
 		"resource_id": optional(f.resourceID), "resource_version": optional(f.resourceVersion),
 		"outcome": optional(f.outcome), "include_placeholders": f.placeholders,
-		"include_purged": f.purged, "cursor_key": optional(c.Key), "session_id": optional(sessionID),
+		"include_purged": f.purged, "used_only": f.usedOnly, "cursor_key": optional(c.Key), "session_id": optional(sessionID),
 	}
 	data, err := json.Marshal(values)
 	if err != nil {

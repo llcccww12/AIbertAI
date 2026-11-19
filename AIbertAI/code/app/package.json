@@ -5,7 +5,7 @@
   "private": true,
   "description": "AIbertAI desktop host",
   "author": "AIbertAI",
-  "desktopName": "monkeyai.desktop",
+  "desktopName": "aibertai.desktop",
   "main": "./out/main/index.js",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

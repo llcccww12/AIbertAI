@@ -1,10 +1,8 @@
 package environment
 
 import (
-	"encoding/json"
 	"errors"
 	"testing"
-	"time"
 
 	"aibertai.local/backend/internal/environment/sqlc"
 	"aibertai.local/backend/internal/resource"
@@ -131,71 +129,20 @@ func TestHostScopeIncludesDescendantGroups(t *testing.T) {
 	}
 }
 
-func TestHostPriceChangeOnlyClosesItsOwnPeriods(t *testing.T) {
-	s, user, first, at := meterFixture(t, "10000")
+func TestComputeGlobalPricingAppliesToAllHosts(t *testing.T) {
+	s, user, first, _ := meterFixture(t, "10000")
 	second := addConfiguredHost(t, s, user, first)
-	pricing, _ := json.Marshal(BillingConfig{Enabled: true, CPU: 7200_000000})
-	if _, err := s.pool.Exec(t.Context(), "UPDATE host_environment_configs SET billing=$1 WHERE host_id=$2", pricing, second); err != nil {
-		t.Fatal(err)
+	for index, host := range []string{first, second} {
+		if _, err := s.CreateOnHost(t.Context(), user, host, Creation{"global price", "rate-" + host}); err != nil {
+			t.Fatal(err)
+		}
+		if index == 0 {
+			setComputePrice(t, s, BillingConfig{Enabled: true, CPU: 720_000000})
+		}
 	}
-	a, err := s.CreateOnHost(t.Context(), user, first, Creation{"a", "price-a"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, err := s.CreateOnHost(t.Context(), user, second, Creation{"b", "price-b"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	syncState(t, s, first, observe(a.Environment, "running"))
-	syncState(t, s, second, observe(b.Environment, "running"))
-	*at = at.Add(30 * time.Second)
-	syncState(t, s, first, observe(a.Environment, "running"))
-	syncState(t, s, second, observe(b.Environment, "running"))
-	cfg := hostSetup(t, s, first)
-	next := BillingConfig{Enabled: true, CPU: 10800_000000}
-	if _, err = s.saveSetup(t.Context(), first, Setup{Resource: *cfg.Resource, MaxEnvironments: cfg.MaxEnvironments, UserMaxEnvironments: cfg.UserMaxEnvironments, Billing: &next}); err != nil {
-		t.Fatal(err)
-	}
-	var open int
-	if err = s.pool.QueryRow(t.Context(), "SELECT count(*) FROM environment_billing_periods WHERE environment_id=$1 AND closed_at IS NULL", b.Environment.ID).Scan(&open); err != nil || open != 1 {
-		t.Fatal("调价关闭其他宿主计量", err)
-	}
-	settle(t, s, false)
-	cost(t, s, user, "90", 2)
+	cost(t, s, user, "4320", 2)
 	budget, _, err := s.billingBudget(t.Context(), user)
-	if err != nil || budget == nil || budget.HourlyCredits != "7200.000000" {
-		t.Fatalf("跨宿主合计费率错误：%v %+v", err, budget)
-	}
-}
-
-func TestHostBalanceStopDoesNotStopFreeHosts(t *testing.T) {
-	s, user, paid, at := meterFixture(t, "5")
-	free := addConfiguredHost(t, s, user, paid)
-	raw, _ := json.Marshal(BillingConfig{})
-	if _, err := s.pool.Exec(t.Context(), "UPDATE host_environment_configs SET billing=$1 WHERE host_id=$2", raw, free); err != nil {
-		t.Fatal(err)
-	}
-	a, err := s.CreateOnHost(t.Context(), user, paid, Creation{"paid", "balance-paid"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, err := s.CreateOnHost(t.Context(), user, free, Creation{"free", "balance-free"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	syncState(t, s, paid, observe(a.Environment, "running"))
-	syncState(t, s, free, observe(b.Environment, "running"))
-	*at = at.Add(10 * time.Second)
-	syncState(t, s, paid, observe(a.Environment, "running"))
-	syncState(t, s, free, observe(b.Environment, "running"))
-	settle(t, s, false)
-	q := sqlc.New(s.pool)
-	pa, _ := q.GetEnvironment(t.Context(), sqlc.GetEnvironmentParams{ID: a.Environment.ID})
-	fr, _ := q.GetEnvironment(t.Context(), sqlc.GetEnvironmentParams{ID: b.Environment.ID})
-	if pa.Desired != "stopped" || fr.Desired != "running" {
-		t.Fatal("余额耗尽影响免费宿主")
-	}
-	if got := balance(t, s, user); got != "-5" {
-		t.Fatal("尾费没有实际结算", got)
+	if err != nil || budget == nil || budget.HourlyCredits != "1440.000000" {
+		t.Fatalf("全局费率未应用到全部环境预算：%v %+v", err, budget)
 	}
 }

@@ -60,7 +60,7 @@ func TestDesktopJournalMigratesAndRestoresLargeSession(t *testing.T) {
 	const persistedTurns = 19
 	payload := strings.Repeat("x", 480<<10)
 	for range persistedTurns - 1 {
-		next, index, _, err := live.beginTurn(sessionID, allocate(), "", "after", nil)
+		next, index, _, err := live.beginTurn(sessionID, allocate(), "", "after", nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -78,7 +78,7 @@ func TestDesktopJournalMigratesAndRestoresLargeSession(t *testing.T) {
 	// Simulate a worker stopping after it persisted a started turn. Startup
 	// should restore it as failed and leave it pending for backend reporting.
 	interrupted := allocate()
-	if _, _, _, err := live.beginTurn(sessionID, interrupted, "", "interrupted", nil); err != nil {
+	if _, _, _, err := live.beginTurn(sessionID, interrupted, "", "interrupted", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	closeStore(live)
@@ -89,10 +89,10 @@ func TestDesktopJournalMigratesAndRestoresLargeSession(t *testing.T) {
 		len(row.Turns) != persistedTurns+1 || row.Turns[persistedTurns].Acked {
 		t.Fatalf("unexpected restored session: turns=%d, state=%q, err=%v", len(row.Turns), row.State, err)
 	}
-	if _, index, retry, err := live.beginTurn(sessionID, originalOp, "", "before", nil); err != nil || !retry || index != 0 {
+	if _, index, retry, err := live.beginTurn(sessionID, originalOp, "", "before", nil, nil); err != nil || !retry || index != 0 {
 		t.Fatalf("migration lost the original operation identity: index=%d retry=%v err=%v", index, retry, err)
 	}
-	if _, _, _, err := live.beginTurn(sessionID, allocate(), "", "too early", nil); !errors.Is(err, errSessionReportPending) {
+	if _, _, _, err := live.beginTurn(sessionID, allocate(), "", "too early", nil, nil); !errors.Is(err, errSessionReportPending) {
 		t.Fatalf("expected the interrupted report before accepting another turn, got %v", err)
 	}
 }

@@ -23,7 +23,7 @@ func TestUpgradeCommandAndScript(t *testing.T) {
 		t.Fatal(response.Code, response.Body.String())
 	}
 	var result struct{ Version, Command string }
-	if json.Unmarshal(response.Body.Bytes(), &result) != nil || result.Version != "v1" || !strings.Contains(result.Command, "install.sh?version=v1") || strings.Contains(result.Command, "token=") {
+	if json.Unmarshal(response.Body.Bytes(), &result) != nil || result.Version != "v1" || !strings.Contains(result.Command, "upgrade.sh?version=v1") || strings.Contains(result.Command, "token=") {
 		t.Fatal(result)
 	}
 	script := call(r, http.MethodGet, "/api/host/v1/upgrade.sh?version=v1", nil)
@@ -32,10 +32,10 @@ func TestUpgradeCommandAndScript(t *testing.T) {
 	}
 	body := script.Body.String()
 	unified := call(r, http.MethodGet, "/api/host/v1/install.sh?version=v1", nil)
-	if unified.Code != 200 || unified.Body.String() != body {
-		t.Fatal("安装升级脚本不一致")
+	if unified.Code != 200 || !strings.Contains(unified.Body.String(), "bootstrap_mode=install") || !strings.Contains(body, "bootstrap_mode=upgrade") {
+		t.Fatal("安装和升级未选择正确模式")
 	}
-	for _, want := range []string{"x86_64|amd64", "aarch64|arm64", "/installer", "monkeyai-engine install", "--manifest-sha256", "systemd-run", "sha256sum"} {
+	for _, want := range []string{"x86_64|amd64", "aarch64|arm64", "/installer", "monkeyai-engine upgrade", "--manifest-sha256", "systemd-run", "sha256sum"} {
 		if !strings.Contains(body, want) {
 			t.Fatal("缺少", want)
 		}

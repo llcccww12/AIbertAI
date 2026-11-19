@@ -19,7 +19,7 @@ try {
     if (p.startsWith("/api/")) {
       let body = {}
       if (p.endsWith("/session")) body = { authenticated: true, user: { id: "admin", name: "管理员", role: "admin", status: "active" } }
-      else if (p.endsWith("/branding")) body = { product_name: "MonkeyAI" }
+      else if (p.endsWith("/branding")) body = { product_name: "AIbertAI" }
       else if (p.endsWith("/license/status")) body = { state: "valid" }
       else if (p.endsWith("/settings")) body = { settings: [] }
       else if (p.endsWith("/resource-import-uploads")) body = { items: applied ? [] : [upload] }

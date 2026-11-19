@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/cipher"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/coder/websocket"
@@ -32,6 +34,18 @@ type relaySessionHost struct {
 	terminalLifetime     context.Context
 	trace                bool
 	designBridge         *desktopDesignBridge
+	legacyImport         desktopImportResult
+	importedResources    *importedDesktopResources
+	importedResourcesMu  sync.RWMutex
+	importedResourcesKey cipher.AEAD
+	cloudModelKey        string
+}
+
+func (h *relaySessionHost) modelKey() string {
+	if h.cloudModelKey != "" {
+		return h.cloudModelKey
+	}
+	return h.live.key
 }
 
 type archivedHistory struct {
@@ -97,6 +111,10 @@ func (h *relaySessionHost) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.local != nil {
+		if r.URL.Path == desktopFeedbackRoute && h.live != nil {
+			h.serveDesktopFeedback(w, r)
+			return
+		}
 		if r.URL.Path == localWorkspaceFileRoute && h.live != nil && h.live.workspaces != nil {
 			h.localWorkspaceFile(w, r)
 			return
@@ -114,6 +132,8 @@ func (h *relaySessionHost) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		scope = "session:read"
 	case "/read/config":
 		scope = "resources:manage"
+	case "/write/session/cancel":
+		scope = "session:control"
 	case "/cap/workspace/mcp":
 		scope = "files:read"
 	default:
@@ -137,6 +157,15 @@ func (h *relaySessionHost) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	if r.URL.Path == "/write/session/cancel" {
+		var input struct{ SessionID string }
+		if h.live == nil || json.NewDecoder(r.Body).Decode(&input) != nil || !validUUID(input.SessionID) {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		writeRelayResult(w, access.Auth, map[string]bool{"stopped": h.live.cancelTurn(input.SessionID)})
+		return
+	}
 	if scope == "session:read" {
 		h.history(w, r, access.Auth)
 		return
@@ -190,6 +219,15 @@ func (h *relaySessionHost) history(w http.ResponseWriter, r *http.Request, auth 
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	if req.Method == "_monkeyai/session/state/get" {
+		result, err := h.sessionState(req.Params.SessionID)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		writeRelayResult(w, auth, result)
+		return
+	}
 	if req.Method == "_monkeyai/session/queue" && req.Params.Action == "get" {
 		result, err := h.readQueue(req.Params.SessionID)
 		if err != nil {
@@ -201,6 +239,15 @@ func (h *relaySessionHost) history(w http.ResponseWriter, r *http.Request, auth 
 	}
 	if req.Method == "_monkeyai/session/tool_output" {
 		result, err := h.historyToolOutput(req.Params)
+		if err != nil {
+			http.NotFound(w, r)
+		} else {
+			writeRelayResult(w, auth, result)
+		}
+		return
+	}
+	if req.Method == "_monkeyai/session/state/get" {
+		result, err := h.sessionState(req.Params.SessionID)
 		if err != nil {
 			http.NotFound(w, r)
 		} else {

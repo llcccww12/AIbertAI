@@ -65,6 +65,9 @@ func NewService(store *resource.Store, publicURL string) *Service {
 		PrepareOverride:      s.validateConnector,
 		Validate:             s.validateConnector,
 		Persist: func(ctx context.Context, tx pgx.Tx, in resource.Object) error {
+			if headers, ok := ctx.Value(desktopImportHeadersKey{}).(map[string]string); ok {
+				return persistDesktopImportHeaders(ctx, tx, in, headers)
+			}
 			_, err := s.persistCredential(ctx, tx, in)
 			return err
 		},
@@ -280,6 +283,7 @@ func (s *Service) RegisterAdmin(r chi.Router) {
 }
 func (s *Service) RegisterAgent(r chi.Router) {
 	s.Connectors.RegisterAgent(r)
+	r.Put("/connectors/desktop-import/{key}", s.importDesktopConnector)
 	s.routes(r, false)
 	s.iconRoutes(r, false)
 }

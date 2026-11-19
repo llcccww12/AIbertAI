@@ -60,8 +60,8 @@ func TestRenewPendingEnrollment(t *testing.T) {
 	var data struct {
 		Items []json.RawMessage `json:"items"`
 	}
-	if json.Unmarshal(listed.Body.Bytes(), &data) != nil || len(data.Items) != 1 || strings.Contains(listed.Body.String(), nextToken) {
-		t.Fatal("重发列表或凭证过滤错误")
+	if json.Unmarshal(listed.Body.Bytes(), &data) != nil || len(data.Items) != 0 || strings.Contains(listed.Body.String(), nextToken) {
+		t.Fatal("待接入身份或接入凭据出现在已登记宿主列表")
 	}
 	for _, status := range []string{"active", "revoked"} {
 		if _, err := db.Exec(t.Context(), "UPDATE hosts SET status=$2 WHERE id=$1", next.ID, status); err != nil {

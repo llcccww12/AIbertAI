@@ -23,7 +23,14 @@ type RuntimePackage struct {
 }
 
 func (p RuntimePackage) SingleFile() bool { return len(p.Files) == 1 }
+func (p RuntimePackage) SourceRuntime() bool {
+	_, ok := p.Files["aibertai-native"]
+	return p.SingleFile() && ok
+}
 func (p RuntimePackage) Protocol() int {
+	if p.SourceRuntime() {
+		return 3
+	}
 	if p.SingleFile() {
 		return 2
 	}
@@ -37,9 +44,16 @@ func (p RuntimePackage) Validate(arch string) error {
 	names := []string{"monkeyai-runtime", "ohmyagent", "LICENSES.txt", "bundle.json"}
 	if p.SingleFile() {
 		names = names[:1]
+		if p.SourceRuntime() {
+			names = []string{"aibertai-native"}
+		}
 	}
 	if p.SingleFile() || p.RuntimeRevision != "" || p.EngineRevision != "" {
-		for _, revision := range []string{p.RuntimeRevision, p.EngineRevision} {
+		revisions := []string{p.RuntimeRevision, p.EngineRevision}
+		if p.SourceRuntime() && p.EngineRevision == "" {
+			revisions = revisions[:1]
+		}
+		for _, revision := range revisions {
 			if len(revision) != 40 || strings.Trim(revision, "0123456789abcdef") != "" {
 				return errors.New("runtime 源码修订无效")
 			}
@@ -84,4 +98,23 @@ type RuntimeCatalog interface {
 func (s *Service) WithRuntimeCatalog(catalog RuntimeCatalog) *Service {
 	s.runtimeCatalog = catalog
 	return s
+}
+
+func (s *Service) WithSourceRuntimeProvisioning() *Service {
+	s.sourceRuntime = true
+	return s
+}
+
+func (s *Service) runtimeForProvisioning(arch string) (RuntimePackage, error) {
+	if s.runtimeCatalog == nil {
+		return RuntimePackage{}, errors.New("云电脑缺少源码运行时发行资源")
+	}
+	release, err := s.runtimeCatalog.Current(arch)
+	if err != nil {
+		return RuntimePackage{}, err
+	}
+	if s.sourceRuntime && !release.SourceRuntime() {
+		return RuntimePackage{}, errors.New("新建云电脑需要源码运行时")
+	}
+	return release, release.Validate(arch)
 }

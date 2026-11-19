@@ -16,7 +16,7 @@ coverage/
 # This workspace keeps its local services and desktop profile outside Git.
 /.impeccable/hook.cache.json
 /AIbertAI/.local-runtime/
-/AIbertAI/code/app/resources/tray
+/AIbertAI/code/app/resources/bin/
 /AIbertCode/.local-dev/
 
 # Only the current platform is maintained in this repository.

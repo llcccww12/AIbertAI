@@ -313,12 +313,29 @@ func (h *desktopRelay) serve(ctx context.Context, device relayDevice, notify fun
 		return err
 	}
 	defer data.Close()
+	var modelKey invocationKey
+	if live.cloudWorkspace != "" {
+		// The backend issues cloud model keys only after the device publishes
+		// and binds this grant to its active execution endpoint.
+		modelKey, err = c.createModelKey(startup, auth)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+			defer stop()
+			if current, err := live.authorization(cleanup); err == nil {
+				_ = c.json(cleanup, "DELETE", "/api/v1/api-keys/"+modelKey.ID, current.Access, "", nil, nil)
+			}
+		}()
+	}
 	endStartup()
 	remote := &relaySessionHost{
 		access:  &relayAccess{issuer: c.server, owner: h.user.ID, boot: device.boot, ready: ready, keys: keys, control: control},
 		profile: h.local.profile, root: h.local.root, approvedFile: h.local.approvedFile,
 		live: live, uploads: h.uploads, shareDesktopSessions: true,
 		terminals: h.local.terminals, terminalLifetime: ctx,
+		cloudModelKey: modelKey.Value,
 	}
 	server := &http.Server{Handler: remote, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
 		WriteTimeout: 20 * time.Second, MaxHeaderBytes: 32 << 10, BaseContext: func(net.Listener) context.Context { return ctx }}

@@ -62,7 +62,7 @@ sudo /opt/monkeyai-engine/current/bin/monkeyai-engine environment inspect --id e
 
 镜像通过 Docker API 拉取和解包，只接受固定 SHA-256 与匹配的 Linux 架构，拒绝镜像声明匿名卷。准备超时 15 分钟，拉取后镜像报告大小上限 16 GiB；拉取前检查空间余量。Docker 执行解包，不提供原驱动逐层压缩流的硬上限。runsc 使用 `--overlay2=none`，将根文件系统写入 Docker 持久层，避免默认 root:self 写层在停止后丢失修改。持久化不授予 UID 1000 额外系统权限；`/tmp`、`/run`、`/dev/shm` 和进程内存不保留。已有只读容器保持 ReadonlyRootfs，不在接管时修改配置。
 
-镜像缓存已加入总预算、磁盘／inode 余量准入及受保护引用的 LRU 回收，停止但保留容器的镜像仍受保护，详见 [缓存治理](CACHE.md)。宿主只从当前 server 的 environments 仓库拉取，使用宿主身份签名的短期只读凭据；资源未在 server 准备完成时不回源公网。runtime 更新协议2直接下载 server 缓存的官方单文件；宿主用本架构、无网络和用户数据挂载的临时 gVisor 容器核对 bundle 信息，优先复用匹配 OhMyAgent，缺失时自动释放。程序验证及切换不重建用户容器，旧四文件协议1仍兼容，接口见 [客户端契约](../design/environment-client-api.md)。
+镜像缓存已加入总预算、磁盘／inode 余量准入及受保护引用的 LRU 回收，停止但保留容器的镜像仍受保护，详见 [缓存治理](CACHE.md)。宿主只从当前 server 的 environments 仓库拉取，使用宿主身份签名的短期只读凭据；资源未在 server 准备完成时不回源公网。运行时更新要求协议 3。宿主校验架构、文件大小、SHA-256 和静态 ELF，只安装后台签发的 `aibertai-native`。更新保留用户容器和持久卷，原设备通过签名迁移继续绑定。接口见 [客户端契约](../design/environment-client-api.md)。
 
 ## 后台接入
 

@@ -10,7 +10,7 @@ export type LicenseInfo = {
   not_valid_after?: number
 }
 
-export const LICENSE_STATUS_CHANGED = "monkeyai:license-status-changed"
+export const LICENSE_STATUS_CHANGED = "aibertai:license-status-changed"
 
 export function publishLicenseStatus(info: LicenseInfo) {
   window.dispatchEvent(

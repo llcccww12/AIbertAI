@@ -14,9 +14,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/dockerapi"
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/lifecycle"
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/storage"
+	"aibertai.local/engine/internal/dockerapi"
+	"aibertai.local/engine/internal/lifecycle"
+	"aibertai.local/engine/internal/standalone"
+	"aibertai.local/engine/internal/storage"
 )
 
 func sample() lifecycle.Spec {
@@ -84,7 +85,9 @@ func testDockerLifecycle(t *testing.T, policy string, persistent, tagged bool) {
 	s.PersistentContainer = persistent
 	s.NetworkPolicy = policy
 	if policy == "public-only" {
-		s.Runtime = &lifecycle.Runtime{Server: "https://example.com", ServerID: "server", UserID: "user"}
+		if persistent {
+			s.Runtime = &lifecycle.Runtime{Server: "https://example.com", ServerID: "server", UserID: "user"}
+		}
 		if err := os.WriteFile(filepath.Join(dir, "nft"), []byte(`#!/bin/sh
 if [ "$1" = -j ]; then echo '{"nftables":[]}'; else cat >/dev/null; fi
 `), 0700); err != nil {
@@ -192,6 +195,14 @@ if [ "$1" = -j ]; then echo '{"nftables":[]}'; else cat >/dev/null; fi
 	go server.Serve(listener)
 	t.Cleanup(func() { server.Close() })
 	d := &Driver{client: dockerapi.New(socket), root: filepath.Join(dir, "instances"), volumes: mounts()}
+	if s.Runtime != nil {
+		s.RuntimePackage = &lifecycle.RuntimePackage{Version: "26.1119.3", Architecture: runtime.GOARCH,
+			RuntimeRevision: strings.Repeat("a", 40), Files: map[string]lifecycle.RuntimeFile{"aibertai-native": {SHA256: strings.Repeat("b", 64), Size: 1}}}
+		d.WithRuntimeSource(func(context.Context, lifecycle.Spec) (standalone.Files, error) {
+			return standalone.Files{Binary: "/var/lib/monkeyai/_engine/releases/26.1119.3/aibertai-native", Version: "26.1119.3"}, nil
+		})
+	}
+
 	t.Cleanup(func() { d.Close() })
 	ctx := t.Context()
 	ref, err := d.Create(ctx, s)

@@ -16,6 +16,7 @@ export type ReportWindow = {
   resource_id?: string
   resource_version?: string
   include_placeholders?: boolean
+  used_only?: boolean
 }
 
 export type ReportMeta = {

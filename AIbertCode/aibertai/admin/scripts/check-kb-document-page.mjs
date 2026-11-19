@@ -68,7 +68,7 @@ try {
           },
         }
       } else if (pathname.endsWith("/branding")) {
-        body = { product_name: "MonkeyAI" }
+        body = { product_name: "AIbertAI" }
       } else if (pathname.endsWith("/license/status")) {
         body = { state: "valid" }
       } else if (pathname.endsWith("/settings")) {

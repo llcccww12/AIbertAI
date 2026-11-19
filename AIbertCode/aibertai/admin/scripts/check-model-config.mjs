@@ -235,7 +235,7 @@ try {
     page.setDefaultTimeout(8000)
     await page.addInitScript(
       ({ language, dark }) => {
-        localStorage.setItem("monkeyai-admin-language", language)
+        localStorage.setItem("aibertai-admin-language", language)
         localStorage.setItem("theme", dark ? "dark" : "light")
       },
       { language: scenario.language || "zh-CN", dark: scenario.dark || false }
@@ -418,7 +418,7 @@ try {
             },
           })
         if (p.endsWith("/branding"))
-          return json({ product_name: "MonkeyAI", workspace_name: "测试团队" })
+          return json({ product_name: "AIbertAI", workspace_name: "测试团队" })
         if (p.endsWith("/license/status")) return json({ state: "valid" })
         if (p.endsWith("/version") || p.endsWith("/version/release"))
           return json({ version: "1" })

@@ -26,7 +26,7 @@ func fieldsAt(d *json.Decoder, path string) error {
 			name, ok := token.(string)
 			canonical := fieldName.MatchString(name)
 			if path == "runtime_package.files" {
-				canonical = name == "monkeyai-runtime" || name == "ohmyagent" || name == "LICENSES.txt" || name == "bundle.json"
+				canonical = name == "aibertai-native" || name == "monkeyai-runtime" || name == "ohmyagent" || name == "LICENSES.txt" || name == "bundle.json"
 			}
 			if !ok || !canonical || seen[name] {
 				return errors.New("规格包含重复字段或非规范字段名")

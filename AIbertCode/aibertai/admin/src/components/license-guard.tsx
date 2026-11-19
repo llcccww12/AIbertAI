@@ -61,12 +61,12 @@ export function LicenseGuard({ children }: { children: ReactNode }) {
     const interval = window.setInterval(() => void load(), 30_000)
     const refresh = () => void load()
     window.addEventListener("focus", refresh)
-    window.addEventListener("monkeyai-license-changed", refresh)
+    window.addEventListener("aibertai-license-changed", refresh)
     return () => {
       window.clearTimeout(timer)
       window.clearInterval(interval)
       window.removeEventListener("focus", refresh)
-      window.removeEventListener("monkeyai-license-changed", refresh)
+      window.removeEventListener("aibertai-license-changed", refresh)
     }
   }, [load, unsupported])
 

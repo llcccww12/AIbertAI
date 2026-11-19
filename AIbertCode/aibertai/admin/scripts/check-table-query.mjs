@@ -149,7 +149,7 @@ try {
       page.setDefaultTimeout(15000)
       await page.clock.setFixedTime(new Date("2026-10-29T10:20:30+08:00"))
       await page.addInitScript(() =>
-        localStorage.setItem("monkeyai-admin-language", "zh-CN")
+        localStorage.setItem("aibertai-admin-language", "zh-CN")
       )
       const errors = [],
         requests = []

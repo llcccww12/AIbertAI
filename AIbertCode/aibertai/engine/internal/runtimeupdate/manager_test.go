@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,8 +15,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/control"
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/lifecycle"
+	"aibertai.local/engine/internal/control"
+	"aibertai.local/engine/internal/lifecycle"
 )
 
 func packageFixture(version string) (lifecycle.RuntimePackage, map[string][]byte) {
@@ -34,10 +33,8 @@ func packageFixture(version string) (lifecycle.RuntimePackage, map[string][]byte
 	binary.LittleEndian.PutUint16(program[54:], 56)
 	binary.LittleEndian.PutUint16(program[58:], 64)
 	program = append(program, version...)
-	files := map[string][]byte{"monkeyai-runtime": program, "ohmyagent": program, "LICENSES.txt": []byte("license")}
-	hash := sha256.Sum256(program)
-	files["bundle.json"], _ = json.Marshal(map[string]any{"version": version, "os": "linux", "arch": runtime.GOARCH, "engineSha256": hex.EncodeToString(hash[:]), "engineSize": len(program)})
-	release := lifecycle.RuntimePackage{Version: version, Architecture: runtime.GOARCH, Files: map[string]lifecycle.RuntimeFile{}}
+	files := map[string][]byte{"aibertai-native": program}
+	release := lifecycle.RuntimePackage{Version: version, Architecture: runtime.GOARCH, RuntimeRevision: strings.Repeat("a", 40), Files: map[string]lifecycle.RuntimeFile{}}
 	for name, data := range files {
 		sum := sha256.Sum256(data)
 		release.Files[name] = lifecycle.RuntimeFile{SHA256: hex.EncodeToString(sum[:]), Size: int64(len(data))}
@@ -71,7 +68,7 @@ func testAtomicUpdate(t *testing.T, secure, override bool) {
 		if strings.Contains(r.URL.Path, second.Version) {
 			files = secondFiles
 		}
-		if corrupt.Load() && name == "ohmyagent" {
+		if corrupt.Load() && name == "aibertai-native" {
 			w.Write([]byte("corrupt"))
 			return
 		}

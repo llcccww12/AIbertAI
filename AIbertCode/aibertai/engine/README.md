@@ -1,6 +1,6 @@
-# monkeyai-engine
+# AIbertAI 远程执行引擎
 
-云端执行环境的宿主管理程序。安装／升级由统一 installer 执行；engine 负责签名预检上报，以及本地 Docker/gVisor 生命周期驱动、普通目录持久存储与资源限制。已接入后台调度、客户端创建接口和 standalone 编排，真实工作负载统一留待人工验收。安装和发行见[安装说明](INSTALL.md)，本地操作入口和实现边界见[环境执行层](ENVIRONMENT.md)。
+云端执行环境的宿主管理程序。安装／升级由统一 installer 执行；engine 负责签名预检上报，以及本地 Docker/gVisor 生命周期驱动、普通目录持久存储与资源限制。已接入后台调度、客户端创建接口和源码运行时编排。安装和发行见[安装说明](INSTALL.md)，本地操作入口和实现边界见[环境执行层](ENVIRONMENT.md)。
 
 ## 构建与检查
 
@@ -70,6 +70,6 @@ sudo ./bin/monkeyai-engine doctor \
 
 ## 状态与后续
 
-本分支的实施状态见[云环境实施记录](../design/cloud-environment-implementation.md)，安装器历史见[安装实施计划](../design/engine-installer-plan.md)。`apps/runtime` 保持不修改，已通过现有 standalone CLI 接入登录、状态读取和启动，详见 [运行时编排](RUNTIME.md)。
+本分支的实施状态见[云环境实施记录](../design/cloud-environment-implementation.md)，安装器历史见[安装实施计划](../design/engine-installer-plan.md)。新建云电脑通过同一个源码运行时处理登录、远程会话和工具，详见 [运行时编排](RUNTIME.md)。
 
 宿主运维可运行 `monkeyai-engine cache inspect`／`cache gc` 核对镜像缓存，配置和回收边界见 [缓存治理](CACHE.md)。沙箱固定 512 个任务（含线程），与宿主 host_tasks 资源分开。

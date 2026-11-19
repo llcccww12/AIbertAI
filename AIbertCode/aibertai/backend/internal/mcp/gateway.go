@@ -138,7 +138,7 @@ func (s *Service) RegisterGateway(router chi.Router, keys KeyAuthenticator, bill
 			if !supportedVersion(params.Version) {
 				params.Version = protocolVersion
 			}
-			rpcReply(r.Context(), w, 200, in.ID, resource.Object{"protocolVersion": params.Version, "capabilities": resource.Object{"tools": resource.Object{}}, "serverInfo": resource.Object{"name": "MonkeyAI", "version": "1"}}, nil)
+			rpcReply(r.Context(), w, 200, in.ID, resource.Object{"protocolVersion": params.Version, "capabilities": resource.Object{"tools": resource.Object{}}, "serverInfo": resource.Object{"name": "AIbertAI", "version": "1"}}, nil)
 		case "ping":
 			rpcReply(r.Context(), w, 200, in.ID, resource.Object{}, nil)
 		case "tools/list", "tools/call":

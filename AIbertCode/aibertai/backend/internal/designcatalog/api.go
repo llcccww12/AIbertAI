@@ -7,10 +7,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
+	"aibertai.local/backend/internal/envconfig"
 	"aibertai.local/backend/internal/identity"
 	"aibertai.local/backend/internal/resource"
 	"aibertai.local/backend/internal/web"
@@ -19,7 +19,7 @@ import (
 
 func (s *Service) RegisterCatalog(router chi.Router, requireAgent func(http.Handler) http.Handler) {
 	router.Route("/api/v1/design-resources", func(r chi.Router) {
-		if dir := os.Getenv("MONKEYAI_DESIGN_PUBLIC_CACHE_DIR"); dir != "" {
+		if dir := envconfig.Getenv("AIBERTAI_DESIGN_PUBLIC_CACHE_DIR"); dir != "" {
 			registerPublicCache(r, dir)
 		}
 		r.Method("GET", "/config", controlHeaders(requireAgent(http.HandlerFunc(s.configuration))))

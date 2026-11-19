@@ -18,8 +18,8 @@ func TestRuntimeArtifactsAreVersionedAndWhitelisted(t *testing.T) {
 	if err := os.MkdirAll(folder, 0755); err != nil {
 		t.Fatal(err)
 	}
-	release := environment.RuntimePackage{Version: "26.1105.2", Architecture: "arm64", Files: map[string]environment.RuntimeFile{}}
-	for _, name := range []string{"monkeyai-runtime", "ohmyagent", "LICENSES.txt", "bundle.json"} {
+	release := environment.RuntimePackage{Version: "26.1105.2", Architecture: "arm64", RuntimeRevision: strings.Repeat("a", 40), Files: map[string]environment.RuntimeFile{}}
+	for _, name := range []string{"aibertai-native"} {
 		if err := os.WriteFile(filepath.Join(folder, name), []byte("fixture"), 0644); err != nil {
 			t.Fatal(err)
 		}
@@ -39,7 +39,7 @@ func TestRuntimeArtifactsAreVersionedAndWhitelisted(t *testing.T) {
 	}
 	router := chi.NewRouter()
 	service.RegisterHost(router)
-	for _, name := range []string{"monkeyai-runtime", "ohmyagent", "LICENSES.txt", "bundle.json", "manifest.json"} {
+	for _, name := range []string{"aibertai-native", "manifest.json"} {
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, httptest.NewRequest("GET", "/api/host/v1/runtime-releases/26.1105.2/arm64/"+name, nil))
 		if response.Code != 200 || response.Body.Len() == 0 || response.Header().Get("Cache-Control") != "no-store" {
@@ -54,21 +54,21 @@ func TestRuntimeArtifactsAreVersionedAndWhitelisted(t *testing.T) {
 	if _, err := service.Get("../escape", "arm64"); err == nil {
 		t.Fatal("允许逃逸版本目录")
 	}
-	if err := os.Remove(filepath.Join(folder, "ohmyagent")); err != nil {
+	if err := os.Remove(filepath.Join(folder, "aibertai-native")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := service.Current("arm64"); err == nil {
 		t.Fatal("资源不完整仍返回可更新版本")
 	}
-	release.Files = map[string]environment.RuntimeFile{"monkeyai-runtime": release.Files["monkeyai-runtime"]}
+	release.Files = map[string]environment.RuntimeFile{"monkeyai-runtime": release.Files["aibertai-native"]}
 	release.RuntimeRevision = strings.Repeat("a", 40)
 	release.EngineRevision = strings.Repeat("b", 40)
 	raw, _ = json.Marshal(release)
 	if err := os.WriteFile(filepath.Join(folder, "manifest.json"), raw, 0644); err != nil {
 		t.Fatal(err)
 	}
-	if current, err := service.Current("arm64"); err != nil || !current.SingleFile() {
-		t.Fatal("官方单文件必须无需预释放引擎即可提供", current, err)
+	if current, err := service.Current("arm64"); err == nil {
+		t.Fatal("不允许分发旧运行时", current)
 	}
 	response = httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest("GET", "/api/host/v1/runtime-releases/26.1105.2/arm64/ohmyagent", nil))

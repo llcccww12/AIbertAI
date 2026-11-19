@@ -91,7 +91,7 @@ func registerOAuthClientWithClient(ctx context.Context, o oauthConfig, redirect 
 		method = "none"
 	}
 	body := resource.Object{
-		"client_name": "MonkeyAI", "redirect_uris": []string{redirect},
+		"client_name": "AIbertAI", "redirect_uris": []string{redirect},
 		"grant_types":    []string{"authorization_code", "refresh_token"},
 		"response_types": []string{"code"}, "token_endpoint_auth_method": method,
 	}

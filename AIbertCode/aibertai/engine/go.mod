@@ -1,4 +1,4 @@
-module github.com/chaitin/MonkeyCode/monkeyai/engine
+module aibertai.local/engine
 
 go 1.27.0
 

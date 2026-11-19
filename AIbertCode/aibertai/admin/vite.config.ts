@@ -2,8 +2,8 @@ import path from "path"
 import react from "@vitejs/plugin-react"
 import { defaultAllowedOrigins, defineConfig } from "vite"
 
-const backend = process.env.MONKEYAI_DEV_BACKEND_URL ?? "http://127.0.0.1:8080"
-const apiBackend = process.env.MONKEYAI_DEV_API_URL ?? backend
+const backend = process.env.AIBERTAI_DEV_BACKEND_URL ?? process.env.MONKEYAI_DEV_BACKEND_URL ?? "http://127.0.0.1:8080"
+const apiBackend = process.env.AIBERTAI_DEV_API_URL ?? process.env.MONKEYAI_DEV_API_URL ?? backend
 
 // https://vite.dev/config/
 export default defineConfig({

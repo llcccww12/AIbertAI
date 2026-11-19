@@ -46,7 +46,7 @@ func loadIdentity(dir string) (serverIdentity, error) {
 		return state, err
 	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		return serverIdentity{}, fmt.Errorf("创建远程执行状态目录 %q（MONKEYAI_RUNTIME_STATE_DIR）: %w", dir, err)
+		return serverIdentity{}, fmt.Errorf("创建远程执行状态目录 %q（AIBERTAI_RUNTIME_STATE_DIR）: %w", dir, err)
 	}
 	_, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {

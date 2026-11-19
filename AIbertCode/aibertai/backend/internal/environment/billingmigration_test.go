@@ -23,7 +23,8 @@ func cloudMigration(t *testing.T, s *Service, direction string) error {
 }
 
 func TestCloudMigrationRejectsActiveEnvironmentRemoval(t *testing.T) {
-	s, user, host, _ := meterFixture(t, "10000")
+	s, user, _, _ := meterFixture(t, "10000")
+	setComputePrice(t, s, BillingConfig{})
 	e, err := s.Create(t.Context(), user, Creation{"迁移保护", "create-migration"})
 	if err != nil {
 		t.Fatal(err)
@@ -51,17 +52,7 @@ func TestCloudMigrationRejectsActiveEnvironmentRemoval(t *testing.T) {
 	if err = cloudMigration(t, s, "up"); err != nil {
 		t.Fatal(err)
 	}
-	d, err := sqlc.New(s.pool).HostSetup(t.Context(), host)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pricing, err := decodeBilling(d.Billing)
-	if err != nil || !pricing.Enabled {
-		t.Fatal("重放覆盖已有宿主计费配置", err)
-	}
-	if got := balance(t, s, user); got != "10000" {
-		t.Fatalf("迁移改变账户余额：%s", got)
-	}
+	cost(t, s, user, "0", 0)
 }
 
 func TestCloudMigrationRoundtripPreservesBusinessData(t *testing.T) {
@@ -93,8 +84,8 @@ func TestCloudMigrationRoundtripPreservesBusinessData(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg, err := decodeBilling(d.Billing)
-	if err != nil || cfg.Enabled {
-		t.Fatal("重新创建云环境未默认关闭收费", err)
+	if err != nil || !cfg.Enabled {
+		t.Fatal("迁移丢失了全局计费设置", err)
 	}
 	if got := balance(t, s, user); got != "10000" {
 		t.Fatal("重新升级改变已有账户余额", got)
@@ -117,8 +108,8 @@ func TestComputeMigrationRejectsFinancialHistoryRemoval(t *testing.T) {
 	if err = cloudMigration(t, s, "down"); err == nil || !strings.Contains(err.Error(), "归档") {
 		t.Fatalf("存在环境账务仍允许删除计费结构：%v", err)
 	}
-	cost(t, s, user, "30", 1)
-	if got := balance(t, s, user); got != "9970" {
+	cost(t, s, user, "3600", 1)
+	if got := balance(t, s, user); got != "6400" {
 		t.Fatalf("回退失败改变余额：%s", got)
 	}
 }
@@ -161,17 +152,17 @@ func TestComputeContinuesAfterLedgerAndActivityCutover(t *testing.T) {
 	if err = s.pool.QueryRow(t.Context(), "SELECT billing_cutover_ledger()").Scan(&ok); err != nil || !ok {
 		t.Fatalf("账本切换失败：%v", err)
 	}
-	*at = at.Add(10 * time.Second)
+	*at = at.Add(time.Hour - 10*time.Second)
 	syncState(t, s, host, observe(e.Environment, "running"))
 	settle(t, s, false)
 	settle(t, s, false)
-	cost(t, s, user, "20", 2)
-	if got := balance(t, s, user); got != "9980" {
+	cost(t, s, user, "7200", 2)
+	if got := balance(t, s, user); got != "2800" {
 		t.Fatalf("分区后重复或遗漏扣费：%s", got)
 	}
 }
 
-func TestComputeWaitsForUsableRuntime(t *testing.T) {
+func TestComputePreservesInitialHourWhileRuntimeStarts(t *testing.T) {
 	s, user, host, at := meterFixture(t, "10000")
 	e, err := s.Create(t.Context(), user, Creation{"等待可用", "create-ready"})
 	if err != nil {
@@ -190,13 +181,12 @@ func TestComputeWaitsForUsableRuntime(t *testing.T) {
 		}
 	}
 	confirm(false)
-	*at = at.Add(time.Hour)
+	*at = at.Add(30 * time.Second)
 	confirm(false)
-	settle(t, s, false)
-	cost(t, s, user, "0", 0)
+	cost(t, s, user, "3600", 1)
 	confirm(true)
 	*at = at.Add(30 * time.Second)
 	confirm(true)
 	settle(t, s, false)
-	cost(t, s, user, "30", 1)
+	cost(t, s, user, "3600", 1)
 }

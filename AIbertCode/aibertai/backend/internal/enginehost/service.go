@@ -110,7 +110,7 @@ func (s *Service) enrollment(w http.ResponseWriter, r *http.Request, renew bool)
 	}
 	for _, arch := range []string{"amd64", "arm64"} {
 		if _, _, err := s.manifest(s.version, arch); err != nil {
-			fail(w, r, 503, "服务器缺少完整的 engine 安装资源，请安装包含双架构 engine 的 server 安装包")
+			fail(w, r, 503, "后台缺少 AMD64 和 ARM64 宿主引擎资源，请检查后台配置的宿主引擎发布目录")
 			return
 		}
 	}

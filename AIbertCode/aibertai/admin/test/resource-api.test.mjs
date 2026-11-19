@@ -21,8 +21,8 @@ test("并发保存错误保留状态与可显示消息", async t => {
   await assert.rejects(api("/api/admin/v1/rules/id", {method:"PUT",body:JSON.stringify({content:"new"})}), e => e instanceof ApiError && e.status === 412 && e.message.includes("刷新"))
 })
 
-test("技能上传代理允许 500 MiB 包并保留 multipart 开销", () => {
-  const config = readFileSync(new URL("../nginx/app.conf", import.meta.url), "utf8")
+test("反向代理协议夹具允许 500 MiB 技能包并保留 multipart 开销", () => {
+  const config = readFileSync(new URL("../../backend/testdata/reverse-proxy/app.conf", import.meta.url), "utf8")
   const locations = [...config.matchAll(/location ~ (\S+) \{([^}]+)\}/g)].map(
     ([, pattern, body]) => ({ pattern: new RegExp(pattern), body })
   )

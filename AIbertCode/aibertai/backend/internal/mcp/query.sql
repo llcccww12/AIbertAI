@@ -87,12 +87,12 @@ WITH setting AS (
         AND cr.revoked_at IS NULL AND cr.config_revision = c.config_revision
     WHERE c.id = sqlc.arg(connector_id)::uuid AND c.ownership_type = 'system'
         AND c.deleted_at IS NULL AND c.authorization_mode IN ('none', 'centralized')
-        AND (c.authorization_mode = 'centralized' OR sqlc.arg(credits_per_call) = 0)
+        AND (c.authorization_mode = 'centralized' OR sqlc.arg(credits_per_call)::numeric = 0)
         AND (c.authorization_mode = 'none' OR cr.id IS NOT NULL)
 )
 INSERT INTO mcp_tools (id, connector_id, credential_id, name, enabled, credits_per_call, config_revision)
 SELECT sqlc.arg(id)::uuid, connector_id, credential_id, name,
-    sqlc.arg(enabled)::boolean, sqlc.arg(credits_per_call), config_revision
+    sqlc.arg(enabled)::boolean, sqlc.arg(credits_per_call)::numeric, config_revision
 FROM setting WHERE name IS NOT NULL
 ON CONFLICT (connector_id, credential_id, name) DO UPDATE SET
     enabled = EXCLUDED.enabled, credits_per_call = EXCLUDED.credits_per_call,

@@ -10,14 +10,15 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
-	"os"
 	"strings"
 	"time"
+
+	"aibertai.local/backend/internal/envconfig"
 )
 
 func allowedIP(ip netip.Addr) bool {
 	ip = ip.Unmap()
-	cidrs := strings.TrimSpace(os.Getenv("MONKEYAI_MCP_ALLOWED_CIDRS"))
+	cidrs := strings.TrimSpace(envconfig.Getenv("AIBERTAI_MCP_ALLOWED_CIDRS"))
 	if cidrs == "" {
 		cidrs = "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"
 	}

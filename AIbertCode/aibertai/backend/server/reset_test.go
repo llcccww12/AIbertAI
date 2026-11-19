@@ -161,7 +161,7 @@ func TestResetFlags(t *testing.T) {
 			if err != nil && strings.Contains(err.Error(), "private-secret") {
 				t.Fatal("参数错误泄露了输入内容")
 			}
-			if !tc.wantErr && !strings.Contains(output.String(), "monkeyai-server reset") {
+			if !tc.wantErr && !strings.Contains(output.String(), "aibertai-server reset") {
 				t.Fatal("缺少 reset 帮助")
 			}
 		})

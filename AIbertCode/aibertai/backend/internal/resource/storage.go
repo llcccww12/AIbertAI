@@ -5,11 +5,11 @@ import (
 	"context"
 	"errors"
 	"io"
-	"os"
 	"strings"
 	"sync"
 	"time"
 
+	"aibertai.local/backend/internal/envconfig"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -32,28 +32,28 @@ type S3 struct {
 }
 
 func NewS3(ctx context.Context) (*S3, error) {
-	endpoint := os.Getenv("MONKEYAI_S3_ENDPOINT")
-	bucket := os.Getenv("MONKEYAI_S3_BUCKET")
+	endpoint := envconfig.Getenv("AIBERTAI_S3_ENDPOINT")
+	bucket := envconfig.Getenv("AIBERTAI_S3_BUCKET")
 	if bucket == "" {
 		bucket = "monkeyai-resources"
 	}
-	region := os.Getenv("MONKEYAI_S3_REGION")
+	region := envconfig.Getenv("AIBERTAI_S3_REGION")
 	if region == "" {
 		region = "us-east-1"
 	}
 	if endpoint == "" {
-		return nil, errors.New("MONKEYAI_S3_ENDPOINT 不能为空")
+		return nil, errors.New("AIBERTAI_S3_ENDPOINT 不能为空")
 	}
-	if os.Getenv("MONKEYAI_S3_ACCESS_KEY") == "" || os.Getenv("MONKEYAI_S3_SECRET_KEY") == "" {
+	if envconfig.Getenv("AIBERTAI_S3_ACCESS_KEY") == "" || envconfig.Getenv("AIBERTAI_S3_SECRET_KEY") == "" {
 		return nil, errors.New("对象存储凭据不能为空")
 	}
-	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region), awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(os.Getenv("MONKEYAI_S3_ACCESS_KEY"), os.Getenv("MONKEYAI_S3_SECRET_KEY"), "")))
+	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region), awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(envconfig.Getenv("AIBERTAI_S3_ACCESS_KEY"), envconfig.Getenv("AIBERTAI_S3_SECRET_KEY"), "")))
 	if err != nil {
 		return nil, err
 	}
 	return &S3{client: s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.BaseEndpoint = aws.String(endpoint)
-		o.UsePathStyle = os.Getenv("MONKEYAI_S3_FORCE_PATH_STYLE") != "false"
+		o.UsePathStyle = envconfig.Getenv("AIBERTAI_S3_FORCE_PATH_STYLE") != "false"
 		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
 		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
 	}), bucket: bucket}, nil

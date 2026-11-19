@@ -891,7 +891,6 @@ described({ manifest: "object" }, "manifest 按 capability-manifest.schema.json 
   configWorkspaceSet: request("_monkeyai/config/workspace/set", "保存额外工作目录；引擎只在启动时读取它，返回值的 requiresRestart 为 true 时需重启引擎才生效", shape({ additional_directories: "string[]?" })),
   configDisplaySet: request("_monkeyai/config/display/set", "保存摘要偏好；tool_summaries 为旧展示偏好，tool_use_summaries 仅控制当前和后续会话的执行中进度摘要生成，默认关闭；执行后批次小结不再生成", shape({ tool_summaries: "boolean?", tool_use_summaries: "boolean?" })),
   configGoalsSet: request("_monkeyai/config/goals/set", "保存新建持续目标的默认 Token 预算；正安全整数，null 恢复系统默认的 200000000 Token，不改变已有目标", shape({ default_token_budget: "number|null" })),
-  configExpertsSet: request("_monkeyai/config/experts/set", "保存本机专家", shape({ experts: "array?" })),
   configSkillsImport: request("_monkeyai/config/skills/import", "导入本机技能", shape({ path: "string" })),
   configSkillsRemove: request("_monkeyai/config/skills/remove", "移除本机技能", shape({ name: "string" })),
   groupsSearch: request("_monkeyai/groups/search", "搜索分组（共享对象）；q 为空时按名称列出前 limit 个", shape({ q: "string", limit: "number?" })),
@@ -930,7 +929,6 @@ described({ manifest: "object" }, "manifest 按 capability-manifest.schema.json 
   resourcesConnectorsAuthorization: request("_monkeyai/resources/connectors/authorization", "连接器授权状态", shape(byId)),
   // ---------- 设计资源 ----------
   // config 是唯一用固定路径拼的控制面请求；服务端默认返回的 base 即 {monkeyaiServer}/api/v1/design-resources
-  designResourcesConfig: request("_monkeyai/design/resources/config", "读取设计资源来源配置：respub base、本地 base 与当前快照；不含任何 secret", shape({})),
   designResourcesToken: request("_monkeyai/design/resources/token", "按目标申请短期设计资源 token：respub 用于 hub，monkeyai-media 仅用于本地媒体；machine_id 由 runtime 自行填充，token 只留在内存", shape({ target: ["respub", "monkeyai-media"], refresh: "boolean?" }))
 });
 const BROWSER_URL_LIMIT = 65536;
@@ -1022,7 +1020,6 @@ function exposeHostApi(getPathForFile2, features) {
     openExternal: (url) => electron.ipcRenderer.invoke("shell:openExternal", url),
     revealInFolder: (path) => electron.ipcRenderer.invoke("shell:revealInFolder", path),
     openDirectory: (path) => electron.ipcRenderer.invoke("shell:openDirectory", path),
-    setDesignMediaOrigins: (origins) => electron.ipcRenderer.invoke("design:media-origins", origins),
     privateDesignCatalog: (tool, args) => electron.ipcRenderer.invoke("design:private-catalog", tool, args),
     privateDesignWorkspace: (tool, args) => electron.ipcRenderer.invoke("design:private-workspace", tool, args),
     onPrivateCanvasChanged: (listener) => subscribe("design:canvas-changed", listener),
@@ -1070,6 +1067,7 @@ function exposeHostApi(getPathForFile2, features) {
     cancelWorkspaceVideo: (id) => electron.ipcRenderer.invoke("files:cancel-video", id),
     captureWindow: () => electron.ipcRenderer.invoke("feedback:capture"),
     getRuntimeEndpoint: (rejectedToken) => electron.ipcRenderer.invoke("runtime:endpoint", rejectedToken),
+    restartLocalRuntime: () => electron.ipcRenderer.invoke("runtime:restart-local"),
     readSessionArchive: (sessionId, kind, parameter) => electron.ipcRenderer.invoke("runtime:session-archive", sessionId, kind, parameter),
     files: {
       onLinkRequest: (listener) => subscribe("files:link-request", (request2) => {
@@ -1163,6 +1161,7 @@ function exposeHostApi(getPathForFile2, features) {
     },
     browserControl: {
       status: () => electron.ipcRenderer.invoke("browser-control:status"),
+      sharedPage: (action) => electron.ipcRenderer.invoke("browser-control:shared-page", action),
       registerNativeHost: () => electron.ipcRenderer.invoke("browser-control:register"),
       unregisterNativeHost: () => electron.ipcRenderer.invoke("browser-control:unregister"),
       openExtension: () => electron.ipcRenderer.invoke("browser-control:open-extension"),
@@ -1189,7 +1188,7 @@ function exposeHostApi(getPathForFile2, features) {
       apply: (token, options) => electron.ipcRenderer.invoke("data-location:apply", token, options.deleteSource === true, options.startFresh === true)
     }
   };
-  electron.contextBridge.exposeInMainWorld("monkeyai", host);
+  electron.contextBridge.exposeInMainWorld("aibertai", host);
 }
 exposeHostApi(getPathForFile);
 if (process.platform === "ohos") {

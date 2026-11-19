@@ -106,8 +106,8 @@ func NewService(pool *pgxpool.Pool, identities *identity.Service, devices *endpo
 		config.FilesOrigin = config.PublicURL
 	}
 	for _, origin := range []struct{ name, value string }{
-		{"MONKEYAI_PUBLIC_URL", config.PublicURL},
-		{"MONKEYAI_RUNTIME_FILES_ORIGIN", config.FilesOrigin},
+		{"AIBERTAI_PUBLIC_URL", config.PublicURL},
+		{"AIBERTAI_RUNTIME_FILES_ORIGIN", config.FilesOrigin},
 	} {
 		u, err := url.Parse(origin.value)
 		if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Path != "" || (u.Scheme != "http" && u.Scheme != "https") {

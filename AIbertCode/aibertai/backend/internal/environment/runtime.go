@@ -86,6 +86,9 @@ func (s *Service) approveRuntime(ctx context.Context, host string, in RuntimeReq
 	if decodeErr != nil || spec.Runtime == nil || spec.Runtime.UserID != env.UserID || spec.Runtime.Server != s.runtime.server || spec.Runtime.ServerID != s.runtime.serverID {
 		return bad("运行时规格无效")
 	}
+	if s.sourceRuntime && (spec.RuntimePackage == nil || !spec.RuntimePackage.SourceRuntime()) {
+		return conflict("runtime_upgrade_required", "请先迁移到 AIbertAI 源码运行时")
+	}
 	runtime, err := q.GetRuntime(ctx, env.ID)
 	if err != nil {
 		return err
@@ -123,6 +126,6 @@ func (s *Service) RuntimeAllowed(ctx context.Context, tx pgx.Tx, user, machine s
 			return false, err
 		}
 	}
-	allowed, err := q.RuntimeAccess(ctx, sqlc.RuntimeAccessParams{UserID: user, MachineID: machine})
+	allowed, err := q.RuntimeAccess(ctx, sqlc.RuntimeAccessParams{UserID: user, MachineID: machine, SourceOnly: s.sourceRuntime})
 	return allowed != nil && *allowed, err
 }

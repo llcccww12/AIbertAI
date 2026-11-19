@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/control"
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/lifecycle"
+	"aibertai.local/engine/internal/control"
+	"aibertai.local/engine/internal/lifecycle"
 )
 
 type runtimeUpdater struct {
@@ -70,13 +70,10 @@ func TestOldServerDoesNotReceiveRuntimeVersion(t *testing.T) {
 }
 func TestRuntimeUpdateFailureNeedsNewGeneration(t *testing.T) {
 	spec := runtimeTarget(t)
-	files := map[string]lifecycle.RuntimeFile{}
-	for _, name := range []string{"monkeyai-runtime", "ohmyagent", "LICENSES.txt", "bundle.json"} {
-		files[name] = lifecycle.RuntimeFile{SHA256: strings.Repeat("a", 64), Size: 1}
-	}
-	spec.RuntimePackage = &lifecycle.RuntimePackage{Version: "26.1105.2", Architecture: runtime.GOARCH, Files: files}
+	files := map[string]lifecycle.RuntimeFile{"aibertai-native": {SHA256: strings.Repeat("a", 64), Size: 1}}
+	spec.RuntimePackage = &lifecycle.RuntimePackage{Version: "26.1105.2", Architecture: runtime.GOARCH, RuntimeRevision: strings.Repeat("a", 40), Files: files}
 	remote, client := server(t, spec)
-	remote.runtimeUpdateProtocol = 1
+	remote.runtimeUpdateProtocol = 3
 	executor := &runtimeUpdater{version: "26.1105.1", fail: true}
 	worker, err := New(directory(t), executor)
 	if err != nil {

@@ -184,6 +184,10 @@ func TestResourceUsageUsers(t *testing.T) {
 	if len(seen) != len(items) {
 		t.Fatalf("分页遗漏: %d/%d", len(seen), len(items))
 	}
+	used := request(t, s, resourceUsagePath+"?used_only=true&limit=6", 200)
+	if len(used["items"].([]any)) != 6 || used["next_cursor"] != nil {
+		t.Fatalf("仅实际使用筛选应在分页前剔除仅启用的资源: %v", used)
+	}
 	legacy, err := parseReportingFilter(httptest.NewRequest("GET", resourceUsagePath+"?limit=1", nil), s.now(), 100)
 	if err != nil {
 		t.Fatal(err)
@@ -197,6 +201,12 @@ func TestResourceUsageUsers(t *testing.T) {
 		t.Fatalf("无快照工具的资源筛选丢失: %v", local)
 	}
 	number(t, local["items"].([]any)[0].(map[string]any), "calls", 3)
+	exec(t, s, `INSERT INTO session_turn_tools(session_id,turn_index,ordinal,category,name,calls,failed,duration_ms)
+		VALUES($1,1,3,'builtin','legacy_tool',1,0,1)`, a)
+	builtin := request(t, s, resourceUsagePath+"?used_only=true&resource_id=legacy_tool", 200)
+	if len(builtin["items"].([]any)) != 1 {
+		t.Fatalf("无资源 ID 的历史内置工具使用记录丢失: %v", builtin)
+	}
 }
 
 func TestResourceUsageIncludesModelGatewayCalls(t *testing.T) {

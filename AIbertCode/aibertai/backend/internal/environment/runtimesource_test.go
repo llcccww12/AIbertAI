@@ -2,6 +2,7 @@ package environment
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -72,5 +73,63 @@ func TestSingleFileRuntimeRejectsMissingRevisionsAndExtraPaths(t *testing.T) {
 	release.Files["../ohmyagent"] = RuntimeFile{SHA256: strings.Repeat("a", 64), Size: 1}
 	if release.Validate("amd64") == nil {
 		t.Fatal("接受多余文件路径")
+	}
+}
+
+type aiBertSourceCatalog struct{ officialRuntimeCatalog }
+
+func (c aiBertSourceCatalog) Current(arch string) (RuntimePackage, error) {
+	return c.Get(c.latest, arch)
+}
+
+func (c aiBertSourceCatalog) Get(version, arch string) (RuntimePackage, error) {
+	release, err := c.officialRuntimeCatalog.Get(version, arch)
+	release.EngineRevision = ""
+	release.Files = map[string]RuntimeFile{"aibertai-native": release.Files["monkeyai-runtime"]}
+	return release, err
+}
+
+func TestSourceProvisioningProtectsExistingCloudIdentity(t *testing.T) {
+	s, created, host, _ := managedEnvironment(t)
+	e := created.Environment
+	ctx := t.Context()
+	binding := runtimeRequest(e)
+	if err := s.approveRuntime(ctx, host, binding); err != nil {
+		t.Fatal(err)
+	}
+	catalog := officialRuntimeCatalog{runtimeCatalogFixture{latest: "26.1105.2"}}
+	s.WithSourceRuntimeProvisioning().WithRuntimeCatalog(catalog)
+	in := Creation{Name: "Source instance", RequestKey: "source-instance"}
+	if _, err := s.Create(ctx, e.UserID, in); err == nil {
+		t.Fatal("created a new cloud environment with a legacy runtime")
+	}
+	s.WithRuntimeCatalog(aiBertSourceCatalog{catalog})
+	if _, err := s.Create(ctx, e.UserID, in); err == nil {
+		t.Fatal("assigned a source release to a host without protocol 3")
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE hosts SET report=report || '{"runtime_update_protocol":3}'::jsonb WHERE id=$1`, host); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := s.Create(ctx, e.UserID, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var spec Spec
+	if err := json.Unmarshal(fresh.Environment.Spec, &spec); err != nil || spec.RuntimePackage == nil || !spec.RuntimePackage.SourceRuntime() {
+		t.Fatalf("new cloud environment has no source runtime: %+v, %v", spec.RuntimePackage, err)
+	}
+
+	syncState(t, s, host, observe(e, "running"))
+	stopped, err := s.Change(ctx, &e.UserID, e.ID, "stopped", Change{Generation: e.Generation, RequestKey: "legacy-stop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := observe(stopped.Environment, "stopped")
+	report.RuntimeVersion = "26.1105.1"
+	syncState(t, s, host, report)
+	_, err = s.UpdateRuntime(ctx, e.UserID, e.ID, RuntimeUpdate{Generation: stopped.Environment.Generation, RequestKey: "legacy-upgrade"})
+	var rejection *failure
+	if !errors.As(err, &rejection) || rejection.code != "runtime_identity_migration_required" {
+		t.Fatalf("expected migration guard for legacy identity: %v", err)
 	}
 }

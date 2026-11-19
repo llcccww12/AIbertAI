@@ -39,7 +39,7 @@ func TestRefreshDesktopGrantRequiresLoginOnlyForInvalidGrant(t *testing.T) {
 				}
 				return &http.Response{StatusCode: tc.status, Body: io.NopCloser(strings.NewReader(tc.body))}, nil
 			})
-			auth, err := c.refreshDesktopGrant(context.Background(), "old-refresh")
+			auth, err := c.refreshSourceGrant(context.Background(), clientID, "old-refresh")
 			if errors.Is(err, errSourceGrantRejected) != tc.wantLogin || (err == nil) != tc.wantSuccess {
 				t.Fatalf("unexpected refresh result: %v", err)
 			}

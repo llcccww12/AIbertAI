@@ -65,6 +65,7 @@ type relayDevice struct {
 	public              ed25519.PublicKey
 	private             ed25519.PrivateKey
 	restoreRevoked      bool
+	deploymentMode      string
 }
 
 type relayReady struct {
@@ -86,11 +87,15 @@ func (c *client) relayHandshake(ctx context.Context, auth authorization, user ac
 	}
 	publicKey := base64.RawURLEncoding.EncodeToString(device.public)
 	supported := []int{1}
+	mode := device.deploymentMode
+	if mode == "" {
+		mode = "desktop_managed"
+	}
 	hello := map[string]any{
 		"type": "hello", "tunnel_version": 1, "channel_kind": channel,
 		"intent": intent, "machine_id": device.machine, "execution_public_key": publicKey,
 		"boot_id": device.boot, "display_name": device.name, "platform": platform, "arch": runtime.GOARCH,
-		"deployment_mode": "desktop_managed", "lease_epoch": epoch, "protocols": map[string][]int{"acp": supported, "runtime_api": supported},
+		"deployment_mode": mode, "lease_epoch": epoch, "protocols": map[string][]int{"acp": supported, "runtime_api": supported},
 		"restore_revoked": device.restoreRevoked,
 	}
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
@@ -140,7 +145,7 @@ func (c *client) relayHandshake(ctx context.Context, auth authorization, user ac
 	}
 	payload, err := json.Marshal([]any{
 		"monkeyai.endpoint.proof.v1",
-		[]any{1, channel, intent, device.machine, publicKey, device.boot, device.name, platform, runtime.GOARCH, "desktop_managed", epoch, device.restoreRevoked, supported, supported},
+		[]any{1, channel, intent, device.machine, publicKey, device.boot, device.name, platform, runtime.GOARCH, mode, epoch, device.restoreRevoked, supported, supported},
 		[]any{challenge.ServerID, challenge.OwnerUserID, challenge.ChallengeID, challenge.Nonce, challenge.TTLMS,
 			challenge.ServerTime, challenge.GrantID, challenge.RegistrationVersion},
 	})

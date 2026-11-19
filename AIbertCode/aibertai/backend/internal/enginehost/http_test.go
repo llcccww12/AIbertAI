@@ -37,7 +37,8 @@ func TestServerHTTPUpgradeScript(t *testing.T) {
 }
 
 func TestBootstrapDownloadsFromHTTPServer(t *testing.T) {
-	cmd, dir := bootstrapCommand(t, false, "0")
+	bin := bootstrapMockBin(t)
+	cmd, dir := bootstrapCommand(t, bin, false, "0")
 	fixture, err := os.ReadFile(filepath.Join(dir, "installer"))
 	if err != nil {
 		t.Fatal(err)
@@ -50,7 +51,7 @@ func TestBootstrapDownloadsFromHTTPServer(t *testing.T) {
 		_, _ = w.Write(fixture)
 	}))
 	defer server.Close()
-	if err := os.Remove(filepath.Join(dir, "bin/curl")); err != nil {
+	if err := os.Remove(filepath.Join(bin, "curl")); err != nil {
 		t.Fatal(err)
 	}
 	cmd.Args[2] = server.URL

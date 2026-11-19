@@ -105,6 +105,10 @@ func openDesktopSessions(profile, serverID, machineID, cwd string) (*acpLive, er
 		store.Close()
 		return nil, err
 	}
+	if err := live.loadDesktopSettings(); err != nil {
+		store.Close()
+		return nil, err
+	}
 	if err := live.restoreDesktopSessions(); err != nil {
 		store.Close()
 		return nil, err
@@ -177,6 +181,10 @@ func readDesktopSession(root *os.Root, id string) (acpSession, error) {
 		session.Turns = append(turns, session.Turns[0])
 		session.archivedTurns = manifest.Archived
 	}
+	if summary := session.ContextSummary; summary != nil && (summary.Through < 1 || summary.Through > len(session.Turns) ||
+		len(summary.Text) == 0 || len(summary.Text) > 8<<10) {
+		return acpSession{}, errors.New("invalid_desktop_context_summary")
+	}
 	operations := make(map[string]struct{}, len(session.Turns))
 	for i, turn := range session.Turns {
 		_, duplicate := operations[turn.Operation]
@@ -225,6 +233,10 @@ func saveDesktopSessionRecord(root *os.Root, name string, value any) error {
 }
 
 func writeSourceState(root *os.Root, name string, data []byte) error {
+	return persistSourceState(root, name, data, false)
+}
+
+func persistSourceState(root *os.Root, name string, data []byte, exclusive bool) error {
 	temp, err := newUUID()
 	if err != nil {
 		return err
@@ -238,6 +250,9 @@ func writeSourceState(root *os.Root, name string, data []byte) error {
 	_, writeErr := file.Write(data)
 	if err := errors.Join(writeErr, file.Sync(), file.Close()); err != nil {
 		return err
+	}
+	if exclusive {
+		return root.Link(temp, name)
 	}
 	return root.Rename(temp, name)
 }
@@ -277,18 +292,27 @@ func (l *acpLive) restoreDesktopSessions() error {
 	// An interrupted process may have completed an action before recording
 	// its result. Close the interrupted turn without replaying the action.
 	for _, session := range l.sessions {
-		if session.State != "running" {
+		activeGoal := session.Goal != nil && session.Goal.Current && session.Goal.Status == "active"
+		if session.State != "running" && !activeGoal {
 			continue
 		}
-		session.Turns = slices.Clone(session.Turns)
-		last := &session.Turns[len(session.Turns)-1]
-		if last.Ended.IsZero() {
-			last.Failed, last.Ended = true, time.Now().UTC()
-			if last.Ended.Before(last.Started) {
-				last.Ended = last.Started
+		if session.State == "running" {
+			session.Turns = slices.Clone(session.Turns)
+			last := &session.Turns[len(session.Turns)-1]
+			if last.Ended.IsZero() {
+				last.Failed, last.Ended = true, time.Now().UTC()
+				if last.Ended.Before(last.Started) {
+					last.Ended = last.Started
+				}
 			}
+			session.State, session.Updated = completedState(*last), last.Ended
 		}
-		session.State, session.Updated = completedState(*last), last.Ended
+		if activeGoal {
+			goal := *session.Goal
+			goal.Status, goal.Reason, goal.Uncertain = "paused", "interrupted_unknown", true
+			goal.Version++
+			session.Goal = &goal
+		}
 		if err := l.save(session); err != nil {
 			return err
 		}
@@ -308,7 +332,7 @@ func (h *relaySessionHost) recoverDesktopReports(ctx context.Context) {
 	var pending []string
 	for _, session := range h.live.sessions {
 		index := len(session.Turns)
-		if index > 0 && session.Model == modelID && session.State != "running" && !session.Turns[index-1].Acked {
+		if index > 0 && (h.live.cloudWorkspace != "" || session.Model == modelID) && session.State != "running" && !session.Turns[index-1].Acked {
 			pending = append(pending, session.ID)
 		}
 	}

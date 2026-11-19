@@ -65,7 +65,7 @@
 | 导入补偿和每分钟上传清理直接打印原始 error，补偿还打印存储 key | `backend/internal/resourceimport/service.go:214`、`backend/internal/resourceimport/upload.go:414` | 保留独立副作用诊断；改安全字段，清理故障按批次汇总 |
 | readiness 检查端点停止状态、数据库和对象存储，路由却统称数据库失败 | `backend/internal/app/app.go:484`、`backend/internal/httpapi/router.go:31` | 保留检查顺序、超时与状态码，以安全依赖分类准确归因 |
 | 应用已包含 relay 排空、HTTP 关闭、异步 Wait 和上传清理 worker 等待 | `backend/internal/app/app.go:402`、`backend/internal/app/app.go:444` | 沿用既有退出顺序；创建方最后刷新日志，不在单个组件关闭时提前关闭 logger |
-| Nginx 普通路由仍使用默认 access log，若干敏感路径已关闭 access/error log | `admin/nginx.conf:14`、`admin/nginx/app.conf:4`、`admin/nginx/app.conf:43`、`admin/nginx/preview.conf.template:7` | 本次暂缓 Nginx 日志改造，保留原有配置 |
+| Nginx 普通路由仍使用默认 access log，若干敏感路径已关闭 access/error log | 当时的部署配置 | 本次暂缓 Nginx 日志改造，保留原有配置 |
 
 现有安全测试必须保留并扩展：
 
@@ -573,7 +573,7 @@ sample_request_ids / sample_job_ids / sample_transaction_ids
 
 空闲 TTL 为 `max(10分钟, 2×该事件有效窗口)`，清理/到期调度间隔不超过 `min(1秒, 全局窗口)`，样本上限 3，调用栈长度使用代码内安全上限，不把全部参数都做成环境变量。分钟级 worker 的有效窗口遵循第九节策略。
 
-默认命令的配置必须贯穿 config、logger 工厂、`docker-compose.yml` 和部署说明；仅新增环境变量解析、但未在创建根 logger 时使用，不能视为完成。可嵌入调用方通过公共 logging 构造选项自行指定日志策略，服务入口不得重新包装 logger 以强制覆盖。
+默认命令的配置必须贯穿 config、logger 工厂和[现行运行日志说明](../backend/docs/logging.md)；仅新增环境变量解析、但未在创建根 logger 时使用，不能视为完成。可嵌入调用方通过公共 logging 构造选项自行指定日志策略，服务入口不得重新包装 logger 以强制覆盖。
 
 去重开关关闭后恢复逐事件输出，但不关闭脱敏、字段规范、ID 关联或错误分类。严重事件绕过去重是代码策略，不接受客户端 Header 或业务输入控制。
 
@@ -633,8 +633,8 @@ sample_request_ids / sample_job_ids / sample_transaction_ids
 | `backend/internal/relay/` | 代理 cause 安全分类、请求/设备/通道关联、生命周期与传输结果，保留授权和预览安全边界 |
 | `backend/internal/resourceimport/` | 分卷续传/块关联、封存与导入结果、独立补偿及清理聚合，不改事务与幂等 |
 | `backend/internal/billing/`、`imagegen/`、`videogen/`、`mcp/` | 重试、状态事件、恢复及关键业务保护 |
-| `admin/nginx.conf`、`admin/nginx/` 与 `admin/entrypoint.sh` | Nginx 日志改造暂缓，本次不修改配置 |
-| `docker-compose.yml` 与部署说明 | 默认容器日志构造选项、轮转与部署检查；不修改数据库 |
+| 原反向代理部署 | Nginx 日志改造暂缓，本次不修改配置 |
+| [运行日志说明](../backend/docs/logging.md) | 日志级别和收集配置 |
 
 ## 十三、测试与验收标准
 

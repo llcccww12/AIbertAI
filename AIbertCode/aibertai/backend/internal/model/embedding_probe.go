@@ -92,7 +92,7 @@ func (s *Service) resolveEmbeddingDimension(ctx context.Context, item Model) (in
 }
 
 func (s *Service) probeEmbeddingDimension(ctx context.Context, item Model) (int, error) {
-	payload, err := s.requestEmbedding(ctx, item, "MonkeyAI embedding dimension probe", 15*time.Second)
+	payload, err := s.requestEmbedding(ctx, item, "AIbertAI embedding dimension probe", 15*time.Second)
 	if err != nil {
 		return 0, err
 	}

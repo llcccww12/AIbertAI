@@ -15,27 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func TestReleaseComponents(t *testing.T) {
-	for _, names := range []map[string]bool{files, legacyFiles} {
-		got := make(map[string]string, len(names))
-		for name := range names {
-			got[name] = strings.Repeat("a", 64)
-		}
-		if !validReleaseFiles(got) {
-			t.Fatal("拒绝完整发行清单")
-		}
-		delete(got, "runsc")
-		if validReleaseFiles(got) {
-			t.Fatal("接受缺少隔离组件的清单")
-		}
-		got["unknown"] = strings.Repeat("a", 64)
-		if validReleaseFiles(got) {
-			t.Fatal("接受未知组件")
-		}
-	}
-}
-
-func TestHostArchiveRoute(t *testing.T) {
+func TestHostLegacyArchiveIsNotDistributed(t *testing.T) {
 	dir := fixture(t)
 	s := NewService(nil).WithInstallation("https://control.example", dir, "v1")
 	router := chi.NewRouter()
@@ -44,21 +24,8 @@ func TestHostArchiveRoute(t *testing.T) {
 	if err := os.WriteFile(path, []byte("host-archive"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	w := call(router, "GET", "/api/host/v1/releases/v1/amd64/resources.tgz", nil)
-	if w.Code != 200 || w.Body.String() != "host-archive" || w.Header().Get("Content-Length") != "12" {
-		t.Fatalf("资源包下载失败: %d", w.Code)
-	}
-	if w := call(router, "GET", "/api/host/v1/releases/v1/arm64/resources.tgz", nil); w.Code != 404 {
-		t.Fatal("接受不存在的资源包")
-	}
-	if err := os.Remove(path); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(filepath.Join(dir, "v1", "amd64", "runsc"), path); err != nil {
-		t.Fatal(err)
-	}
 	if w := call(router, "GET", "/api/host/v1/releases/v1/amd64/resources.tgz", nil); w.Code != 404 {
-		t.Fatal("接受链接资源包")
+		t.Fatal("旧发行资源仍可下载", w.Code)
 	}
 }
 
@@ -148,5 +115,21 @@ func TestShortCommandReturnsFailureWhenDownloadFails(t *testing.T) {
 	cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"))
 	if err := cmd.Run(); err == nil {
 		t.Fatal("下载失败却报告安装成功")
+	}
+}
+
+func TestPreparedHostReleaseAcceptsOnlySelfInstallingEnginePair(t *testing.T) {
+	const expected = "341e2d82ec51ad3c1baa19d0972da53aa845cc8eaa750778ce61c736818fd1d46"
+	if !preparedHostRelease(map[string]string{"installer": expected, "monkeyai-engine": expected}) {
+		t.Fatal("self-installing host release was rejected")
+	}
+	for _, files := range []map[string]string{
+		{"installer": expected},
+		{"installer": expected, "monkeyai-engine": expected + "0"},
+		{"installer": expected, "runsc": expected},
+	} {
+		if preparedHostRelease(files) {
+			t.Fatal("incomplete or mismatched prepared-host release was accepted")
+		}
 	}
 }

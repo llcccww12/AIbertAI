@@ -1,6 +1,6 @@
 # Poster font attributions
 
-The following fonts are distributed with MonkeyAI. Most come from Google Fonts under the SIL Open Font License 1.1:
+The following fonts are distributed with AIbertAI. Most come from Google Fonts under the SIL Open Font License 1.1:
 
 - ZCOOL KuaiLe — The ZCOOL KuaiLe Project Authors
 - ZCOOL QingKe HuangYou — The ZCOOL QingKe HuangYou Project Authors

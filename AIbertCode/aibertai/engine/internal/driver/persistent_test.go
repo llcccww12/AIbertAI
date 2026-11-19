@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/lifecycle"
+	"aibertai.local/engine/internal/lifecycle"
 )
 
 func TestPersistentRootAndDevelopmentEnvironment(t *testing.T) {

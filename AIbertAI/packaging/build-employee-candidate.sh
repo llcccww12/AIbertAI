@@ -72,6 +72,7 @@ case "$target" in
     app="$stage/$mac_name.app"
     resources="$app/Contents/Resources"
     binary=aibertai-native
+    browser_host=aibertai-browser-host
     ditto "$project/.local-runtime/electron/Electron.app" "$app"
     mv "$app/Contents/MacOS/Electron" "$app/Contents/MacOS/AIbertAI"
     python3 - "$app" "$mac_id" "$mac_name" "$mac_display" "$project/code/app/package.json" "$release" <<'PY'
@@ -122,6 +123,7 @@ PY
     app="$stage/$win_name"
     resources="$app/resources"
     binary=aibertai-native.exe
+    browser_host=aibertai-browser-host.exe
     [[ -f "$electron_zip" ]]
     (
       cd -- "$(dirname -- "$electron_zip")"
@@ -153,6 +155,7 @@ elif [[ $release == true ]]; then
   find "$resources/app/node_modules" -maxdepth 2 -name '*win32-x64*' -exec rm -rf {} +
 fi
 ditto "$project/code/web" "$resources/web"
+ditto "$project/browser-extension" "$resources/browser-extension"
 mkdir -p "$resources/tray"
 sips -z 18 18 "$project/brand/icon.png" --out "$resources/tray/tray.png" >/dev/null
 sips -z 36 36 "$project/brand/icon.png" --out "$resources/tray/tray@2x.png" >/dev/null
@@ -176,9 +179,9 @@ package = json.loads((resources / "app/package.json").read_text())
 PY
 
 GOOS=$os GOARCH=$arch CGO_ENABLED=0 go -C "$project/native" build -mod=readonly -trimpath -buildvcs=false -o "$resources/bin/$binary" .
+GOOS=$os GOARCH=$arch CGO_ENABLED=0 go -C "$project/native" build -mod=readonly -trimpath -buildvcs=false -o "$resources/bin/$browser_host" ./cmd/browser-host
 test -f "$resources/web/index.html"
-[[ $(find "$resources/bin" -maxdepth 1 -type f | wc -l | tr -d ' ') == 1 ]]
-python3 - "$resources" "$binary" <<'PY'
+python3 - "$resources" <<'PY'
 import sys
 from pathlib import Path
 
@@ -186,8 +189,8 @@ resources = Path(sys.argv[1])
 retired = ("baizhi" + ".cloud", "monkeycode-ai" + ".com")
 patterns = tuple(host.encode(encoding) for host in retired for encoding in ("utf-8", "utf-16le"))
 scripts = {".js", ".cjs", ".mjs", ".html", ".json", ".css"}
-files = [resources / "employee-source.json", resources / "bin" / sys.argv[2]]
-for root in (resources / "app/out", resources / "web"):
+files = [resources / "employee-source.json", *(resources / "bin").iterdir()]
+for root in (resources / "app/out", resources / "web", resources / "browser-extension"):
     files.extend(path for path in root.rglob("*") if path.suffix in scripts and path.is_file())
 for path in files:
     data = path.read_bytes().lower()
@@ -198,7 +201,7 @@ PY
 if [[ $target == mac-arm64 ]]; then
   image_source="$app"
   if [[ $release == true ]]; then
-    electron-osx-sign "$app" "$resources/bin/$binary" --platform=darwin --type=distribution --hardened-runtime --identity="$mac_identity"
+    electron-osx-sign "$app" "$resources/bin/$binary" "$resources/bin/$browser_host" --platform=darwin --type=distribution --hardened-runtime --identity="$mac_identity"
     codesign --verify --strict -R='anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and identifier "com.aibertai.desktop"' "$app"
     if ! codesign --display --verbose=2 "$app" 2>&1 | grep -E '^CodeDirectory .*\([^)]*runtime'; then
       echo "The app signature must enable the hardened runtime." >&2

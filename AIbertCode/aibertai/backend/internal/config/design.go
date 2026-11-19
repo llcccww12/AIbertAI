@@ -1,6 +1,6 @@
 package config
 
-import "os"
+import "aibertai.local/backend/internal/envconfig"
 
 var defaultDesignPublisherID string
 var defaultDesignRespubJWTSecret string
@@ -14,16 +14,16 @@ type Design struct {
 }
 
 func designEnv(key, fallback string) string {
-	if value, ok := os.LookupEnv(key); ok {
+	if value, ok := envconfig.LookupEnv(key); ok {
 		return value
 	}
 	return fallback
 }
 func loadDesign() Design {
 	return Design{
-		DesignRespubURL:       designEnv("MONKEYAI_DESIGN_RESPUB_URL", ""),
-		DesignPublisherID:     designEnv("MONKEYAI_DESIGN_PUBLISHER_ID", defaultDesignPublisherID),
-		DesignRespubJWTSecret: designEnv("MONKEYAI_DESIGN_RESPUB_JWT_SECRET", defaultDesignRespubJWTSecret),
-		DesignMediaJWTSecret:  designEnv("MONKEYAI_DESIGN_MEDIA_JWT_SECRET", defaultDesignMediaJWTSecret),
+		DesignRespubURL:       designEnv("AIBERTAI_DESIGN_RESPUB_URL", ""),
+		DesignPublisherID:     designEnv("AIBERTAI_DESIGN_PUBLISHER_ID", defaultDesignPublisherID),
+		DesignRespubJWTSecret: designEnv("AIBERTAI_DESIGN_RESPUB_JWT_SECRET", defaultDesignRespubJWTSecret),
+		DesignMediaJWTSecret:  designEnv("AIBERTAI_DESIGN_MEDIA_JWT_SECRET", defaultDesignMediaJWTSecret),
 	}
 }

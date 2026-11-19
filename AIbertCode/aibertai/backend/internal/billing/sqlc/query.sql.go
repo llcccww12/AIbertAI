@@ -2744,7 +2744,7 @@ SELECT
             NULLIF (value ->> 'workspace_name', '')
         FROM settings
         WHERE
-            KEY = 'branding'), 'Monkey AI')::text
+            KEY = 'branding'), 'AIbertAI')::text
 `
 
 func (q *Queries) WorkspaceName(ctx context.Context) (string, error) {

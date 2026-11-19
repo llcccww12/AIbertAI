@@ -1,6 +1,6 @@
-# MonkeyAI Backend
+# AIbertAI 后端
 
-MonkeyAI 的统一 Go 后端，同时承接管理后台和 AI Work Agent 的请求。首期使用一个服务进程，两类调用方复用同一套业务逻辑和数据模型。
+Go 服务同时处理管理后台、员工端及远程执行宿主的请求，统一使用 PostgreSQL 和私有 S3 兼容存储。
 
 ## 设计资源
 
@@ -21,9 +21,9 @@ MonkeyAI 的统一 Go 后端，同时承接管理后台和 AI Work Agent 的请�
 | 鉴权 | 服务端 Session、可撤销 Opaque Token、Argon2id |
 | 积分 | `shopspring/decimal` |
 | 后台作业 | `context`、`time` 与 PostgreSQL 作业表 |
-| 测试 | 标准库 `testing`、`httptest`，数据库集成测试按需使用 Testcontainers |
+| 测试 | 标准库 `testing`、`httptest`，集成测试通过环境变量连接隔离测试库 |
 
-首期不引入 DI 容器、ORM、Redis、消息队列、ClickHouse 和独立向量数据库。知识检索优先使用 PostgreSQL 全文检索与 `pgvector`；双向实时通信确有需要时再引入 WebSocket。
+知识库使用 PostgreSQL 全文检索与 pgvector，远程执行使用 WebSocket/yamux。
 
 ## 目录结构
 
@@ -116,7 +116,7 @@ migrations/<唯一版本>_<feature>_*.sql
 - 路由使用 `chi/v5` 组织版本、调用方和中间件，处理器保持标准 `http.Handler` 接口。
 - HTTP DTO 不直接充当业务对象。
 - 测试与对应 Go 源码放在同一目录；暂不创建独立测试树。
-- 首次部署从现有迁移历史升级时，主线历史保持原有 1–23 版本；当前工作树新增的远程执行结构统一由 `000024_remote_runtime` 和 `000025_remote_runtime_access_version` 执行。收敛前的旧迁移历史不能直接升级或通过 `force` 切换。详见 [迁移说明](migrations/README.md)。
+- 初始化及升级均按[迁移说明](migrations/README.md)执行。旧迁移历史的兼容边界也在该文档维护。
 - 后续迁移文件使用 `migrate create -ext sql -dir migrations -seq <feature>_<action>` 生成，采用默认六位递增序号。合并前必须检查序号未被其他分支占用；如有冲突，重新生成序号。已经发布的迁移不可改写。
 - 不创建 `pkg`、`utils` 或 `common`；出现明确复用对象后再决定归属。
 
@@ -134,27 +134,20 @@ migrations/<唯一版本>_<feature>_*.sql
 
 ## 本地启动
 
-启动前提供 PostgreSQL 连接地址，以及 `MONKEYAI_S3_ENDPOINT`、`MONKEYAI_S3_ACCESS_KEY` 和 `MONKEYAI_S3_SECRET_KEY`。服务在启动流程中检查并按需创建资源 Bucket，初始化限时 1 分钟，失败则退出；凭据需具备 Bucket 访问权限及首次建桶所需的 `s3:CreateBucket` 权限（详见上层 README）：
+数据库、RustFS、构建及 Vite 启动顺序见[管理平台启动指南](../README.md#本机开发)。后端启动前需要配置 PostgreSQL 连接和 S3 凭据。后端会检查并按需创建私有 Bucket，使用已有 Bucket 时须授予资源读写权限，首次建桶还需 `s3:CreateBucket`。
 
-```bash
-export MONKEYAI_DATABASE_URL='postgres://monkeyai:password@127.0.0.1:5432/monkeyai?sslmode=disable'
-go run ./cmd/server
-```
+运行参数可通过 `go run ./cmd/server -h` 查看。日志字段及级别见[运行日志说明](docs/logging.md)。`AIBERTAI_PUBLIC_URL` 统一用于 OAuth 元数据、回调和登录跳转，应指向员工端实际访问的根地址。
 
-可选环境变量为 `MONKEYAI_HTTP_ADDR`、`MONKEYAI_PPROF_ADDR`、`MONKEYAI_SHUTDOWN_TIMEOUT`、`MONKEYAI_LOG_LEVEL` 和 `MONKEYAI_PUBLIC_URL`，对应命令行参数可通过 `go run ./cmd/server -h` 查看。安全日志、请求关联、去重参数、计数及容器日志轮转见[运行日志说明](docs/logging.md)，验证范围和性能数据见[验收记录](docs/logging-validation.md)。`MONKEYAI_PUBLIC_URL` 是管理页面和 API 共用的对外访问地址，统一用于 OAuth 回调、元数据和登录后的页面跳转，默认 `http://localhost:8080`，支持公网和内网 HTTP(S) 根地址。
-
-前后端分别启动时，将后端的 `MONKEYAI_PUBLIC_URL` 设置为浏览器访问的 Vite 地址，例如 `http://localhost:5173`。Vite 将 `/api`、`/oauth`、`/mcp`、`/v1` 和 OAuth 元数据请求代理到后端；后端实际监听地址仍由 `MONKEYAI_HTTP_ADDR` 配置，开发代理目标由 `MONKEYAI_DEV_BACKEND_URL` 配置，默认 `http://localhost:8080`。
-
-空数据库首次启动时，必须通过 `MONKEYAI_INITIAL_ADMIN_EMAIL` 和 `MONKEYAI_INITIAL_ADMIN_PASSWORD` 创建管理员账号，可选 `MONKEYAI_INITIAL_ADMIN_NAME` 设置显示名称。密码至少 12 个字符；未配置时服务会拒绝启动，避免产生无法管理的实例。服务只在用户表为空时创建账号，不会在后续启动时重置密码。创建完成后应移除密码环境变量。完整登录流程见 [`../design/agent-auth-settings.md`](../design/agent-auth-settings.md)。
+空数据库首次启动时，必须通过 `AIBERTAI_INITIAL_ADMIN_EMAIL` 和 `AIBERTAI_INITIAL_ADMIN_PASSWORD` 创建管理员账号，可选 `AIBERTAI_INITIAL_ADMIN_NAME` 设置显示名称。密码至少 12 个字符；未配置时服务会拒绝启动，避免产生无法管理的实例。服务只在用户表为空时创建账号，不会在后续启动时重置密码。创建完成后应移除密码环境变量。完整登录流程见 [`../design/agent-auth-settings.md`](../design/agent-auth-settings.md)。
 
 忘记管理员密码时，在相同数据库配置下运行：
 
 ```bash
 go run ./cmd/server reset
-# 编译后的程序：./monkeyai-server reset
+# 编译后的程序：./aibertai-server reset
 ```
 
-命令会提示填写待重置的现有管理员邮箱。成功后输出账号邮箱和 16 位随机新密码，并撤销该账号的旧会话、OAuth 令牌、授权码及登录/重置验证码。只修改现有管理员的密码，不创建账号、不修改角色或启停状态。命令仅需 `MONKEYAI_DATABASE_URL`，也可通过 `reset --database-url 'postgres://...'` 指定，无需启动 HTTP、S3 或远程执行服务。供私有后端复用的 `server.Run` 同样支持此命令；自定义启动器应在日志控制 socket、License 等初始化之前调用 `server.Reset`，以便服务运行时也能执行恢复命令。
+命令会提示填写待重置的现有管理员邮箱。成功后输出账号邮箱和 16 位随机新密码，并撤销该账号的旧会话、OAuth 令牌、授权码及登录/重置验证码。只修改现有管理员的密码，不创建账号、不修改角色或启停状态。命令仅需 `AIBERTAI_DATABASE_URL`，也可通过 `reset --database-url 'postgres://...'` 指定，无需启动 HTTP、S3 或远程执行服务。供私有后端复用的 `server.Run` 同样支持此命令；独立命令可以在 HTTP 服务运行时执行。
 
 服务提供 `/healthz` 存活检查和 `/readyz` 数据库及 RustFS Bucket 就绪检查。pprof 默认单独监听 `127.0.0.1:6060`，入口为 `/debug/pprof/`，不对业务端口暴露。
 
@@ -170,9 +163,9 @@ go run ./cmd/server reset
 
 只支持一个后端进程：PostgreSQL 保存端点资料，在线连接、队列与路由仅在内存中；不引入 Redis。发布须先停止旧进程再启动新进程，禁止双进程滚动接入。进程重启不恢复在线状态和消息，客户端重新握手并查询业务状态；超时或断线的请求结果未知，不自动重发。
 
-WebSocket 协议随 `MONKEYAI_PUBLIC_URL` 选择：HTTP 使用 WS，HTTPS 使用 WSS。非空 Origin 必须匹配 `MONKEYAI_PUBLIC_URL`，原生客户端可以省略。Nginx 和 Vite 已对桥接入口启用 Upgrade，代理空闲超时需大于心跳及等待窗口，默认 90 秒。应用退出时主动关闭桥接连接并使 `/readyz` 返回不可用。
+WebSocket 协议随 `AIBERTAI_PUBLIC_URL` 选择：HTTP 使用 WS，HTTPS 使用 WSS。非空 Origin 必须匹配 `AIBERTAI_PUBLIC_URL`，原生客户端可以省略。Vite 已对桥接入口启用 Upgrade，外部反向代理也需转发 Upgrade，代理空闲超时需大于心跳及等待窗口，默认 90 秒。应用退出时主动关闭桥接连接并使 `/readyz` 返回不可用。
 
-`MONKEYAI_ENDPOINT_MAX_CONNECTIONS`（或 `-endpoint-max-connections`）默认 1000，包含等待 hello 的连接；每连接业务队列最多 64 条/2 MiB，需按内存预算下调连接数。每用户的设备数量不设上限，设备登记仍受频率限制。停用端点不是撤销设备登录授权；持有有效账号凭据可显式恢复。
+`AIBERTAI_ENDPOINT_MAX_CONNECTIONS`（或 `-endpoint-max-connections`）默认 1000，包含等待 hello 的连接；每连接业务队列最多 64 条/2 MiB，需按内存预算下调连接数。每用户的设备数量不设上限，设备登记仍受频率限制。停用端点不是撤销设备登录授权；持有有效账号凭据可显式恢复。
 
 access token 刷新后旧连接凭据失效，客户端应通过统一 OAuth 管理器轮换并重新连接。服务端每 30 秒复验一次，超时 5 秒；已知到期时间直接限制路由，数据库撤销或用户停用最多约 35 秒收敛。桥接不定义会话控制、文件操作等 Agent 业务方法。
 
@@ -180,28 +173,22 @@ access token 刷新后旧连接凭据失效，客户端应通过统一 OAuth 管
 
 ## 远程执行中转
 
-服务端默认开启，可用 `MONKEYAI_RUNTIME_RELAY=false` 显式关闭。未指定 `server_id` 或签名私钥时，首次启动在 `MONKEYAI_RUNTIME_STATE_DIR`（默认 `data/runtime`）原子生成 `identity.json`，之后复用同一标识和私钥；目录须可写并持久化，文件权限为 0600。损坏、不可读或无法保存时启动失败，不临时生成另一份身份。Compose 将项目目录的 `./data/runtime` 挂载到 `/app/runtime`，重启和容器重建保留身份。Backend 使用 UID 10001；直接使用 Compose 时先准备目录，安装器会自动处理：
+服务端默认开启中转，可用 `AIBERTAI_RUNTIME_RELAY=false` 关闭。首次启动会在 `AIBERTAI_RUNTIME_STATE_DIR`（默认相对工作目录的 `data/runtime`）原子生成 `identity.json`。将该目录长期保留，限制到运行账号访问。身份损坏或不可读时启动失败，避免生成新的身份。开发配置使用 `../.local-dev/runtime`，以平台目录为工作目录。
 
-```sh
-mkdir -p data/runtime
-sudo chown 10001:10001 data/runtime
-chmod 700 data/runtime
-```
-
-文件 origin 默认沿用 `MONKEYAI_PUBLIC_URL`，公网和内网均支持 HTTP/HTTPS。Desktop 业务代理默认允许部署 origin 和 `app://monkeyai`；开发版必须显式配置实际来源及端口，例如 `MONKEYAI_RUNTIME_DESKTOP_ORIGINS=http://localhost:5173,http://127.0.0.1:5173`，不自动放开全部回环端口。Compose 会将该变量传给后端。
+文件 origin 默认沿用 `AIBERTAI_PUBLIC_URL`，公网和内网均支持 HTTP/HTTPS。Desktop 业务代理默认允许部署 origin 和 `app://monkeyai`；开发版必须显式配置实际来源及端口，例如 `AIBERTAI_RUNTIME_DESKTOP_ORIGINS=http://localhost:5173,http://127.0.0.1:5173`，不自动放开全部回环端口。
 
 配置公开根地址即可，HTTP 对应 `ws://`，HTTPS 对应 `wss://`；如需独立文件域名或由部署系统管理身份，可显式覆盖：
 
 ```text
-MONKEYAI_PUBLIC_URL=https://control.example.com
-MONKEYAI_RUNTIME_FILES_ORIGIN=https://files.example.com
-MONKEYAI_RUNTIME_SERVER_ID=<稳定 UUIDv4>
-MONKEYAI_RUNTIME_SIGNING_KEY_FILE=/run/secrets/runtime-access.pem
+AIBERTAI_PUBLIC_URL=https://control.example.com
+AIBERTAI_RUNTIME_FILES_ORIGIN=https://files.example.com
+AIBERTAI_RUNTIME_SERVER_ID=<稳定 UUIDv4>
+AIBERTAI_RUNTIME_SIGNING_KEY_FILE=/run/secrets/runtime-access.pem
 ```
 
-显式私钥使用 Ed25519 PKCS8 PEM，经受限文件或只读挂载提供；配置该文件后不会在缺失时静默回退自动密钥。独立启动时需持久保存状态目录，删除状态会改变控制面身份。
+显式私钥使用 Ed25519 PKCS8 PEM，经权限受限的文件提供；配置该文件后不会在缺失时静默回退自动密钥。独立启动时需持久保存状态目录，删除状态会改变控制面身份。
 
-可选 `MONKEYAI_RUNTIME_VERIFICATION_KEYS_FILE` 指向 `{"keys":[{"kid":"...","algorithm":"Ed25519","public_key":"..."}]}` 公钥集合，当前签名公钥自动发布。轮换时先把新公钥加入集合并发布，再切换私钥，旧公钥继续保留覆盖客户端缓存和有效租约的重叠期；单节点重启仍会中断隧道。
+可选 `AIBERTAI_RUNTIME_VERIFICATION_KEYS_FILE` 指向 `{"keys":[{"kid":"...","algorithm":"Ed25519","public_key":"..."}]}` 公钥集合，当前签名公钥自动发布。轮换时先把新公钥加入集合并发布，再切换私钥，旧公钥继续保留覆盖客户端缓存和有效租约的重叠期；单节点重启仍会中断隧道。
 
 新入口为 `/api/v1/endpoint-bridge`、`/api/v1/endpoints/{machine_id}/connections`、DELETE 设备登记、`proxy/*` 和独立文件 origin；设备目录通过 `X-MAI-Runtime-API: 1` 返回新形状。新代理使用目标票据，设备管理使用 OAuth，文件另校验限定签名授权，不能互相替代。
 
@@ -211,19 +198,13 @@ MONKEYAI_RUNTIME_SIGNING_KEY_FILE=/run/secrets/runtime-access.pem
 
 本人会话目录位于 GET `/api/v1/sessions` 和 `/api/v1/sessions/{id}`，要求 session:read 并遵循会话上报策略；stats 级不返回标题。仅认证宿主摘要进入目录，离线、旧 boot/epoch 或实时报告超时标记 stale。`session_index` 能力随策略动态发布。
 
-[Nginx 配置](../admin/nginx/app.conf) 已增加所需 Upgrade 和流式转发，文件及目标代理入口关闭 access/error 原始路径日志，业务诊断使用后端脱敏路由模板。共享文件 origin 强制下载；HTTP 执行预览需额外配置独立泛域名与证书：
+如果部署在反向代理后，WebSocket 路由应保留 Upgrade，上传、SSE 和文件响应按流式传递，带票据的路径使用脱敏日志。共享文件 origin 强制下载。
 
-```text
-MONKEYAI_RUNTIME_PREVIEW_ORIGIN_TEMPLATE=https://{artifact}.preview.example.net
-MONKEYAI_RUNTIME_PREVIEW_CERT_FILE=/run/secrets/preview/tls.crt
-MONKEYAI_RUNTIME_PREVIEW_KEY_FILE=/run/secrets/preview/tls.key
-```
-
-将泛域名 DNS 指向预览入口，证书及私钥只读挂载到 admin；例如 Compose override 的 `services.admin.volumes` 添加 `./secrets/preview:/run/secrets/preview:ro`。内置 HTTP-01 ACME 不签发泛域名证书，需部署方提供或使用外部 TLS 网关。外部网关只将 `/preview/` 转发到后端，保持 Host 并关闭带 grant 路径的原始日志。
+HTTP 产物预览需另外配置 `AIBERTAI_RUNTIME_PREVIEW_ORIGIN_TEMPLATE=https://{artifact}.preview.example.net`。泛域名及 TLS 证书由部署方的 HTTPS 网关提供。网关仅转发 `/preview/` 到后端，并保留原 Host。
 
 预览按 server/user/machine/session/artifact 派生独立域名，file grant 同时绑定 artifact 和 Host。HTTP 模式强制 opaque 无存储沙箱，禁止 Cookie、localStorage、IndexedDB、ServiceWorker、表单和外部网络，Desktop 自定义产物 origin 的持久存储语义保持独立。只有配置模板时发布预览能力。
 
-服务端组件测试：`go test ./internal/relay/... ./internal/endpoint/... ./internal/session/...`，设置隔离 `MONKEYAI_TEST_DATABASE_URL` 后覆盖真实数据库和双通道；`MONKEYAI_TEST_NGINX_IMAGE=nginx:1.28-alpine` 额外启动并清理专用 Docker 容器验证 Nginx。应用组装测试还需配置隔离的 `MONKEYAI_S3_*`，执行 `go test ./internal/app -run '^TestRuntimeRelayApplication$'`。功能上线仍需真实 Mac/Win runtime 的操作恢复、权限、产物预览及代理验收。
+服务端组件测试：`go test ./internal/relay/... ./internal/endpoint/... ./internal/session/...`，设置隔离 `MONKEYAI_TEST_DATABASE_URL` 后覆盖真实数据库和双通道；`MONKEYAI_TEST_NGINX_IMAGE=nginx:1.28-alpine` 只用于用隔离夹具验证外部 Nginx 的协议兼容性。应用组装测试还需配置隔离的 `AIBERTAI_S3_*`，执行 `go test ./internal/app -run '^TestRuntimeRelayApplication$'`。功能上线仍需真实 Mac/Win runtime 的操作恢复、权限、产物预览及代理验收。
 
 ## 资源功能验证
 
@@ -231,9 +212,9 @@ MONKEYAI_RUNTIME_PREVIEW_KEY_FILE=/run/secrets/preview/tls.key
 
 ```bash
 export MONKEYAI_TEST_DATABASE_URL='postgres://测试账号:测试密码@127.0.0.1:5432/测试库?sslmode=disable'
-export MONKEYAI_S3_ENDPOINT='http://127.0.0.1:9000'
-export MONKEYAI_S3_ACCESS_KEY='测试访问密钥'
-export MONKEYAI_S3_SECRET_KEY='测试访问密钥密码'
+export AIBERTAI_S3_ENDPOINT='http://127.0.0.1:9000'
+export AIBERTAI_S3_ACCESS_KEY='测试访问密钥'
+export AIBERTAI_S3_SECRET_KEY='测试访问密钥密码'
 go test ./... -count=1
 ```
 

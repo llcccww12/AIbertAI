@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -25,6 +26,7 @@ type desktopRuntimeAccess struct {
 	address, origin, protocol string
 	serverID, reportMachine   string
 	userID, installedMachine  string
+	clientVersion             string
 	attachments               *os.Root
 }
 
@@ -71,6 +73,9 @@ func (a *desktopRuntimeAccess) authorizeProtocol(r *http.Request, protocol strin
 func (h *relaySessionHost) reportMachine() string {
 	if h.local != nil {
 		return h.local.reportMachine
+	}
+	if h.access == nil && h.desktopRelay != nil {
+		return h.desktopRelay.device.machine
 	}
 	return h.access.ready.MachineID
 }
@@ -148,6 +153,33 @@ func (h *relaySessionHost) localQuery(ctx context.Context, method string, raw js
 			return nil, err
 		}
 		return h.employeeConfig(ctx)
+	case "_monkeyai/config/goals/set", "_monkeyai/config/display/set":
+		if err := h.live.saveDesktopSettings(method, raw); err != nil {
+			return nil, err
+		}
+		return h.employeeConfig(ctx)
+	case "_monkeyai/billing/account", "_monkeyai/billing/entries":
+		return h.desktopBilling(ctx, method, raw)
+	case "_monkeyai/environments/list", "_monkeyai/environments/get", "_monkeyai/environments/operations", "_monkeyai/environments/change":
+		return h.desktopEnvironment(ctx, method, raw)
+	case "_monkeyai/preferences/model-thinking/set":
+		if err := h.live.saveDesktopSettings(method, raw); err != nil {
+			return nil, err
+		}
+		return raw, nil
+	case "_monkeyai/resources/recipients", "_monkeyai/resources/share", "_monkeyai/users/search", "_monkeyai/groups/search":
+		return h.desktopSharing(ctx, method, raw)
+	case "_monkeyai/drafts", "_monkeyai/draft/set":
+		return h.live.desktopDrafts(method, raw)
+	case "_monkeyai/config/models/get", "_monkeyai/config/models/save", "_monkeyai/config/models/delete", "_monkeyai/config/models/create-many", "_monkeyai/config/models/test", "_monkeyai/config/models/discover":
+		return h.desktopModelSettings(ctx, method, raw)
+	case "_monkeyai/resources/get", "_monkeyai/resources/save", "_monkeyai/resources/delete",
+		"_monkeyai/resources/experts/details", "_monkeyai/resources/experts/tags", "_monkeyai/resources/connectors/tags", "_monkeyai/resources/skills/tags",
+		"_monkeyai/resources/connectors/test", "_monkeyai/resources/connectors/authorize",
+		"_monkeyai/resources/connectors/authorization", "_monkeyai/resources/connectors/credentials",
+		"_monkeyai/resources/connectors/credentials/get", "_monkeyai/resources/connectors/credentials/create",
+		"_monkeyai/resources/connectors/credentials/update", "_monkeyai/resources/connectors/credentials/revoke":
+		return h.desktopResource(ctx, method, raw)
 	case "_monkeyai/devices/list":
 		return h.desktopDevices(ctx)
 	case "_monkeyai/devices/connect":
@@ -155,7 +187,7 @@ func (h *relaySessionHost) localQuery(ctx context.Context, method string, raw js
 	case "_monkeyai/device/remote/status", "_monkeyai/device/remote/set", "_monkeyai/device/remote/power":
 		return h.desktopRelay.command(method, raw)
 	case "_monkeyai/runtime/status":
-		return map[string]any{"runtimeVersion": version}, nil
+		return map[string]any{"runtimeVersion": version, "legacyResourceImport": h.legacyImport}, nil
 	}
 	var p historyQuery
 	if json.Unmarshal(raw, &p) != nil {
@@ -172,7 +204,11 @@ func (h *relaySessionHost) localQuery(ctx context.Context, method string, raw js
 		if err == nil && h.live.workspaces != nil {
 			if root, rootErr := h.live.workspaces.sessionRoot(session); rootErr == nil {
 				if design := workspaceDesign(root, session.ID); design != nil {
-					page["session"].(map[string]any)["capabilities"] = map[string]json.RawMessage{"design": design}
+					meta := page["session"].(map[string]any)
+					meta["capabilities"] = map[string]json.RawMessage{"design": design}
+					if session.ExpertID == "" && h.local != nil && h.designBridge != nil {
+						meta["expertId"] = designExpertID
+					}
 				}
 				root.Close()
 			}
@@ -235,6 +271,7 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 	line, readErr := reader.ReadSlice('\n')
 	var init struct {
 		Type, Token, WebOrigin, ServerURL, UserID, DataKey, MachineID string
+		ClientVersion                                                 string
 		DesignBridge                                                  bool
 	}
 	if readErr != nil || json.Unmarshal(line, &init) != nil || init.Type != "init" || !validUUID(init.UserID) ||
@@ -339,6 +376,7 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 	if err != nil {
 		return err
 	}
+	modelLocked := modelID != ""
 	modelID = model.ID
 	serverID, _, err := c.relaySigningKeys(startup)
 	if err != nil {
@@ -376,6 +414,7 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 	}
 	live.client, live.source, live.key, live.protocol = c, source, key.Value, model.Protocol
 	live.modelBudget = model.inputBudget()
+	live.modelLocked = modelLocked
 	defer live.store.Close()
 	defer live.workspaces.root.Close()
 	attachments, err := openDesktopAttachments(profile)
@@ -391,7 +430,7 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 	host := &relaySessionHost{profile: profile, root: root, approvedFile: name,
 		local: &desktopRuntimeAccess{address: listener.Addr().String(), origin: init.WebOrigin,
 			protocol: "monkeyai.token." + init.Token, serverID: serverID, reportMachine: ready.MachineID,
-			userID: init.UserID, installedMachine: init.MachineID, attachments: attachments},
+			userID: init.UserID, installedMachine: init.MachineID, clientVersion: init.ClientVersion, attachments: attachments},
 		live: live, designBridge: designBridge}
 	host.terminals, err = newDesktopTerminals()
 	if err != nil {
@@ -405,6 +444,12 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 	}
 	if _, err := host.employeeConfig(startup); err != nil {
 		return err
+	}
+	importCtx, stopImport := context.WithTimeout(startup, 15*time.Second)
+	host.legacyImport = host.importLegacyResources(importCtx, auth, store.cipher)
+	stopImport()
+	if len(host.legacyImport.Pending) != 0 {
+		slog.Warn("旧本机资源还有待迁移项", "status", host.legacyImport.Pending)
 	}
 	recovery, stopRecovery := context.WithTimeout(startup, 10*time.Second)
 	host.recoverDesktopReports(recovery)

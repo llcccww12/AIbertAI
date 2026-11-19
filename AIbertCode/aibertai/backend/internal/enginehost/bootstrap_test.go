@@ -1,6 +1,7 @@
 package enginehost
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -14,25 +15,17 @@ import (
 	"time"
 )
 
-func bootstrapCommand(t *testing.T, modern bool, status string) (*exec.Cmd, string) {
+func bootstrapMockBin(t *testing.T) string {
 	t.Helper()
 	if os.PathSeparator == '\\' {
 		t.Skip("需要POSIX shell")
 	}
-	dir := t.TempDir()
-	bin := filepath.Join(dir, "bin")
-	if err := os.Mkdir(bin, 0700); err != nil {
-		t.Fatal(err)
-	}
-	fixture := []byte("#!/bin/sh\nprintf 'run\\n' >> \"$MARKER\"\nif [ -n \"${GATE:-}\" ]; then while [ ! -f \"$GATE\" ]; do sleep 0.05; done; fi\nexit \"$INSTALL_EXIT\"\n")
-	source := filepath.Join(dir, "installer")
-	if err := os.WriteFile(source, fixture, 0700); err != nil {
-		t.Fatal(err)
-	}
+	bin := t.TempDir()
 	mocks := map[string]string{
 		"uname": `case "$1" in -s) echo Linux;; -m) echo aarch64;; esac`,
 		"id":    `echo 0`,
-		"curl":  `while [ "$#" -gt 0 ]; do if [ "$1" = -o ]; then shift; cp "$FIXTURE" "$1"; printf '%s' "$1" > "$WORK_FILE"; exit 0; fi; shift; done; exit 1`,
+		"curl": `printf '%s\n' "$@" > "$WORK_FILE.args"
+while [ "$#" -gt 0 ]; do if [ "$1" = -o ]; then shift; cp "$FIXTURE" "$1"; printf '%s' "$1" > "$WORK_FILE"; exit 0; fi; shift; done; exit 1`,
 		"systemd-run": `help=false
 for arg do [ "$arg" != --help ] || help=true; done
 for arg do
@@ -51,7 +44,8 @@ fi
 printf '%s\n' "$@" > "$RUN_ARGS"
 [ "${LAUNCH_FAIL:-0}" = 0 ] || exit 1
 if [ "${SIGNAL_EXIT:-0}" = 1 ]; then printf '9' > "$UNIT_RESULT"; exit 0; fi
-while [ "$1" != /bin/sh ]; do shift; done
+while [ "$#" -gt 0 ] && [ "$1" != /bin/sh ]; do shift; done
+[ "$#" -gt 0 ] || exit 99
 if [ "${PTY_FAIL_AFTER_START:-0}" = 1 ]; then "$@"; printf '%s' "$?" > "$UNIT_RESULT"; exit 1; fi
 ( "$@"; printf '%s' "$?" > "$UNIT_RESULT" ) > "$UNIT_LOG" 2>&1 </dev/null &
 exit 0`,
@@ -71,6 +65,26 @@ printf 'LoadState=loaded\nActiveState=%s\nSubState=%s\nResult=%s\nExecMainCode=%
 			t.Fatal(err)
 		}
 	}
+	return bin
+}
+
+func bootstrapTestCommand(t *testing.T, name string, args ...string) *exec.Cmd {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	t.Cleanup(cancel)
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = 2 * time.Second
+	return cmd
+}
+
+func bootstrapCommand(t *testing.T, bin string, modern bool, status string) (*exec.Cmd, string) {
+	t.Helper()
+	dir := t.TempDir()
+	fixture := []byte("#!/bin/sh\nprintf 'run\\n' >> \"$MARKER\"\nif [ -n \"${GATE:-}\" ]; then while [ ! -f \"$GATE\" ]; do sleep 0.05; done; fi\nexit \"$INSTALL_EXIT\"\n")
+	source := filepath.Join(dir, "installer")
+	if err := os.WriteFile(source, fixture, 0700); err != nil {
+		t.Fatal(err)
+	}
 	raw, err := os.ReadFile("install.sh")
 	if err != nil {
 		t.Fatal(err)
@@ -85,12 +99,13 @@ printf 'LoadState=loaded\nActiveState=%s\nSubState=%s\nResult=%s\nExecMainCode=%
 	if modern {
 		mode = "1"
 	}
-	cmd := exec.Command("sh", path, "https://fixture.example", "fixture-token", "v1", "arm64", hex.EncodeToString(hash[:]), strings.Repeat("a", 64), "/data/engine", "installer")
+	cmd := bootstrapTestCommand(t, "sh", path, "https://fixture.example", "fixture-token", "v1", "arm64", hex.EncodeToString(hash[:]), strings.Repeat("a", 64), "/data/engine", "installer")
 	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "FIXTURE="+source, "MARKER="+filepath.Join(dir, "executed"), "WORK_FILE="+filepath.Join(dir, "work"), "MODERN="+mode, "INSTALL_EXIT="+status, "RUN_ARGS="+filepath.Join(dir, "args"), "UNIT_RESULT="+filepath.Join(dir, "result"), "UNIT_LOG="+filepath.Join(dir, "journal"))
 	return cmd, dir
 }
 
 func TestBootstrapModernAndSystemd219(t *testing.T) {
+	bin := bootstrapMockBin(t)
 	for _, tc := range []struct {
 		name   string
 		modern bool
@@ -101,7 +116,7 @@ func TestBootstrapModernAndSystemd219(t *testing.T) {
 		{"modern", true, "0", 0, ""}, {"modern-failure", true, "7", 7, ""}, {"systemd219", false, "0", 0, ""}, {"systemd219-failure", false, "23", 23, ""}, {"systemd219-signal", false, "0", 137, "SIGNAL_EXIT=1"}, {"launch-failure", false, "0", 1, "LAUNCH_FAIL=1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cmd, dir := bootstrapCommand(t, tc.modern, tc.exit)
+			cmd, dir := bootstrapCommand(t, bin, tc.modern, tc.exit)
 			if tc.extra != "" {
 				cmd.Env = append(cmd.Env, tc.extra)
 			}
@@ -142,7 +157,7 @@ func TestBootstrapModernAndSystemd219(t *testing.T) {
 }
 
 func TestBootstrapDisconnectDoesNotRemoveRunningInstaller(t *testing.T) {
-	cmd, dir := bootstrapCommand(t, false, "0")
+	cmd, dir := bootstrapCommand(t, bootstrapMockBin(t), false, "0")
 	gate := filepath.Join(dir, "release")
 	cmd.Env = append(cmd.Env, "GATE="+gate)
 	log, err := os.Create(filepath.Join(dir, "output"))
@@ -196,6 +211,7 @@ func TestBootstrapTTYUsesMinimalArguments(t *testing.T) {
 	if _, err := exec.LookPath("script"); err != nil {
 		t.Skip("需要script创建测试终端")
 	}
+	bin := bootstrapMockBin(t)
 	for _, tc := range []struct {
 		name     string
 		env      []string
@@ -210,7 +226,7 @@ func TestBootstrapTTYUsesMinimalArguments(t *testing.T) {
 		{"already-started", []string{"PTY_SUPPORTED=1", "PTY_FAIL_AFTER_START=1"}, "23", "23", false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			base, dir := bootstrapCommand(t, false, tc.status)
+			base, dir := bootstrapCommand(t, bin, false, tc.status)
 			statusFile := filepath.Join(dir, "parent-status")
 			args := make([]string, len(base.Args))
 			for i, arg := range base.Args {
@@ -219,9 +235,9 @@ func TestBootstrapTTYUsesMinimalArguments(t *testing.T) {
 			line := strings.Join(args, " ") + "; bootstrap_exit=$?; printf '%s' \"$bootstrap_exit\" > " + quote(statusFile) + "; exit \"$bootstrap_exit\""
 			var cmd *exec.Cmd
 			if runtime.GOOS == "darwin" {
-				cmd = exec.Command("script", "-q", filepath.Join(dir, "transcript"), "sh", "-c", line)
+				cmd = bootstrapTestCommand(t, "script", "-q", filepath.Join(dir, "transcript"), "sh", "-c", line)
 			} else {
-				cmd = exec.Command("script", "-q", "-e", "-c", line, filepath.Join(dir, "transcript"))
+				cmd = bootstrapTestCommand(t, "script", "-q", "-e", "-c", line, filepath.Join(dir, "transcript"))
 			}
 			cmd.Env = append(base.Env, tc.env...)
 			out, err := cmd.CombinedOutput()

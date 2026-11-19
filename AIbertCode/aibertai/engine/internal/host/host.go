@@ -10,13 +10,13 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/cache"
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/control"
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/driver"
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/lifecycle"
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/runtimeupdate"
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/standalone"
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/storage"
+	"aibertai.local/engine/internal/cache"
+	"aibertai.local/engine/internal/control"
+	"aibertai.local/engine/internal/driver"
+	"aibertai.local/engine/internal/lifecycle"
+	"aibertai.local/engine/internal/runtimeupdate"
+	"aibertai.local/engine/internal/standalone"
+	"aibertai.local/engine/internal/storage"
 )
 
 const root = "/var/lib/monkeyai-engine/control/environments"
@@ -59,9 +59,7 @@ func open() (*driver.Driver, error) {
 		}
 		for _, mount := range mounts {
 			if mount.Target == "/var/lib/monkeyai" {
-				return runtimeupdate.New(mount.Source, client).WithPreparer(func(ctx context.Context, payload, destination string, release lifecycle.RuntimePackage, reuse []string) (lifecycle.RuntimePackage, error) {
-					return d.PrepareRuntime(ctx, spec, payload, destination, release, reuse)
-				}), nil
+				return runtimeupdate.New(mount.Source, client), nil
 			}
 		}
 		return nil, errors.New("runtime 持久目录缺失")

@@ -30852,11 +30852,6 @@ const kKe = md(
       "保存新建持续目标的默认 Token 预算；正安全整数，null 恢复系统默认的 200000000 Token，不改变已有目标",
       qt({ default_token_budget: "number|null" }),
     ),
-    configExpertsSet: Vt(
-      "_monkeyai/config/experts/set",
-      "保存本机专家",
-      qt({ experts: "array?" }),
-    ),
     configSkillsImport: Vt(
       "_monkeyai/config/skills/import",
       "导入本机技能",
@@ -31027,11 +31022,6 @@ const kKe = md(
       "_monkeyai/resources/connectors/authorization",
       "连接器授权状态",
       qt(Fi),
-    ),
-    designResourcesConfig: Vt(
-      "_monkeyai/design/resources/config",
-      "读取设计资源来源配置：respub base、本地 base 与当前快照；不含任何 secret",
-      qt({}),
     ),
     designResourcesToken: Vt(
       "_monkeyai/design/resources/token",
@@ -31297,6 +31287,26 @@ const DKe = [
   "_monkeyai/environments/change",
   "_monkeyai/billing/account",
   "_monkeyai/billing/entries",
+  "_monkeyai/session/goal",
+  "session/cancel",
+  "_monkeyai/drafts",
+  "_monkeyai/draft/set",
+  "_monkeyai/session/flags",
+  "_monkeyai/session/rename",
+  "_monkeyai/terminal/get",
+  "_monkeyai/terminal/list",
+  "_monkeyai/terminal/open",
+  "_monkeyai/terminal/close",
+  "_monkeyai/workspace/list",
+  "_monkeyai/workspace/read",
+  "_monkeyai/session/files/preview",
+  "_monkeyai/workspace/stat",
+  "_monkeyai/workspace/changes",
+  "_monkeyai/workspace/diff",
+  "_monkeyai/session/outline",
+  "_aibertai/connectors/local/test",
+  "_monkeyai/workspace/resolve",
+  "_monkeyai/workspace/link",
   "_monkeyai/feedback/submit",
   "_monkeyai/resources/recipients",
   "_monkeyai/resources/share",
@@ -31998,7 +32008,6 @@ function QKe() {
     },
     cancelLogin: async () => {},
     revealInFolder: async () => {},
-    setDesignMediaOrigins: async () => {},
     checkForUpdates: async () => ({ state: "unsupported" }),
     getUpdateStatus: async () => ({ state: "unsupported" }),
     getReleaseHistory: async () => [],
@@ -32160,7 +32169,7 @@ function QKe() {
   };
 }
 function X5() {
-  return window.monkeyai ?? QKe();
+  return window.aibertai ?? QKe();
 }
 const et = X5();
 let bve = null;
@@ -33178,9 +33187,29 @@ async function Vm(e, t, n, r, s) {
 }
 const Gm = (e) => Kd.acknowledge(e),
   Cve = (e) => Kd.recover(e);
+const directSessionCancel = new WeakMap();
 async function dYe(e, t, n) {
+  const endpoint = directSessionCancel.get(e);
+  if (endpoint) {
+    const check = () => {
+      if (Uc !== e) throw new Error(Se.deviceTargetChanged);
+    };
+    await OR(endpoint, "write/session/cancel", { sessionId: t }, {
+      signal: new AbortController().signal,
+      maxBytes: 4096,
+      timeoutMs: 10000,
+      check,
+      failed: Se.outcomeUnknown,
+      tooLarge: Se.invalidOperationResponse,
+    });
+    return;
+  }
   if (!IG.get(e)?.remote) {
-    await e.notify("session/cancel", { sessionId: t });
+    if (et.kind === "electron" && et.accountRequest) {
+      await a4("session/cancel", { sessionId: t });
+    } else {
+      await e.notify("session/cancel", { sessionId: t });
+    }
     return;
   }
   if (!n) throw new Error(Se.missingExecutionId);
@@ -34387,7 +34416,7 @@ class EYe {
       const kind = n === "_monkeyai/session/messages" && !r.cursor && (!r.direction || r.direction === "older")
         ? "messages" : n === "_monkeyai/session/tool_output" ? "tool_output" : null;
       if (kind) {
-        const result = await window.monkeyai?.readSessionArchive?.(
+        const result = await window.aibertai?.readSessionArchive?.(
           r.sessionId, kind, kind === "messages" ? r.limit ?? 20 : r.toolCallId,
         );
         if (result !== void 0) return result;
@@ -36238,7 +36267,7 @@ class VYe extends Error {
 const GYe = 3e4,
   KYe = 18e4,
   YYe = 6e5;
-function ZYe(e) {
+function ZYe(e, params) {
   return e === v2.agent.session.prompt
     ? null
     : e === "_monkeyai/resources/experts/import"
@@ -36248,6 +36277,7 @@ function ZYe(e) {
           e === "_monkeyai/runtime/restart" ||
           e === "_monkeyai/session/model/set" ||
           e === "_monkeyai/session/compact" ||
+          (e === "_monkeyai/session/queue" && ["add", "sendNow"].includes(params?.action)) ||
           e === "_monkeyai/sessions/delete" ||
           e === "_monkeyai/feedback/submit" ||
           e.startsWith("_monkeyai/resources/") ||
@@ -36278,9 +36308,16 @@ function QYe(e, t = !1) {
       } catch (d) {
         return Promise.reject(d);
       }
-    const o = ZYe(r),
+    // Keep local controls responsive during a turn.
+    const control = !t && et.kind === "electron" && et.accountRequest && fH(r) &&
+      (r.startsWith("_monkeyai/terminal/") || r.startsWith("_monkeyai/workspace/") ||
+        r === "_monkeyai/drafts" || r === "_monkeyai/draft/set" ||
+        r === "_monkeyai/session/outline" ||
+        r === "_monkeyai/session/files/preview" ||
+        r === "_monkeyai/session/flags" || r === "_monkeyai/session/rename");
+    const o = ZYe(r, s),
       a = performance.now(),
-      c = e.request(r, s, i);
+      c = control ? a4(r, s) : e.request(r, s, i);
     if (o === null) return c;
     const u = s?.sessionId;
     return new Promise((d, f) => {
@@ -36488,6 +36525,9 @@ function Qn() {
         }),
         (Yb = c));
       const d = QYe(c.agent, s.endpoint?.target?.transport === "relay");
+      if (s.endpoint?.target?.transport === "relay" && u.agentCapabilities?._meta?.sessionCancel === 1) {
+        directSessionCancel.set(d, s.endpoint);
+      }
       return (
         (Tve = u.agentCapabilities?._meta?.goalMode?.version === 1),
         (Uc = d),
@@ -49009,10 +49049,10 @@ async function Jr(e, t, n) {
     i = ts()?.transport === "relay";
   if (
     !i &&
-    ["design_catalog", "design_catalog_detail", "design_resource_media"].includes(e) &&
-    window.monkeyai?.privateDesignCatalog
+    ["design_features", "design_catalog", "design_catalog_detail", "design_resource_media"].includes(e) &&
+    window.aibertai?.privateDesignCatalog
   ) {
-    const a = await window.monkeyai.privateDesignCatalog(e, t);
+    const a = await window.aibertai.privateDesignCatalog(e, t);
     s();
     if (a !== null) return a;
   }
@@ -49020,14 +49060,16 @@ async function Jr(e, t, n) {
     !i &&
     [
       "design_state", "canvas_get", "canvas_apply", "canvas_select", "canvas_create_text",
+    "canvas_create_image", "canvas_create_video",
       "canvas_create_media_project", "canvas_duplicate", "canvas_export_upload", "canvas_upload_status",
       "canvas_import_video", "canvas_import_audio", "canvas_import_extracted_media", "canvas_append_media_project",
       "canvas_import_image", "canvas_import_project_source", "canvas_create_html", "canvas_update_html",
-      "design_style_decision", "design_system_set", "canvas_prepare_pptx",
+      "design_style_decision", "design_system_set", "canvas_prepare_pptx", "canvas_production",
+      "canvas_generate_media", "canvas_resume_media", "canvas_media", "canvas_html_image_media",
     ].includes(e) &&
-    window.monkeyai?.privateDesignWorkspace
+    window.aibertai?.privateDesignWorkspace
   ) {
-    const a = await window.monkeyai.privateDesignWorkspace(e, t);
+    const a = await window.aibertai.privateDesignWorkspace(e, t);
     s();
     if (a !== null) {
       BH(a, t.sessionId);
@@ -49167,11 +49209,11 @@ async function Iet(e, t, n, r, s) {
     };
   if (ts()?.transport === "relay") throw new Error(Se.remoteHostUnsupported);
   s.throwIfAborted();
-  if (window.monkeyai?.privateDesignWorkspace) {
+  if (window.aibertai?.privateDesignWorkspace) {
     const bytes = new Uint8Array(await r.arrayBuffer());
     o();
     s.throwIfAborted();
-    const result = await window.monkeyai.privateDesignWorkspace("canvas_upload_append", {
+    const result = await window.aibertai.privateDesignWorkspace("canvas_upload_append", {
       sessionId: e, uploadId: t, offset: n, bytes,
     });
     o();
@@ -49223,7 +49265,7 @@ async function Iet(e, t, n, r, s) {
   }
 }
 function cK(e) {
-  const removeLocal = window.monkeyai?.onPrivateCanvasChanged?.((id) => {
+  const removeLocal = window.aibertai?.onPrivateCanvasChanged?.((id) => {
     if (ts()?.transport !== "relay" && zn.getState().documents[id]) {
       void zn.getState().resync(id).catch(() => {});
     }
@@ -49873,6 +49915,7 @@ function qet(e) {
   };
 }
 const xp = new Map(),
+  draftHydrationListeners = new Set(),
   uK = (e, t) => `${e || "-"}:s:${t}`,
   Rwe = (e, t) => `${e || "-"}:n:${t || "general"}`;
 function Vet(e) {
@@ -49900,10 +49943,14 @@ function Gie(e) {
   zH = e;
 }
 function Yet(e, t) {
-  for (const [n, r] of Object.entries(t.sessions ?? {}))
-    xp.set(uK(e, n), { text: r.text, files: r.files });
-  for (const [n, r] of Object.entries(t.newSessions ?? {}))
-    xp.set(Rwe(e, n), { text: r.text, files: r.files });
+  for (const [records, keyFor] of [[t.sessions, uK], [t.newSessions, Rwe]]) {
+    for (const [id, draft] of Object.entries(records ?? {})) {
+      const key = keyFor(e, id);
+      if (xp.has(key) || uk.has(key)) continue;
+      xp.set(key, { text: draft.text, files: draft.files });
+      for (const listener of draftHydrationListeners) listener(key);
+    }
+  }
 }
 function Iwe() {
   if ((jw !== void 0 && (clearTimeout(jw), (jw = void 0)), zH))
@@ -52328,20 +52375,6 @@ const zO = 20,
           if (!p.current(G)) return;
           (p.established(),
             e({ ready: !0, connectError: null, reconnectAt: null }),
-            Z.request("_monkeyai/design/resources/config", {})
-              .then((J) => {
-                const Q = [J.respub?.base_url, J.monkeyai.base_url].flatMap(
-                  (te) => {
-                    try {
-                      return te ? [new URL(te).origin] : [];
-                    } catch {
-                      return [];
-                    }
-                  },
-                );
-                return window.monkeyai?.setDesignMediaOrigins?.(Q);
-              })
-              .catch(() => {}),
             Gie((J, Q) => {
               Z.request("_monkeyai/draft/set", { target: J, draft: Q }).catch(
                 () => {},
@@ -52574,10 +52607,13 @@ const zO = 20,
         if (!p.current(te)) throw new Error("Account changed");
         const be = me.sessionId,
           Ce = me._meta ?? {};
-        if (se && pe && !Ce.capabilities?.design && ts()?.transport !== "relay" && window.monkeyai?.privateDesignWorkspace) {
-          const design = await window.monkeyai.privateDesignWorkspace("design_session_open", { sessionId: be, selection: se });
+        if (se && pe && !Ce.capabilities?.design && ts()?.transport !== "relay" && window.aibertai?.privateDesignWorkspace) {
+          const design = await window.aibertai.privateDesignWorkspace("design_session_open", { sessionId: be, selection: se });
           if (!p.current(te)) throw new Error("Account changed");
-          if (design) Ce.capabilities = { ...Ce.capabilities, design };
+          if (design) {
+            Ce.capabilities = { ...Ce.capabilities, design };
+            if (Z.profile === "monkeyai-design") Ce.expertId = Z.profile;
+          }
         }
         Ce.skippedCapabilities?.includes("design") &&
           rn.warning(Uo.t("capabilities.designSkipped"));
@@ -52676,7 +52712,8 @@ const zO = 20,
       goalAction: async (P, G, Z) => {
         const J = p.epoch(),
           te = t().views[P]?.goal,
-          re = await Qn();
+          local = ts()?.transport !== "relay",
+          re = local ? null : await Qn();
         if (!p.current(J)) throw new Error("Account changed");
         const se = {
             sessionId: P,
@@ -52698,13 +52735,23 @@ const zO = 20,
                   : { ...ae, goal: SG(ae.goal, le.goal) },
               );
           };
+        const action = (params) => local
+          ? a4("_monkeyai/session/goal", params)
+          : re.request("_monkeyai/session/goal", params);
         try {
-          ie(await re.request("_monkeyai/session/goal", se));
+          const result = await action(se);
+          ie(result);
+          if (local && p.current(J) && result.goal?.status === "active" && (G === "create" || G === "resume")) {
+            const prompt = G === "create" ? result.goal.objective
+              : Uo.language === "zh-CN" ? "继续当前目标：" + result.goal.objective : "Continue the current goal: " + result.goal.objective;
+            await t().send(P, prompt, [], [], se.requestId);
+            if (p.current(J)) ie(await action({ sessionId: P, action: "get" }));
+          }
         } catch (le) {
           if (G !== "get" && p.current(J))
             try {
               ie(
-                await re.request("_monkeyai/session/goal", {
+                await action({
                   sessionId: P,
                   action: "get",
                 }),
@@ -52747,6 +52794,32 @@ const zO = 20,
       setExpert: async (P, G) => {
         if (G === "monkeyai-design" && ts()?.transport === "relay" && !A2())
           throw new Error(Se.remoteHostUnsupported);
+        if (G === "monkeyai-design" && ts()?.transport !== "relay" && window.aibertai?.privateDesignWorkspace) {
+          const epoch = p.epoch();
+          h(P, (view) => ({ ...view, configuring: !0 }));
+          try {
+            const opened = await window.aibertai.privateDesignWorkspace("design_session_open", {
+              sessionId: P,
+              selection: { templateRef: null, designSystemRef: null, mediaModelId: null },
+            });
+            if (!p.current(epoch)) return;
+            if (opened !== null) {
+              const design = i4(opened, P);
+              if (!design) throw new Error("invalid_design_workspace");
+              await L(P, "_monkeyai/session/expert/set", { sessionId: P, expertId: G });
+              if (!p.current(epoch)) return;
+              t().applyDesign(P, design);
+              h(P, (view) => ({ ...view, expertId: G }));
+              g(P, {
+                expertId: G,
+                configurationRevision: t().views[P]?.configurationRevision,
+              });
+              return;
+            }
+          } finally {
+            p.current(epoch) && h(P, (view) => ({ ...view, configuring: !1 }));
+          }
+        }
         const Z = await L(P, "_monkeyai/session/expert/set", {
           sessionId: P,
           expertId: G,
@@ -52759,8 +52832,13 @@ const zO = 20,
           }));
       },
       setMode: async (P, G) => {
-        (await L(P, Q5.agent.session.setMode, { sessionId: P, modeId: G })) &&
-          h(P, (J) => ({ ...J, mode: G }));
+        const result = await L(P, Q5.agent.session.setMode, { sessionId: P, modeId: G });
+        if (!result) return;
+        h(P, (J) => ({ ...J, mode: G }));
+        if (result.resolvedPermission) {
+          const allow = t().views[P]?.ask?.options.find((option) => option.kind === "allow_once");
+          if (allow) await _.answer(P, allow.optionId);
+        }
       },
       setModel: async (P, G, Z) => {
         const J = await L(P, "_monkeyai/session/model/set", {
@@ -52887,6 +52965,11 @@ async function a4(e, t) {
   if (n.error) throw new So(n.error.code, n.error.message, n.error.data);
   return n.result;
 }
+function normalizeBuiltinToolPreferences(preferences) {
+  return preferences?.builtin_tools == null && preferences
+    ? { ...preferences, builtin_tools: {} }
+    : preferences;
+}
 const yn = uc((e, t) => {
     let n = 0,
       r = null,
@@ -52922,7 +53005,14 @@ const yn = uc((e, t) => {
       p = (S, A = !1) => {
         (i !== void 0 && S.viewRevision < i) ||
           (t().config && t().config.viewRevision > S.viewRevision) ||
-          (e({ config: S, error: null, needsRestart: t().needsRestart || A }),
+          (e({
+            config: {
+              ...S,
+              resourcePreferences: normalizeBuiltinToolPreferences(S.resourcePreferences),
+            },
+            error: null,
+            needsRestart: t().needsRestart || A,
+          }),
           t().receiveSkillPackages(S.skillPackages ?? []));
       },
       m = async (S, A, _) => {
@@ -52979,7 +53069,8 @@ const yn = uc((e, t) => {
         }
         const I = await g(S, A, E);
         if (S === "share" && A?.kind === "kb") return I.result;
-        if (ts?.()?.transport === "relay" && fH(M)) {
+        if ((ts?.()?.transport === "relay" && fH(M)) ||
+            (S === "share" && t().config?.sourceRuntime)) {
           if (T !== n) throw new Error(c);
           try {
             await t().syncNow();
@@ -53101,7 +53192,7 @@ const yn = uc((e, t) => {
               [S.sessionId]: {
                 ...S,
                 snapshot: E,
-                preferences: T ? _.preferences : S.preferences,
+                preferences: T ? _.preferences : normalizeBuiltinToolPreferences(S.preferences),
                 preferencesRevision: T
                   ? _.preferencesRevision
                   : S.preferencesRevision,
@@ -53354,12 +53445,12 @@ const yn = uc((e, t) => {
               : {},
           );
       },
-      saveMcp: (S) => v("_monkeyai/config/mcp/set", { servers: S }),
-      testMcp: (S) =>
-        d((A) => A.request("_monkeyai/config/mcp/test", { server: S })),
+      saveLocalMcp: (S) => v("_aibertai/connectors/local/save", S),
+      testMcp: (S, originalName) =>
+        h("_aibertai/connectors/local/test", originalName === void 0
+          ? { name: S.name } : { name: originalName, server: S }),
       saveDisplay: (S) => v("_monkeyai/config/display/set", S),
       saveGoals: (S) => v("_monkeyai/config/goals/set", S),
-      saveExperts: (S) => v("_monkeyai/config/experts/set", { experts: S }, !1),
       syncNow: async () => {
         await v("_monkeyai/config/sync", {}, !1);
         const S =
@@ -53375,9 +53466,14 @@ const yn = uc((e, t) => {
         if (S) throw new Error(S);
       },
       restartEngine: async () => {
-        (await d((S) => S.request("_monkeyai/runtime/restart", {})),
-          e({ needsRestart: !1 }),
-          await t().loadStatus());
+        if (et.restartLocalRuntime && ts()?.transport !== "relay") {
+          await et.restartLocalRuntime();
+          wH();
+        } else {
+          await d((S) => S.request("_monkeyai/runtime/restart", {}));
+        }
+        e({ needsRestart: !1 });
+        await t().loadStatus();
       },
     };
   }),
@@ -53448,6 +53544,9 @@ function btt(e) {
   return t <= 0n ? "insufficient" : n > 0n && t * 10n <= n ? "low" : "normal";
 }
 function VC(e, t, n = !1) {
+  if (typeof e !== "string" || !e.trim()) return;
+  const date = new Date(e);
+  if (!Number.isFinite(date.getTime())) return;
   return new Intl.DateTimeFormat(t, {
     year: "numeric",
     month: "2-digit",
@@ -53455,7 +53554,7 @@ function VC(e, t, n = !1) {
     hour: "2-digit",
     minute: "2-digit",
     ...(n ? { second: "2-digit", timeZoneName: "short" } : {}),
-  }).format(new Date(e));
+  }).format(date);
 }
 const Uwe = () => ({
   period: "30d",
@@ -111241,6 +111340,10 @@ const qwt = {
     },
     connected: "{{browsers}} 已连接",
     connectedHint: "回到对话中，告诉AIbertAI要访问哪个网站、完成什么任务。",
+    sharedHint: "在浏览器扩展里分享当前页，再在这里读取正文或定位标签页。",
+    sharedRead: "读取已分享网页",
+    sharedFocus: "定位 Chrome 标签页",
+    sharedEmpty: "请先在浏览器扩展中分享当前页。",
     desktopOnly: "请在AIbertAI桌面应用中连接 Chrome 或 Edge。",
     enable: "允许此对话使用浏览器",
     enableHint: "此对话的浏览器访问已关闭。开启后，AI 才能查看和操作网页。",
@@ -111275,7 +111378,7 @@ const qwt = {
       native_host_registration_failed:
         "没能为 {{browser}} 配置浏览器助手，已配置的浏览器仍可正常使用。",
     },
-    limitedFeatures: "此扩展只支持部分浏览器功能，更新扩展后可使用更多功能。",
+    limitedFeatures: "此扩展支持分享和读取当前网页。",
     manage: "连接管理",
     unregister: "断开所有浏览器",
     unregisterHint:
@@ -111475,6 +111578,10 @@ const qwt = {
     connected: "{{browsers}} connected",
     connectedHint:
       "Return to your conversation and tell AIbertAI which website to use and what to do.",
+    sharedHint: "Share the current tab in the browser extension, then read or locate it here.",
+    sharedRead: "Read shared page",
+    sharedFocus: "Locate Chrome tab",
+    sharedEmpty: "Share the current tab from the browser extension first.",
     desktopOnly: "Use the AIbertAI desktop app to connect Chrome or Edge.",
     enable: "Allow browser access in this chat",
     enableHint:
@@ -111525,8 +111632,7 @@ const qwt = {
       native_host_registration_failed:
         "Could not set up the browser helper for {{browser}}. The browsers that were set up still work.",
     },
-    limitedFeatures:
-      "This extension supports a limited set of browser features. Update it to enable more features.",
+    limitedFeatures: "This extension supports sharing and reading the current page.",
     manage: "Manage connection",
     unregister: "Disconnect all browsers",
     unregisterHint:
@@ -113482,7 +113588,7 @@ const qwt = {
       http: "远程（HTTP）",
       command: "启动命令",
       args: "启动参数",
-      argsHint: "多个参数用空格分隔。",
+      argsHint: "每行填写一个参数，参数内可以包含空格。",
       env: "环境变量",
       envHint: "每行一项：KEY=VALUE",
       url: "服务地址",
@@ -115428,8 +115534,6 @@ const qwt = {
         retry: "读取失败，点击重试",
         more: "加载更多",
         symlink: "符号链接不在文件列表中展开",
-        needsServer:
-          "这个页面依赖项目服务。在终端启动项目后，点击服务地址即可在内置浏览器中预览。",
         location: "文件路径",
         openDirectory: "打开目录 {{name}}",
         ancestors: "查看上级目录",
@@ -116437,7 +116541,7 @@ const qwt = {
       http: "Remote (HTTP)",
       command: "Startup command",
       args: "Command arguments",
-      argsHint: "Separate arguments with spaces.",
+      argsHint: "Enter one argument per line. An argument may contain spaces.",
       env: "Environment variables",
       envHint: "One KEY=VALUE per line.",
       url: "Service URL",
@@ -118602,8 +118706,6 @@ Start with the conclusion, then explain the reasoning.`,
         retry: "Could not read folder. Retry",
         more: "Load more",
         symlink: "Symbolic links are not expanded",
-        needsServer:
-          "This page needs the project server. Start it in the terminal, then click its URL to open the built-in browser.",
         location: "File path",
         openDirectory: "Open folder {{name}}",
         ancestors: "Show parent folders",
@@ -135729,7 +135831,7 @@ function f8t({ entry: e }) {
             className: "w-40 pl-4 text-xs text-muted-foreground @max-lg:hidden",
             children: l.jsx("time", {
               dateTime: e.occurred_at,
-              children: VC(e.occurred_at, n.language),
+              children: VC(e.occurred_at, n.language) ?? "—",
             }),
           }),
           l.jsxs(td, {
@@ -135746,7 +135848,7 @@ function f8t({ entry: e }) {
                 className:
                   "mt-1 block text-xs text-muted-foreground @lg:hidden",
                 dateTime: e.occurred_at,
-                children: VC(e.occurred_at, n.language),
+                children: VC(e.occurred_at, n.language) ?? "—",
               }),
             ],
           }),
@@ -135796,7 +135898,7 @@ function f8t({ entry: e }) {
               children: [
                 l.jsx(jb, {
                   label: t("billing.occurredAt"),
-                  children: VC(e.occurred_at, n.language, !0),
+                  children: VC(e.occurred_at, n.language, !0) ?? "—",
                 }),
                 l.jsx(jb, {
                   label: t("billing.category"),
@@ -135881,6 +135983,7 @@ function h8t({ ready: e, onSignIn: t, signingIn: n = !1 }) {
       p === 1 ? g() : b(1);
     },
     C = i && !o ? btt(i) : "normal",
+    periodEnd = VC(i?.account?.period_end_at, s.language, !0),
     S = c ? Math.max(1, Math.min(1e5, Math.ceil(c.total / c.page_size))) : p,
     A =
       h.content.trim() ||
@@ -135948,16 +136051,12 @@ function h8t({ ready: e, onSignIn: t, signingIn: n = !1 }) {
                             l.jsx("dt", {
                               className:
                                 "flex justify-end text-xs text-muted-foreground",
-                              children: l.jsx(MT, {
-                                label: r("billing.quota"),
-                                hint: r("billing.periodEnds", {
-                                  date: VC(
-                                    i.account.period_end_at,
-                                    s.language,
-                                    !0,
-                                  ),
-                                }),
-                              }),
+                              children: periodEnd
+                                ? l.jsx(MT, {
+                                    label: r("billing.quota"),
+                                    hint: r("billing.periodEnds", { date: periodEnd }),
+                                  })
+                                : r("billing.quota"),
                             }),
                             l.jsx("dd", {
                               className:
@@ -136218,6 +136317,7 @@ function g8t() {
     n = Jt((o) => o.ready),
     r = oo((o) => o.overview),
     s = oo((o) => o.overviewLoading || o.entriesLoading),
+    fetchedAt = VC(r?.fetchedAt, t.language, !0),
     i = () => {
       const o = oo.getState();
       (o.refreshOverview(!0), o.page === 1 ? o.loadEntries() : o.setPage(1));
@@ -136242,10 +136342,10 @@ function g8t() {
           className: "space-y-1",
           children: [
             l.jsx("p", { children: e("billing.refresh") }),
-            r &&
+            fetchedAt &&
               l.jsx("p", {
                 children: e("billing.updatedAt", {
-                  date: VC(r.fetchedAt, t.language, !0),
+                  date: fetchedAt,
                 }),
               }),
           ],
@@ -138896,7 +138996,7 @@ function tEt({ className: e, variant: t = "default", ...n }) {
   });
 }
 const nEt = "/assets/general-assistant-Y7JVE3_T.png",
-  rEt = "/assets/monkeyai-design-DWxOplgq.png",
+  rEt = "/assets/aibertai-design-DWxOplgq.png",
   sEt =
     "data:image/png;base64,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",
   iEt = 64,
@@ -141544,8 +141644,7 @@ function REt() {
       }
     }
   }
-  const { config: h, loading: p, error: m } = Py(),
-    g = yn((H) => H.saveExperts);
+  const { config: h, loading: p, error: m } = Py();
   function b(H) {
     if ((c(!1), H === "manual")) {
       _({ id: null });
@@ -141557,9 +141656,7 @@ function REt() {
     }
     t("/", { state: { expertBuilder: crypto.randomUUID() }, flushSync: !0 });
   }
-  const [v, w] = y.useState(null),
-    [C, S] = y.useState(null),
-    [A, _] = y.useState(null),
+  const [A, _] = y.useState(null),
     [E, T] = y.useState(null),
     [M, I] = y.useState(null),
     O = h?.server.experts.find(
@@ -141579,17 +141676,8 @@ function REt() {
           tags: H.tags,
           value: { kind: "server", expert: H },
         })),
-        ...(h?.experts ?? [])
-          .filter((H) => H.source === "user")
-          .map((H) => ({
-            id: "local/" + H.id,
-            name: H.name,
-            category: fh(H, n),
-            search: H.description + " " + H.prompt,
-            value: { kind: "local", expert: H },
-          })),
       ],
-      [h?.server.experts, h?.experts, n],
+      [h?.server.experts, n],
     ),
     q = xL(B),
     F = q.category,
@@ -141617,15 +141705,6 @@ function REt() {
       actions: K,
       children: l.jsx(T0, { children: m ?? e("settings.common.loadError") }),
     });
-  const $ = (H) => {
-      if (!H?.length) return;
-      const P = H.flatMap((G) => (G.name ? [G.name] : []));
-      return P.length === H.length
-        ? e("settings.experts.missingSkills", { names: P.join("、") })
-        : e("settings.experts.missingSkillsCount", { count: H.length });
-    },
-    L = h.experts.filter((H) => H.source === "user"),
-    z = (H) => g(H.map(({ source: P, scope: G, origin: Z, ...J }) => J));
   return l.jsxs(eu, {
     section: "experts",
     actions: K,
@@ -141644,8 +141723,7 @@ function REt() {
           ),
           children: q.visible.map(({ id: H, value: P }) => {
             const G = P.expert;
-            if (P.kind === "server")
-              return l.jsx(
+            return l.jsx(
                 BM,
                 {
                   icon: fk,
@@ -141684,34 +141762,6 @@ function REt() {
                 },
                 H,
               );
-            const Z = P.expert,
-              J = F === "mine" && Z.source === "user";
-            return l.jsx(
-              BM,
-              {
-                icon: fk,
-                name: Z.name,
-                description: Z.description || Z.prompt.slice(0, 120),
-                badges: l.jsx($o, {
-                  variant: "outline",
-                  children: e("settings.experts.local"),
-                }),
-                metadata:
-                  $(h.expertMissingSkills?.[Z.id]) ??
-                  (h.expertIssues[Z.id]
-                    ? e("settings.experts.dependenciesUnavailable")
-                    : void 0),
-                onOpen: J ? () => w({ expert: Z }) : void 0,
-                actions:
-                  J &&
-                  l.jsx(dh, {
-                    name: Z.name,
-                    onEdit: () => w({ expert: Z }),
-                    onDelete: () => S(Z),
-                  }),
-              },
-              H,
-            );
           }),
         }),
       }),
@@ -141744,223 +141794,7 @@ function REt() {
           A.id ?? "new",
         ),
       E && l.jsx(gL, { kind: "expert", item: E, onClose: () => T(null) }, E.id),
-      v &&
-        l.jsx(
-          IEt,
-          {
-            expert: v.expert,
-            existing: h.experts.map((H) => H.id),
-            models: h.models.all.filter(X1),
-            onClose: () => w(null),
-            onSave: (H) =>
-              z([...L.filter((P) => P.id !== H.id), { ...H, source: "user" }]),
-          },
-          v.expert?.id ?? "new",
-        ),
-      C &&
-        l.jsx(Ja, {
-          title: e("settings.resources.deleteTitle", { name: C.name }),
-          description: e("settings.experts.deleteDesc"),
-          destructive: !0,
-          onClose: () => S(null),
-          onSave: () => z(L.filter((H) => H.id !== C.id)),
-        }),
     ],
-  });
-}
-function IEt({ expert: e, existing: t, models: n, onClose: r, onSave: s }) {
-  const { t: i } = Xe(),
-    o = zp(),
-    [a, c] = y.useState(
-      e ?? {
-        id: "",
-        name: "",
-        description: "",
-        prompt: "",
-        skill_ids: [],
-        rule_ids: [],
-        builtin_tools: {},
-        connectors: [],
-        default_model: "",
-      },
-    ),
-    u = e === null,
-    d = a.id.trim().toLowerCase(),
-    f = /^[a-z0-9][a-z0-9_-]{0,63}$/.test(d) && (!u || !t.includes(d)),
-    h = f && !!(a.name.trim() && a.prompt.trim()),
-    p = {
-      [FF]: i("settings.experts.followDefault"),
-      ...Object.fromEntries(n.map((m) => [m.id, m.display_name])),
-    };
-  return l.jsxs(Ja, {
-    title: i(u ? "settings.experts.addLocal" : "settings.experts.editLocal"),
-    successText: i("settings.common.savedNextSession"),
-    onClose: r,
-    valid: h,
-    onSave: () => s({ ...a, id: d }),
-    children: [
-      l.jsxs("div", {
-        className: "grid grid-cols-2 gap-4",
-        children: [
-          l.jsxs(_r, {
-            children: [
-              l.jsx(Mr, {
-                htmlFor: "e-id",
-                children: i("settings.experts.name"),
-              }),
-              l.jsx(Nr, {
-                id: "e-id",
-                value: a.id,
-                placeholder: i("settings.experts.namePlaceholder"),
-                disabled: !u,
-                "aria-invalid": a.id !== "" && !f ? !0 : void 0,
-                onChange: (m) => c({ ...a, id: m.target.value }),
-              }),
-              l.jsx(sc, { children: i("settings.experts.nameHint") }),
-              a.id !== "" &&
-                !f &&
-                l.jsx("p", {
-                  role: "alert",
-                  className: "text-xs text-destructive",
-                  children: i("settings.experts.nameInvalid"),
-                }),
-            ],
-          }),
-          l.jsxs(_r, {
-            children: [
-              l.jsx(Mr, {
-                htmlFor: "e-name",
-                children: i("settings.experts.displayName"),
-              }),
-              l.jsx(Nr, {
-                id: "e-name",
-                value: a.name,
-                placeholder: i("settings.experts.displayNamePlaceholder"),
-                onChange: (m) => c({ ...a, name: m.target.value }),
-              }),
-            ],
-          }),
-        ],
-      }),
-      l.jsxs(_r, {
-        children: [
-          l.jsx(Mr, {
-            htmlFor: "e-desc",
-            children: i("settings.experts.description"),
-          }),
-          l.jsx(Nr, {
-            id: "e-desc",
-            value: a.description,
-            placeholder: i("settings.experts.descriptionPlaceholder"),
-            onChange: (m) => c({ ...a, description: m.target.value }),
-          }),
-        ],
-      }),
-      l.jsxs(_r, {
-        children: [
-          l.jsx(Mr, {
-            htmlFor: "e-model",
-            children: i("settings.experts.defaultModel"),
-          }),
-          l.jsxs(Dl, {
-            items: p,
-            value: a.default_model || FF,
-            onValueChange: (m) =>
-              c({ ...a, default_model: m && m !== FF ? String(m) : "" }),
-            children: [
-              l.jsx(Ol, { id: "e-model", children: l.jsx(Pl, {}) }),
-              l.jsx(Bl, {
-                children: Object.entries(p).map(([m, g]) =>
-                  l.jsx(_o, { value: m, children: g }, m),
-                ),
-              }),
-            ],
-          }),
-        ],
-      }),
-      l.jsxs(_r, {
-        children: [
-          l.jsx(Mr, {
-            htmlFor: "e-prompt",
-            children: i("settings.experts.systemPrompt"),
-          }),
-          l.jsx(nu, {
-            id: "e-prompt",
-            value: a.prompt,
-            placeholder: i("settings.experts.systemPromptPlaceholder"),
-            rows: 8,
-            onChange: (m) => c({ ...a, prompt: m.target.value }),
-          }),
-          l.jsx(sc, { children: i("settings.experts.systemPromptHint") }),
-        ],
-      }),
-      ["whitelist", "blacklist"].map((m) =>
-        l.jsxs(
-          _r,
-          {
-            children: [
-              l.jsx(Mr, {
-                htmlFor: "e-" + m,
-                children: i("settings.liveResources." + m),
-              }),
-              l.jsx(LEt, {
-                id: "e-" + m,
-                names: a.builtin_tools[m] ?? [],
-                change: (g) =>
-                  c({ ...a, builtin_tools: { ...a.builtin_tools, [m]: g } }),
-              }),
-              m === "whitelist" &&
-                l.jsx(sc, { children: i("settings.liveResources.filterHint") }),
-            ],
-          },
-          m,
-        ),
-      ),
-      l.jsx(Ife, {
-        title: i("settings.liveResources.kinds.skill"),
-        items: o ? hEe(o).map((m) => ({ id: m.id, name: m.name })) : [],
-        selected: a.skill_ids,
-        change: (m) => c({ ...a, skill_ids: m }),
-        unavailable: e ? o?.expertMissingSkills?.[e.id] : void 0,
-      }),
-      l.jsx(Ife, {
-        title: i("settings.liveResources.rules"),
-        items: [
-          ...(o?.server.rules ?? []),
-          ...(o?.rules
-            ? [
-                {
-                  id: "local/my-rules",
-                  name: i("settings.liveResources.myRule"),
-                },
-              ]
-            : []),
-        ],
-        selected: a.rule_ids,
-        change: (m) => c({ ...a, rule_ids: m }),
-      }),
-      l.jsx(dEe, {
-        items: o?.server.connectors ?? [],
-        value: a.connectors,
-        onChange: (m) => c({ ...a, connectors: m }),
-      }),
-    ],
-  });
-}
-function LEt({ id: e, names: t, change: n }) {
-  const [r, s] = y.useState(t.join(", "));
-  return l.jsx(Nr, {
-    id: e,
-    value: r,
-    onChange: (i) => {
-      (s(i.target.value),
-        n(
-          i.target.value
-            .split(",")
-            .map((o) => o.trim())
-            .filter(Boolean),
-        ));
-    },
   });
 }
 function Ife({ title: e, items: t, selected: n, change: r, unavailable: s }) {
@@ -143796,6 +143630,7 @@ function t_t() {
           children: C.error,
         }),
       !C?.keyPrefix &&
+        C?.state !== "ok" &&
         w.length > 0 &&
         l.jsx("p", {
           className: "text-xs text-destructive",
@@ -144053,6 +143888,12 @@ function s_t() {
                 children: wn(r),
               }),
             l.jsx(r_t, { current: t.goals.default_token_budget }),
+            t.goals.execution_supported === !1 &&
+              l.jsx("p", {
+                role: "status",
+                className: "text-sm text-muted-foreground",
+                children: e("errors.codes.goal_mode_unavailable"),
+              }),
           ],
         })
       : l.jsx("p", {
@@ -149285,7 +149126,7 @@ function t7t() {
     }
   };
 }
-function n7t({ server: e, valid: t }) {
+function n7t({ server: e, valid: t, originalName }) {
   const { t: n } = Xe(),
     r = yn((m) => m.testMcp),
     [s, i] = y.useState(!1),
@@ -149313,7 +149154,7 @@ function n7t({ server: e, valid: t }) {
       const m = d;
       (i(!0), a(null));
       try {
-        const g = await r(e);
+        const g = await r(e, originalName);
         u.current && f.current === m && a({ result: g });
       } catch (g) {
         u.current && f.current === m && a({ error: g });
@@ -149442,57 +149283,26 @@ const r7t = (e, t = "=") =>
     for (const r of e.split(`
 `)) {
       const s = r.indexOf(t);
-      s > 0 && (n[r.slice(0, s).trim()] = r.slice(s + 1).trim());
+      s > 0 && (n[r.slice(0, s).trim()] = r.slice(s + 1));
     }
     return Object.keys(n).length ? n : void 0;
   };
 function o7t({ server: e, onCreated: t, onClose: n, onSave: r }) {
   const { t: s } = Xe(),
     [i, o] = y.useState(e?.name ?? ""),
-    [a, c] = y.useState(e?.transport ?? "stdio"),
     [u, d] = y.useState(e?.command ?? ""),
-    [f, h] = y.useState((e?.args ?? []).join(" ")),
+    [f, h] = y.useState((e?.args ?? []).join("\n")),
     [p, m] = y.useState(s7t(e?.env, e?.maskedKeys?.env, "=")),
-    [g, b] = y.useState(e?.url ?? ""),
-    [v, w] = y.useState(q_t(e?.headers, e?.maskedKeys?.headers)),
     C = !!e?.maskedKeys?.env?.length,
-    S = e?.maskedKeys?.headers ?? [],
-    A = {
-      stdio: s("settings.tools.stdio"),
-      "streamable-http": s("settings.tools.http"),
-    },
-    _ = !!i.trim() && !/[\s/]/.test(i.trim()) && !i.includes("__"),
-    E =
-      _ &&
-      (a === "stdio" ? !!u.trim() : /^https?:\/\//.test(g.trim()) && EX(v, S)),
-    T = () => {
-      const M = {
-        ...(e?.tool_filter ? { tool_filter: e.tool_filter } : {}),
-        ...(e?.tool_states ? { tool_states: e.tool_states } : {}),
-        ...(e?.enabled === void 0 ? {} : { enabled: e.enabled }),
-      };
-      return a === "stdio"
-        ? {
-            ...M,
-            name: i.trim(),
-            transport: a,
-            command: u.trim(),
-            args: f.trim() ? f.trim().split(/\s+/) : void 0,
-            env: i7t(p, "="),
-          }
-        : {
-            ...M,
-            ...(e?.tls_insecure_skip_verify === void 0
-              ? {}
-              : { tls_insecure_skip_verify: e.tls_insecure_skip_verify }),
-            name: i.trim(),
-            transport: a,
-            url: g.trim(),
-            headers: v.length
-              ? Object.fromEntries(v.map((I) => [I.key.trim(), I.value.trim()]))
-              : void 0,
-          };
-    };
+    validName = !!e || (!!i.trim() && !/[\s/\\]/.test(i.trim()) && !i.includes("__")),
+    E = validName && !!u.trim(),
+    T = () => ({
+      name: e?.name ?? i.trim(),
+      transport: "stdio",
+      command: u.trim(),
+      args: f === (e?.args ?? []).join("\n") ? e?.args : f.split(/\r?\n/).filter(Boolean),
+      env: i7t(p, "="),
+    });
   return l.jsxs(Ja, {
     title: s(e ? "settings.tools.editTitle" : "settings.tools.addLocal"),
     successText: s("settings.liveResources.saved"),
@@ -149512,8 +149322,9 @@ function o7t({ server: e, onCreated: t, onClose: n, onSave: r }) {
               }),
               l.jsx(Nr, {
                 id: "s-name",
+                disabled: !!e,
                 value: i,
-                "aria-invalid": !!i && !_,
+                "aria-invalid": !!i && !validName,
                 onChange: (M) => o(M.target.value),
               }),
               l.jsx(sc, {
@@ -149527,119 +149338,67 @@ function o7t({ server: e, onCreated: t, onClose: n, onSave: r }) {
                 htmlFor: "s-transport",
                 children: s("settings.tools.transport"),
               }),
-              l.jsxs(Dl, {
-                items: A,
-                value: a,
-                onValueChange: (M) => M && c(M),
-                children: [
-                  l.jsx(Ol, { id: "s-transport", children: l.jsx(Pl, {}) }),
-                  l.jsxs(Bl, {
-                    children: [
-                      l.jsx(_o, { value: "stdio", children: A.stdio }),
-                      l.jsx(_o, {
-                        value: "streamable-http",
-                        children: A["streamable-http"],
-                      }),
-                    ],
-                  }),
-                ],
+              l.jsx("p", {
+                id: "s-transport",
+                className: "text-sm",
+                children: s("settings.tools.stdio"),
               }),
             ],
           }),
         ],
       }),
-      a === "stdio"
-        ? l.jsxs(l.Fragment, {
-            children: [
-              l.jsxs(_r, {
-                children: [
-                  l.jsx(Mr, {
-                    htmlFor: "s-cmd",
-                    children: s("settings.tools.command"),
-                  }),
-                  l.jsx(Nr, {
-                    id: "s-cmd",
-                    value: u,
-                    placeholder: "npx",
-                    onChange: (M) => d(M.target.value),
-                  }),
-                ],
-              }),
-              l.jsxs(_r, {
-                children: [
-                  l.jsx(Mr, {
-                    htmlFor: "s-args",
-                    children: s("settings.tools.args"),
-                  }),
-                  l.jsx(Nr, {
-                    id: "s-args",
-                    value: f,
-                    placeholder:
-                      "-y @modelcontextprotocol/server-filesystem /tmp",
-                    onChange: (M) => h(M.target.value),
-                  }),
-                  l.jsx(sc, { children: s("settings.tools.argsHint") }),
-                ],
-              }),
-              l.jsxs(_r, {
-                children: [
-                  l.jsx(Mr, {
-                    htmlFor: "s-env",
-                    children: s("settings.tools.env"),
-                  }),
-                  l.jsx(nu, {
-                    id: "s-env",
-                    value: p,
-                    className: "font-mono text-xs",
-                    rows: 3,
-                    onChange: (M) => m(M.target.value),
-                  }),
-                  l.jsx(sc, { children: s("settings.tools.envHint") }),
-                  C &&
-                    l.jsx(sc, {
-                      "data-testid": "masked-env-hint",
-                      children: s("settings.tools.maskedHint"),
-                    }),
-                ],
-              }),
-            ],
-          })
-        : l.jsxs(l.Fragment, {
-            children: [
-              l.jsxs(_r, {
-                children: [
-                  l.jsx(Mr, {
-                    htmlFor: "s-url",
-                    children: s("settings.tools.url"),
-                  }),
-                  l.jsx(Nr, {
-                    id: "s-url",
-                    value: g,
-                    placeholder: "https://mcp.example.com/db",
-                    onChange: (M) => b(M.target.value),
-                  }),
-                ],
-              }),
-              l.jsxs(_r, {
-                children: [
-                  l.jsx(Mr, { children: s("settings.tools.headers") }),
-                  l.jsx(_X, {
-                    idPrefix: "s",
-                    rows: v,
-                    onChange: w,
-                    masked: S,
-                    hint: s("settings.tools.headersHint"),
-                  }),
-                  S.length > 0 &&
-                    l.jsx(sc, {
-                      "data-testid": "masked-headers-hint",
-                      children: s("settings.tools.maskedHint"),
-                    }),
-                ],
-              }),
-            ],
+      l.jsxs(_r, {
+        children: [
+          l.jsx(Mr, {
+            htmlFor: "s-cmd",
+            children: s("settings.tools.command"),
           }),
-      l.jsx(n7t, { server: T(), valid: E }),
+          l.jsx(Nr, {
+            id: "s-cmd",
+            value: u,
+            placeholder: "npx",
+            onChange: (M) => d(M.target.value),
+          }),
+        ],
+      }),
+      l.jsxs(_r, {
+        children: [
+          l.jsx(Mr, {
+            htmlFor: "s-args",
+            children: s("settings.tools.args"),
+          }),
+          l.jsx(nu, {
+            id: "s-args",
+            value: f,
+            rows: 3,
+            placeholder: "-y\n@modelcontextprotocol/server-filesystem\n/tmp",
+            onChange: (M) => h(M.target.value),
+          }),
+          l.jsx(sc, { children: s("settings.tools.argsHint") }),
+        ],
+      }),
+      l.jsxs(_r, {
+        children: [
+          l.jsx(Mr, {
+            htmlFor: "s-env",
+            children: s("settings.tools.env"),
+          }),
+          l.jsx(nu, {
+            id: "s-env",
+            value: p,
+            className: "font-mono text-xs",
+            rows: 3,
+            onChange: (M) => m(M.target.value),
+          }),
+          l.jsx(sc, { children: s("settings.tools.envHint") }),
+          C &&
+            l.jsx(sc, {
+              "data-testid": "masked-env-hint",
+              children: s("settings.tools.maskedHint"),
+            }),
+        ],
+      }),
+      l.jsx(n7t, { originalName: e?.name ?? "", server: T(), valid: E }),
     ],
   });
 }
@@ -149783,7 +149542,7 @@ function a7t() {
   const { t: e } = Xe(),
     t = ir((O) => O.account?.user.id),
     { config: n, loading: r, error: s } = Py(),
-    i = yn((O) => O.saveMcp),
+    i = yn((O) => O.saveLocalMcp),
     o = yn((O) => O.setResourceEnabled),
     a = e7t(),
     c = t7t(),
@@ -150013,12 +149772,7 @@ function a7t() {
                   server: p.server,
                   onCreated: E.showCreated,
                   onClose: () => m(null),
-                  onSave: (O) =>
-                    i(
-                      p.server
-                        ? n.mcp.map((N) => (N.name === p.server.name ? O : N))
-                        : [...n.mcp, O],
-                    ),
+                  onSave: (O) => i({ name: p.server?.name ?? "", server: O }),
                 },
                 p.server?.name ?? "new",
               ),
@@ -150028,7 +149782,7 @@ function a7t() {
                 description: e("settings.tools.deleteLocalHint"),
                 destructive: !0,
                 onClose: () => b(null),
-                onSave: () => i(n.mcp.filter((O) => O.name !== g.name)),
+                onSave: () => i({ name: g.name, delete: true }),
               }),
           ],
         })
@@ -150909,7 +150663,15 @@ function v7t() {
   const { t: e } = Xe(),
     { status: t, loading: n, refresh: r } = GEe(),
     s = KEe(),
-    i = ir((o) => o.account?.id);
+    i = ir((o) => o.account?.id),
+    [sharedPage, setSharedPage] = y.useState(null),
+    loadSharedPage = (action) => s.run(async () => {
+      const result = await et.browserControl.sharedPage(action);
+      if (!result || action === "read") setSharedPage(result ?? false);
+    });
+  y.useEffect(() => {
+    setSharedPage(null);
+  }, [t.stateVersion, i]);
   return et.kind !== "electron"
     ? l.jsx("p", {
         className: "text-sm text-muted-foreground",
@@ -150935,7 +150697,32 @@ function v7t() {
                     l.jsx(XEe, { status: t }),
                     l.jsx("p", {
                       className: "browser-control-hint",
-                      children: e("browserControl.connectedHint"),
+                      children: e("browserControl.sharedHint"),
+                    }),
+                    et.browserControl.sharedPage && l.jsxs(l.Fragment, {
+                      children: [
+                        l.jsxs("div", {
+                          className: "browser-control-actions",
+                          children: [
+                            l.jsx(Te, { size: "sm", variant: "outline", disabled: s.busy,
+                              onClick: () => loadSharedPage("read"), children: e("browserControl.sharedRead") }),
+                            l.jsx(Te, { size: "sm", variant: "outline", disabled: s.busy,
+                              onClick: () => loadSharedPage("focus"), children: e("browserControl.sharedFocus") }),
+                          ],
+                        }),
+                        sharedPage === false && l.jsx("p", {
+                          role: "status", className: "browser-control-hint", children: e("browserControl.sharedEmpty"),
+                        }),
+                        sharedPage && l.jsxs("div", {
+                          className: "browser-connection-help",
+                          children: [
+                            l.jsx("strong", { children: sharedPage.title || sharedPage.url }),
+                            l.jsx("p", { className: "browser-control-hint break-all", children: sharedPage.url }),
+                            l.jsx("pre", { className: "max-h-64 overflow-auto whitespace-pre-wrap break-words select-text",
+                              children: sharedPage.text }),
+                          ],
+                        }),
+                      ],
                     }),
                   ],
                 }),
@@ -158782,7 +158569,7 @@ function f_e({ experts: e, value: t, onSelect: n, ...r }) {
     },
     d = (v) => ASe({ ...v, selected: v.id === t }, v),
     f = e.find((v) => v.id === "monkeyai-design"),
-    h = [u, ...(f ? [f] : [])].map(d),
+    h = [u, ...(f ? [{ ...f, name: s("home.designExpert") }] : [])].map(d),
     { ordered: p } = Zw(e.filter((v) => v.id !== "monkeyai-design").map(d), x6),
     m = h.filter((v) => Ym(v, i)),
     g = p.filter((v) => Ym(v, i)),
@@ -159922,7 +159709,7 @@ function b_e({
     m = sL(
       (h ? f.expert : void 0) ?? d?.expertSummaries.find((C) => C.id === p),
     ),
-    g = m?.name ?? (p || a("home.generalExpert")),
+    g = p === "monkeyai-design" ? a("home.designExpert") : (m?.name ?? (p || a("home.generalExpert"))),
     b = `composer-expert-avatar${p === "monkeyai-design" ? " composer-expert-avatar-design" : ""}`,
     v = l.jsx(z0, {
       kind: "expert",
@@ -161918,6 +161705,22 @@ function PTt({
     Kt = Math.min(pt, Math.max(0, un.length - 1)),
     Lr = ETt(kt, qe, Ee, In || en),
     Mn = y.useRef(!0);
+  y.useEffect(() => {
+    const restore = (key) => {
+      const saved = W_(key);
+      const current = pe.current;
+      if (key !== t || !saved || current.text || current.files.length || current.editing) return;
+      pe.current = saved;
+      ae(saved);
+      Qe(saved.text.length);
+      St(saved.text.length);
+    };
+    draftHydrationListeners.add(restore);
+    restore(t);
+    return () => {
+      draftHydrationListeners.delete(restore);
+    };
+  }, [t]);
   y.useEffect(() => {
     V && ln(V, void 0, `composer:${t}`);
   }, [V, t]);
@@ -196186,17 +195989,6 @@ addEventListener('pagehide',function(){observer.disconnect()});
     ? r.replace(/<\/body>/i, `${n}</body>`)
     : `${r}${n}`;
 }
-function KPt(e) {
-  return (
-    /<script\b[^>]*\bsrc\s*=/i.test(e) ||
-    (e.match(/<link\b[^>]*>/gi) ?? []).some(
-      (t) =>
-        /\brel\s*=\s*(?:"[^"]*\bstylesheet\b|'[^']*\bstylesheet\b|stylesheet\b)/i.test(
-          t,
-        ) && /\bhref\s*=/i.test(t),
-    )
-  );
-}
 const K9e = (e) =>
     e.operation !== "deleted" &&
     (CQ(e.path) ||
@@ -202106,13 +201898,13 @@ async function jz(e) {
     throw new Error("pptx_layout_validation_unavailable");
   const r = ir.getState().account?.id;
   if (!r) throw new Error("account_unavailable");
-  if (window.monkeyai?.storePrivateSlideDeck && (await et.getRuntimeEndpoint())?.sourcePreview) {
+  if (window.aibertai?.storePrivateSlideDeck && (await et.getRuntimeEndpoint())?.sourcePreview) {
     const { manifestPath, slideCount } = await Jr("canvas_prepare_pptx", { sessionId: e.sessionId });
     return tFt({
       ...e, fileName: t,
       persist: async (blob, count) => {
         if (count !== slideCount) throw new Error("invalid_pptx_slide_order");
-        return window.monkeyai.storePrivateSlideDeck(
+        return window.aibertai.storePrivateSlideDeck(
           { accountId: r, sessionId: e.sessionId },
           new Uint8Array(await blob.arrayBuffer()),
           count,
@@ -211379,7 +211171,7 @@ ${rt.content}`,
                   }),
                 ],
               }),
-            l.jsxs("button", {
+            Ve.length > 0 ? l.jsxs("button", {
               ref: Q,
               type: "button",
               className: "design-video-settings-trigger",
@@ -211417,6 +211209,10 @@ ${rt.content}`,
                   ],
                 }),
               ],
+            }) : l.jsx("span", {
+              className: "design-video-submit-status",
+              role: "status",
+              children: "暂无可用的视频模型",
             }),
             l.jsx("span", { className: "design-video-control-spacer" }),
             p &&
@@ -211800,7 +211596,7 @@ function Szt({
                   }),
                 ],
               }),
-            l.jsxs("button", {
+            I.length > 0 ? l.jsxs("button", {
               ref: E,
               type: "button",
               className: "design-image-settings-trigger",
@@ -211824,6 +211620,10 @@ function Szt({
                 l.jsx("span", { children: "·" }),
                 l.jsx("span", { children: F.toLowerCase() || "不可用" }),
               ],
+            }) : l.jsx("span", {
+              className: "design-image-submit-status",
+              role: "status",
+              children: "暂无可用的图片模型",
             }),
             l.jsx("span", { className: "design-image-control-spacer" }),
             u &&
@@ -258389,7 +258189,7 @@ function ctn({
         (_i(!0), hr(null));
         try {
           if (U === "editable") {
-            if (ts()?.transport !== "relay" && window.monkeyai?.storePrivateSlideDeck && (await et.getRuntimeEndpoint())?.sourcePreview) {
+            if (ts()?.transport !== "relay" && window.aibertai?.storePrivateSlideDeck && (await et.getRuntimeEndpoint())?.sourcePreview) {
               await jz({
                 sessionId: e, designPath: n, nodes: Xp(), title: J?.title,
                 mode: "editable", saveDialog: !1, onProgress: hr,
@@ -266538,7 +266338,7 @@ function Btn({ value: e, onValue: t, onNavigate: n }) {
         children: [
           l.jsx("img", {
             className: "design-browser-start-mark",
-            src: "/browser-sites/monkeyai-browser.gif",
+            src: "/browser-sites/aibertai-browser.gif",
             alt: "AIbertAI浏览器",
           }),
           l.jsx("form", {
@@ -272384,30 +272184,7 @@ function Enn({
                                     path: t.path,
                                     fileRef: t.fileRef,
                                   })
-                                : G === "preview" &&
-                                    u.kind === "html" &&
-                                    !_ &&
-                                    KPt(u.content ?? "")
-                                  ? l.jsxs("div", {
-                                      className: "file-panel-empty",
-                                      children: [
-                                        l.jsx("p", {
-                                          children: a(
-                                            "workspace.files.needsServer",
-                                          ),
-                                        }),
-                                        l.jsx(Te, {
-                                          variant: "outline",
-                                          size: "sm",
-                                          onClick: () =>
-                                            ji.getState().show(e, "terminal"),
-                                          children: a(
-                                            "workspace.tabs.terminal",
-                                          ),
-                                        }),
-                                      ],
-                                    })
-                                  : G === "preview" && u.kind === "html" && r
+                                : G === "preview" && u.kind === "html" && r
                                     ? l.jsx(XJ, {
                                         scope: c,
                                         path: _ ? u.path : t.path,
@@ -272916,7 +272693,7 @@ function jnn({ treeId: e, width: t, onResize: n }) {
     },
   });
 }
-function Mnn(e, t, n, r = "") {
+function Mnn(e, t, n, r) {
   const [s, i] = y.useState({}),
     o = y.useRef(s),
     a = y.useRef(0),
@@ -273708,6 +273485,12 @@ function Unn(e, t, n) {
               m = await p(c);
             if (m.kind !== "html" || typeof m.content != "string")
               throw new Error("HTML preview unavailable");
+            if (et.kind === "electron" && ts()?.transport !== "relay" && window.aibertai?.privateDesignWorkspace) {
+              const content = t.deck
+                ? qIe(m.content, a?.contentWidth ?? a?.width, a?.contentHeight ?? a?.height)
+                : VIe(m.content);
+              return { content, url: null };
+            }
             const g = (C) =>
                 h
                   .request(wi.workspaceLink.name, {
@@ -273735,6 +273518,7 @@ function Unn(e, t, n) {
               s((m) => ({
                 key: u,
                 content: h,
+                path: c,
                 navigation: { id: (m?.navigation.id ?? 0) + 1, url: p },
               }));
           })
@@ -274341,6 +274125,8 @@ function Qnn({
             node: _,
             revision: `${s}:${g}`,
           })
+        : I?.navigation.url === null
+          ? l.jsx(XJ, { scope: e, path: I.path, content: I.content, pageTurns: i }, I.navigation.id)
         : B
           ? l.jsx(Jnn, {
               identity: B.identity,
@@ -274393,7 +274179,7 @@ function Qnn({
       scope: e,
       active: o,
       navigation:
-        _ && !O ? (B?.published.navigation ?? I?.navigation ?? a) : null,
+        _ && !O && I?.navigation.url !== null ? (B?.published.navigation ?? I?.navigation ?? a) : null,
       navigationTarget: "main",
       onShowCanvas: c,
       surfaceNavigation: u,

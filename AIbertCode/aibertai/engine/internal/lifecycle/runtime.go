@@ -24,6 +24,10 @@ type RuntimePackage struct {
 func ValidRuntimeVersion(value string) bool { return runtimeVersion.MatchString(value) }
 
 func (p RuntimePackage) SingleFile() bool { return len(p.Files) == 1 }
+func (p RuntimePackage) SourceRuntime() bool {
+	_, ok := p.Files["aibertai-native"]
+	return p.SingleFile() && ok
+}
 func (p RuntimePackage) Validate() error {
 	if !ValidRuntimeVersion(p.Version) || (p.Architecture != "amd64" && p.Architecture != "arm64") || (len(p.Files) != 4 && !p.SingleFile()) {
 		return errors.New("runtime 发行版本或架构无效")
@@ -31,9 +35,16 @@ func (p RuntimePackage) Validate() error {
 	names := []string{"monkeyai-runtime", "ohmyagent", "LICENSES.txt", "bundle.json"}
 	if p.SingleFile() {
 		names = names[:1]
+		if p.SourceRuntime() {
+			names = []string{"aibertai-native"}
+		}
 	}
 	if p.SingleFile() || p.RuntimeRevision != "" || p.EngineRevision != "" {
-		for _, revision := range []string{p.RuntimeRevision, p.EngineRevision} {
+		revisions := []string{p.RuntimeRevision, p.EngineRevision}
+		if p.SourceRuntime() && p.EngineRevision == "" {
+			revisions = revisions[:1]
+		}
+		for _, revision := range revisions {
 			if len(revision) != 40 || strings.Trim(revision, "0123456789abcdef") != "" {
 				return errors.New("runtime 源码修订无效")
 			}

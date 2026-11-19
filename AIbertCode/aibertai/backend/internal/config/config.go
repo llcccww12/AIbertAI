@@ -6,10 +6,11 @@ import (
 	"log/slog"
 	"net"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"aibertai.local/backend/internal/envconfig"
 )
 
 const defaultLogLevel = slog.LevelWarn
@@ -51,62 +52,62 @@ type Config struct {
 }
 
 func Load(args []string) (Config, error) {
-	addr := os.Getenv("MONKEYAI_HTTP_ADDR")
+	addr := envconfig.Getenv("AIBERTAI_HTTP_ADDR")
 	if addr == "" {
 		addr = ":8080"
 	}
-	pprofAddr := os.Getenv("MONKEYAI_PPROF_ADDR")
+	pprofAddr := envconfig.Getenv("AIBERTAI_PPROF_ADDR")
 	if pprofAddr == "" {
 		pprofAddr = "127.0.0.1:6060"
 	}
 
 	shutdownTimeout := 10 * time.Second
-	if value := os.Getenv("MONKEYAI_SHUTDOWN_TIMEOUT"); value != "" {
+	if value := envconfig.Getenv("AIBERTAI_SHUTDOWN_TIMEOUT"); value != "" {
 		parsed, err := time.ParseDuration(value)
 		if err != nil {
-			return Config{}, fmt.Errorf("解析 MONKEYAI_SHUTDOWN_TIMEOUT: %w", err)
+			return Config{}, fmt.Errorf("解析 AIBERTAI_SHUTDOWN_TIMEOUT: %w", err)
 		}
 		shutdownTimeout = parsed
 	}
 
-	logLevel := os.Getenv("MONKEYAI_LOG_LEVEL")
+	logLevel := envconfig.Getenv("AIBERTAI_LOG_LEVEL")
 	if logLevel == "" {
 		logLevel = defaultLogLevel.String()
 	}
 
-	endpointMax, err := strconv.Atoi(envOr("MONKEYAI_ENDPOINT_MAX_CONNECTIONS", "1000"))
+	endpointMax, err := strconv.Atoi(envOr("AIBERTAI_ENDPOINT_MAX_CONNECTIONS", "1000"))
 	if err != nil {
 		return Config{}, fmt.Errorf("解析端点连接上限: %w", err)
 	}
-	runtimeRelay, err := strconv.ParseBool(envOr("MONKEYAI_RUNTIME_RELAY", "true"))
+	runtimeRelay, err := strconv.ParseBool(envOr("AIBERTAI_RUNTIME_RELAY", "true"))
 	if err != nil {
 		return Config{}, fmt.Errorf("解析远程执行开关: %w", err)
 	}
 	cfg := Config{
-		ImageStateDir:                os.Getenv("MONKEYAI_ENVIRONMENT_IMAGE_STATE_DIR"),
-		ImageImportDir:               os.Getenv("MONKEYAI_ENVIRONMENT_IMAGE_IMPORT_DIR"),
-		RuntimeReleaseDir:            os.Getenv("MONKEYAI_ENVIRONMENT_RUNTIME_DIR"),
-		RuntimeVersion:               os.Getenv("MONKEYAI_ENVIRONMENT_RUNTIME_VERSION"),
-		EngineReleaseDir:             os.Getenv("MONKEYAI_ENGINE_RELEASE_DIR"),
-		EngineVersion:                os.Getenv("MONKEYAI_ENGINE_VERSION"),
+		ImageStateDir:                envconfig.Getenv("AIBERTAI_ENVIRONMENT_IMAGE_STATE_DIR"),
+		ImageImportDir:               envconfig.Getenv("AIBERTAI_ENVIRONMENT_IMAGE_IMPORT_DIR"),
+		RuntimeReleaseDir:            envconfig.Getenv("AIBERTAI_ENVIRONMENT_RUNTIME_DIR"),
+		RuntimeVersion:               envconfig.Getenv("AIBERTAI_ENVIRONMENT_RUNTIME_VERSION"),
+		EngineReleaseDir:             envconfig.Getenv("AIBERTAI_ENGINE_RELEASE_DIR"),
+		EngineVersion:                envconfig.Getenv("AIBERTAI_ENGINE_VERSION"),
 		Design:                       loadDesign(),
-		RuntimeDesktopOrigins:        strings.FieldsFunc(os.Getenv("MONKEYAI_RUNTIME_DESKTOP_ORIGINS"), func(r rune) bool { return r == ',' || r == ' ' }),
+		RuntimeDesktopOrigins:        strings.FieldsFunc(envconfig.Getenv("AIBERTAI_RUNTIME_DESKTOP_ORIGINS"), func(r rune) bool { return r == ',' || r == ' ' }),
 		RuntimeRelay:                 runtimeRelay,
-		RuntimeStateDir:              envOr("MONKEYAI_RUNTIME_STATE_DIR", "data/runtime"),
-		RuntimeServerID:              os.Getenv("MONKEYAI_RUNTIME_SERVER_ID"),
-		RuntimeVerificationKeysFile:  os.Getenv("MONKEYAI_RUNTIME_VERIFICATION_KEYS_FILE"),
-		RuntimeSigningKeyFile:        os.Getenv("MONKEYAI_RUNTIME_SIGNING_KEY_FILE"),
-		RuntimePreviewOriginTemplate: os.Getenv("MONKEYAI_RUNTIME_PREVIEW_ORIGIN_TEMPLATE"),
-		RuntimeFilesOrigin:           os.Getenv("MONKEYAI_RUNTIME_FILES_ORIGIN"),
+		RuntimeStateDir:              envOr("AIBERTAI_RUNTIME_STATE_DIR", "data/runtime"),
+		RuntimeServerID:              envconfig.Getenv("AIBERTAI_RUNTIME_SERVER_ID"),
+		RuntimeVerificationKeysFile:  envconfig.Getenv("AIBERTAI_RUNTIME_VERIFICATION_KEYS_FILE"),
+		RuntimeSigningKeyFile:        envconfig.Getenv("AIBERTAI_RUNTIME_SIGNING_KEY_FILE"),
+		RuntimePreviewOriginTemplate: envconfig.Getenv("AIBERTAI_RUNTIME_PREVIEW_ORIGIN_TEMPLATE"),
+		RuntimeFilesOrigin:           envconfig.Getenv("AIBERTAI_RUNTIME_FILES_ORIGIN"),
 		Addr:                         addr,
 		EndpointMaxConnections:       endpointMax,
 		PprofAddr:                    pprofAddr,
 		ShutdownTimeout:              shutdownTimeout,
-		URL:                          os.Getenv("MONKEYAI_DATABASE_URL"),
-		PublicURL:                    envOr("MONKEYAI_PUBLIC_URL", "http://localhost:8080"),
-		InitialAdminName:             envOr("MONKEYAI_INITIAL_ADMIN_NAME", "MonkeyAI Admin"),
-		InitialAdminEmail:            strings.TrimSpace(os.Getenv("MONKEYAI_INITIAL_ADMIN_EMAIL")),
-		InitialAdminPassword:         os.Getenv("MONKEYAI_INITIAL_ADMIN_PASSWORD"),
+		URL:                          envconfig.Getenv("AIBERTAI_DATABASE_URL"),
+		PublicURL:                    envOr("AIBERTAI_PUBLIC_URL", "http://localhost:8080"),
+		InitialAdminName:             envOr("AIBERTAI_INITIAL_ADMIN_NAME", "AIbertAI 管理员"),
+		InitialAdminEmail:            strings.TrimSpace(envconfig.Getenv("AIBERTAI_INITIAL_ADMIN_EMAIL")),
+		InitialAdminPassword:         envconfig.Getenv("AIBERTAI_INITIAL_ADMIN_PASSWORD"),
 	}
 
 	if err := parseFlags(args, &cfg, &logLevel); err != nil {
@@ -127,7 +128,7 @@ func Load(args []string) (Config, error) {
 	}
 	cfg.URL = strings.TrimSpace(cfg.URL)
 	if cfg.URL == "" {
-		return Config{}, errors.New("MONKEYAI_DATABASE_URL 或 -database-url 不能为空")
+		return Config{}, errors.New("AIBERTAI_DATABASE_URL 或 -database-url 不能为空")
 	}
 	cfg.PublicURL = strings.TrimRight(strings.TrimSpace(cfg.PublicURL), "/")
 	if cfg.PublicURL == "" {
@@ -164,7 +165,7 @@ func Load(args []string) (Config, error) {
 }
 
 func envOr(key, fallback string) string {
-	if value := os.Getenv(key); value != "" {
+	if value := envconfig.Getenv(key); value != "" {
 		return value
 	}
 	return fallback

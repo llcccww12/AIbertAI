@@ -59,6 +59,9 @@ func (s *Service) Get(version, arch string) (environment.RuntimePackage, error) 
 	if release.Version != version {
 		return release, errors.New("runtime 版本不一致")
 	}
+	if !release.SourceRuntime() {
+		return release, errors.New("仅提供 AIbertAI 源码运行时")
+	}
 	if err := release.Validate(arch); err != nil {
 		return release, err
 	}

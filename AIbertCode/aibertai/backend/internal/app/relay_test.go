@@ -22,6 +22,7 @@ import (
 	"uuid"
 
 	"aibertai.local/backend/internal/config"
+	"aibertai.local/backend/internal/envconfig"
 	"aibertai.local/backend/internal/relay"
 	"github.com/coder/websocket"
 	"github.com/jackc/pgx/v5"
@@ -43,7 +44,7 @@ func (connectorQueryTrace) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQu
 
 func TestRuntimeRelayApplication(t *testing.T) {
 	dsn := os.Getenv("MONKEYAI_TEST_DATABASE_URL")
-	if dsn == "" || os.Getenv("MONKEYAI_S3_ENDPOINT") == "" {
+	if dsn == "" || envconfig.Getenv("AIBERTAI_S3_ENDPOINT") == "" {
 		t.Skip("需要隔离 PostgreSQL 和 RustFS 测试环境")
 	}
 	ctx := t.Context()

@@ -223,13 +223,12 @@ function nativeView(owner, container, partition, options2) {
 }
 const modernPlatform = {
   supportsWindowOpenView: true,
-  features: { design: true, browserControl: true, chromeImport: true, officePreview: true },
-  appName: "MonkeyAI",
+  features: { design: true, browserControl: true, chromeImport: process.platform !== "win32", officePreview: true },
+  appName: "AIbertAI",
   appScheme: "monkeyai",
   developmentAppScheme: "monkeyai-dev",
-  webDist: "dist",
   updateUrlEnvironment: "AIBERTAI_UPDATE_URL",
-  userDataEnvironment: "MONKEYAI_USER_DATA",
+  userDataEnvironment: "AIBERTAI_USER_DATA",
   WebSocket,
   createWorkbench(ownerId, windowId, preferences) {
     let owner = electron.BrowserWindow.fromId(windowId);
@@ -541,7 +540,7 @@ const ErrorCode = {
   // 前端：资源在编辑期间被修改
   // 数据存储位置（docs/DATA-LOCATION-PLAN.md）
   dataLocationLocked: "data_location_locked",
-  // MONKEYAI_USER_DATA 指定了数据目录，不能在设置里更改
+  // 环境变量指定了数据目录，不能在设置里更改
   dataLocationUnchanged: "data_location_unchanged",
   // 所选位置就是当前数据目录
   dataLocationNested: "data_location_nested",
@@ -563,7 +562,7 @@ const ErrorCode = {
   // 复制后核对文件数或大小不一致
   dataLocationCancelled: "data_location_cancelled",
   dataLocationNotData: "data_location_not_data",
-  // 指回已有数据时，所选文件夹不是 MonkeyAI 数据目录
+  // 指回已有数据时，所选文件夹不是 AIbertAI 数据目录
   dataLocationBusy: "data_location_busy",
   // 所选位置的旧数据正在删除或删到一半，不能切过去，也不能往里复制
   dataLocationUnsupported: "data_location_unsupported",
@@ -1223,7 +1222,7 @@ const capabilityRegisterParams = described({ manifest: "object" }, "manifest 按
     throw error;
   }
 });
-const MONKEYAI_METHODS = {
+const AIBERTAI_METHODS = {
   // ---------- 账号知识库；不经过执行设备的远程通道 ----------
   knowledgeBasesList: request("_monkeyai/kb/list", "分页查询账号可访问的知识库", shape({ serverUrl: "string", userId: "string", owner: ["all", "team", "mine", "shared"], page: "number", page_size: "number", q: "string?", tag_ids: "string[]?" })),
   knowledgeBasesGet: request("_monkeyai/kb/get", "读取知识库详情和 ETag", shape({ serverUrl: "string", userId: "string", id: "string" })),
@@ -1353,7 +1352,6 @@ const MONKEYAI_METHODS = {
   configWorkspaceSet: request("_monkeyai/config/workspace/set", "保存额外工作目录；引擎只在启动时读取它，返回值的 requiresRestart 为 true 时需重启引擎才生效", shape({ additional_directories: "string[]?" })),
   configDisplaySet: request("_monkeyai/config/display/set", "保存摘要偏好；tool_summaries 为旧展示偏好，tool_use_summaries 仅控制当前和后续会话的执行中进度摘要生成，默认关闭；执行后批次小结不再生成", shape({ tool_summaries: "boolean?", tool_use_summaries: "boolean?" })),
   configGoalsSet: request("_monkeyai/config/goals/set", "保存新建持续目标的默认 Token 预算；正安全整数，null 恢复系统默认的 200000000 Token，不改变已有目标", shape({ default_token_budget: "number|null" })),
-  configExpertsSet: request("_monkeyai/config/experts/set", "保存本机专家", shape({ experts: "array?" })),
   configSkillsImport: request("_monkeyai/config/skills/import", "导入本机技能", shape({ path: "string" })),
   configSkillsRemove: request("_monkeyai/config/skills/remove", "移除本机技能", shape({ name: "string" })),
   groupsSearch: request("_monkeyai/groups/search", "搜索分组（共享对象）；q 为空时按名称列出前 limit 个", shape({ q: "string", limit: "number?" })),
@@ -1391,8 +1389,6 @@ const MONKEYAI_METHODS = {
   resourcesConnectorsAuthorize: request("_monkeyai/resources/connectors/authorize", "发起连接器授权", shape({ ...byId, name: "string", credentialId: "string?", etag: "string?" })),
   resourcesConnectorsAuthorization: request("_monkeyai/resources/connectors/authorization", "连接器授权状态", shape(byId)),
   // ---------- 设计资源 ----------
-  // config 是唯一用固定路径拼的控制面请求；服务端默认返回的 base 即 {monkeyaiServer}/api/v1/design-resources
-  designResourcesConfig: request("_monkeyai/design/resources/config", "读取设计资源来源配置：respub base、本地 base 与当前快照；不含任何 secret", shape({})),
   designResourcesToken: request("_monkeyai/design/resources/token", "按目标申请短期设计资源 token：respub 用于 hub，monkeyai-media 仅用于本地媒体；machine_id 由 runtime 自行填充，token 只留在内存", shape({ target: ["respub", "monkeyai-media"], refresh: "boolean?" })),
   // ---------- 运行时 → 客户端 ----------
   skillPackagesChanged: notify("_monkeyai/resources/skills/packages/changed", "技能包状态增量"),
@@ -1512,10 +1508,11 @@ function bundled(name) {
 function override(name) {
   return electron.app.isPackaged ? void 0 : process.env[name] || void 0;
 }
-let packagedSourceEmployee;
+let employeeRuntime;
 function sourceEmployeeRuntime() {
+  if (employeeRuntime) return employeeRuntime;
+  let file = override("AIBERTAI_SOURCE_WORKSPACE_FILE") ?? "";
   if (electron.app.isPackaged) {
-    if (packagedSourceEmployee !== void 0) return packagedSourceEmployee;
     let config;
     try {
       config = JSON.parse(node_fs.readFileSync(node_path.join(resourcesDir, "employee-source.json"), "utf8"));
@@ -1523,91 +1520,17 @@ function sourceEmployeeRuntime() {
       throw new Error("invalid_source_employee_configuration");
     }
     if (config?.version !== 1) throw new Error("invalid_source_employee_configuration");
-    const executable = bundled("aibertai-native");
-    if (!node_fs.lstatSync(executable, { throwIfNoEntry: false })?.isFile()) throw new Error("source_runtime_executable_required");
     const fixture = node_path.join(resourcesDir, "employee-acceptance.txt");
-    return packagedSourceEmployee = Object.freeze({
-      executable,
-      file: node_fs.existsSync(fixture) ? fixture : ""
-    });
+    if (node_fs.existsSync(fixture)) file = fixture;
   }
-  const file = override("AIBERTAI_SOURCE_WORKSPACE_FILE");
-  if (!file && process.env.AIBERTAI_SOURCE_EMPLOYEE !== "1") return null;
-  const executable = override("AIBERTAI_KNOWLEDGE_RUNTIME_BIN");
-  if (!executable) throw new Error("source_runtime_executable_required");
-  return { executable, file: file ?? "" };
+  const executable = override("AIBERTAI_KNOWLEDGE_RUNTIME_BIN") ?? bundled("aibertai-native");
+  if (!node_path.isAbsolute(executable) || !node_fs.lstatSync(executable, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error("source_runtime_executable_required: " + executable);
+  }
+  node_fs.accessSync(executable, node_fs.constants.X_OK);
+  return employeeRuntime = Object.freeze({ executable, file });
 }
-function engineBin() {
-  const custom = override("MONKEYAI_OHMYAGENT_BIN");
-  if (custom) return custom;
-  const candidate = bundled("ohmyagent");
-  return node_fs.existsSync(candidate) ? candidate : void 0;
-}
-function runtimeBin() {
-  const candidate = override("MONKEYAI_RUNTIME_BIN") ?? bundled("monkeyai-runtime");
-  if (!node_fs.existsSync(candidate)) throw new Error(`runtime binary is missing: ${candidate} (run pnpm runtime:go)`);
-  return candidate;
-}
-function loginRuntimeBin() {
-  const configured = process.env.AIBERTAI_LOGIN_RUNTIME_BIN;
-  if (configured) return configured;
-  const runtime = runtimeBin();
-  const filename = process.platform === "win32" ? "monkeyai-runtime-login.exe" : "monkeyai-runtime-login";
-  const branded = node_path.join(node_path.dirname(runtime), filename);
-  return node_fs.existsSync(branded) ? branded : runtime;
-}
-function officePreviewBin() {
-  return override("MONKEYAI_OFFICE_PREVIEW_BIN") ?? bundled("office-preview-server");
-}
-function dpapiBin() {
-  const candidate = override("MONKEYAI_DPAPI_BIN") ?? bundled("monkeyai-dpapi");
-  if (!node_fs.existsSync(candidate)) throw new Error(`DPAPI helper is missing: ${candidate} (run pnpm dpapi)`);
-  return candidate;
-}
-const OHOS_SHELL = "/system/bin/sh";
-function runtimeEnv(env = process.env) {
-  if (process.platform !== "ohos") return void 0;
-  return { ...env, OHMYAGENT_SHELL: env.OHMYAGENT_SHELL || OHOS_SHELL };
-}
-function runtimeSpawnEnv() {
-  const env = runtimeEnv();
-  return env ? { env } : {};
-}
-const CERT_AUTHORITY_INVALID = -202;
-const CERT_COMMON_NAME_INVALID = -200;
-const CERTIFICATE_TIMEOUT_MS = 5e3;
-let certificates;
-const configured = /* @__PURE__ */ new WeakMap();
 const serverSessions = /* @__PURE__ */ new Map();
-function command(name, input) {
-  return new Promise((resolve, reject) => {
-    const child2 = node_child_process.execFile(runtimeBin(), [name], { ...runtimeSpawnEnv(), windowsHide: true, timeout: CERTIFICATE_TIMEOUT_MS, maxBuffer: 256 * 1024, encoding: "utf8" }, (error, stdout) => error ? reject(error) : resolve(stdout));
-    child2.stdin?.on("error", () => {
-    });
-    child2.stdin?.end(input === void 0 ? void 0 : JSON.stringify(input));
-  });
-}
-function readBuiltinCertificates() {
-  return certificates ??= command("certificates").then((pem) => {
-    if (!new node_crypto.X509Certificate(pem).ca) throw new Error("Invalid bundled CA certificate");
-    return pem;
-  }).catch((error) => {
-    certificates = void 0;
-    throw error;
-  });
-}
-function verify$1(hostname2, leaf) {
-  const chain = [];
-  const seen = /* @__PURE__ */ new Set();
-  let certificate = leaf;
-  while (certificate && !seen.has(certificate.data)) {
-    if (chain.length >= 16) return Promise.reject(new Error("Certificate chain is too long"));
-    seen.add(certificate.data);
-    chain.push(certificate.data);
-    certificate = certificate.issuerCert;
-  }
-  return command("verify-certificate", { hostname: hostname2, certificates: chain });
-}
 function serverOrigin(value) {
   if (!value) return void 0;
   try {
@@ -1626,55 +1549,16 @@ function matchesPrivateBackendOrigin(address, origin) {
     return false;
   }
 }
-const hostname$1 = (value) => value.toLowerCase().replace(/^\[|\]$/g, "");
-function setupServerCertificates(target, serverUrl2) {
-  const origin = serverOrigin(serverUrl2);
-  const key2 = origin?.origin ?? "";
-  if (configured.get(target) === key2) return;
-  if (configured.has(target)) throw new Error("Server certificate scope is immutable");
-  configured.set(target, key2);
-  if (!origin) {
-    target.setCertificateVerifyProc(null);
-    return;
-  }
-  target.setCertificateVerifyProc((request2, callback) => {
-    if (hostname$1(request2.hostname) !== hostname$1(origin.hostname) || request2.errorCode !== CERT_AUTHORITY_INVALID && request2.errorCode !== CERT_COMMON_NAME_INVALID) {
-      callback(-3);
-      return;
-    }
-    void verify$1(request2.hostname, request2.certificate).then(() => callback(configured.get(target) === key2 ? 0 : -3), () => callback(-3));
-  });
-}
-function setupWorkbenchCertificates(contents, serverUrl2) {
-  let scope2 = serverOrigin(serverUrl2())?.origin;
-  let generation = 0;
+function setupWorkbenchNetwork(contents, serverUrl) {
   let refresh;
-  contents.on("certificate-error", (event, address, error, certificate, callback) => {
-    const requested = serverOrigin(address.replace(/^wss:/, "https:"));
-    const selected = serverOrigin(serverUrl2())?.origin;
-    event.preventDefault();
-    if (!scope2 || requested?.origin !== scope2 || selected !== scope2 || !["net::ERR_CERT_AUTHORITY_INVALID", "net::ERR_CERT_COMMON_NAME_INVALID"].includes(error)) {
-      callback(false);
-      return;
-    }
-    const expected = generation;
-    void verify$1(requested.hostname, certificate).then(
-      () => callback(!contents.isDestroyed() && generation === expected && serverOrigin(serverUrl2())?.origin === scope2),
-      () => callback(false)
-    );
-  });
   return async () => {
-    const next = serverOrigin(serverUrl2())?.origin;
-    if (refresh && refresh.origin === next) return refresh.promise;
-    const expected = ++generation;
-    scope2 = void 0;
-    const promise = contents.session.closeAllConnections().then(() => {
-      if (!contents.isDestroyed() && generation === expected && serverOrigin(serverUrl2())?.origin === next) scope2 = next;
-    }).catch((error) => {
-      if (generation === expected) refresh = void 0;
+    const origin = serverOrigin(serverUrl())?.origin;
+    if (refresh && refresh.origin === origin) return refresh.promise;
+    const promise = contents.session.closeAllConnections().catch((error) => {
+      if (refresh?.promise === promise) refresh = void 0;
       throw error;
     });
-    refresh = { origin: next, promise };
+    refresh = { origin, promise };
     return promise;
   };
 }
@@ -1686,14 +1570,13 @@ function requestSession(input, serverUrl2) {
     if (!isolated) {
       const key2 = node_crypto.createHash("sha256").update(origin.origin).digest("hex");
       isolated = electron.session.fromPartition(`monkeyai-server-${key2}`, { cache: false });
-      setupServerCertificates(isolated, origin.href);
       serverSessions.set(origin.origin, isolated);
     }
     return isolated;
   }
   return electron.session.fromPartition("monkeyai-system-network", { cache: false });
 }
-async function fetchWithServerCertificate(input, init, serverUrl2) {
+async function fetchWithServerSession(input, init, serverUrl2) {
   let request2 = new Request(input, init);
   try {
     for (let redirects = 0; ; redirects++) {
@@ -1946,6 +1829,26 @@ const ACCOUNT_REQUEST_METHODS = [
   "_monkeyai/environments/change",
   "_monkeyai/billing/account",
   "_monkeyai/billing/entries",
+  "_monkeyai/session/goal",
+  "session/cancel",
+  "_monkeyai/drafts",
+  "_monkeyai/draft/set",
+  "_monkeyai/session/flags",
+  "_monkeyai/session/rename",
+  "_monkeyai/terminal/get",
+  "_monkeyai/terminal/list",
+  "_monkeyai/terminal/open",
+  "_monkeyai/terminal/close",
+  "_monkeyai/workspace/list",
+  "_monkeyai/workspace/read",
+  "_monkeyai/session/files/preview",
+  "_monkeyai/workspace/stat",
+  "_monkeyai/workspace/changes",
+  "_monkeyai/workspace/diff",
+  "_monkeyai/session/outline",
+  "_aibertai/connectors/local/test",
+  "_monkeyai/workspace/resolve",
+  "_monkeyai/workspace/link",
   "_monkeyai/feedback/submit",
   "_monkeyai/resources/recipients",
   "_monkeyai/resources/share",
@@ -1974,7 +1877,7 @@ const BROWSER_UI_TOOLS = [
   { name: "browser_operation", description: "The full record of one browser tool call.", inputSchema: { type: "object", properties: { session_id: { type: "string" }, tool_call_id: { type: "string" } }, required: ["session_id", "tool_call_id"], additionalProperties: false } },
   { name: "browser_artifact", description: "A screenshot or snapshot saved by a browser tool call.", inputSchema: { type: "object", properties: { session_id: { type: "string" }, artifact_id: { type: "string" } }, required: ["session_id", "artifact_id"], additionalProperties: false } }
 ];
-const BROWSER_NATIVE_HOST = "com.chaitin.monkeyai.browser";
+const BROWSER_NATIVE_HOST = "com.aibertai.browser";
 const BROWSER_FRAME_LIMIT = 256 * 1024;
 const BROWSER_MESSAGE_LIMIT = 8 * 1024 * 1024;
 const BROWSER_URL_LIMIT = 65536;
@@ -2652,43 +2555,6 @@ function readAuthFile(path2, migrate = true) {
     throw new CodedError(ErrorCode.credentialsUnreadable, error);
   }
 }
-function parseLegacy(sealed) {
-  const text2 = openString(sealed);
-  if (text2 === null) return null;
-  try {
-    const value = JSON.parse(text2);
-    return value && typeof value === "object" && !Array.isArray(value) ? value : null;
-  } catch {
-    return null;
-  }
-}
-function readLegacyCredentials(path2) {
-  let file2;
-  try {
-    file2 = JSON.parse(node_fs.readFileSync(path2, "utf8"));
-  } catch {
-    return null;
-  }
-  const out = {};
-  const tokens = parseLegacy(file2.tokens);
-  if (tokens && typeof tokens.accessToken === "string" && typeof tokens.refreshToken === "string" && typeof tokens.expiresAt === "string") {
-    out.tokens = { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, expiresAt: tokens.expiresAt };
-  }
-  const gatewayKey = parseLegacy(file2.gatewayKey);
-  if (gatewayKey && typeof gatewayKey.id === "string" && typeof gatewayKey.api_key === "string") out.gatewayKey = gatewayKey;
-  return out.tokens || out.gatewayKey ? out : null;
-}
-function dropLegacyCredentials$1(path2) {
-  let file2;
-  try {
-    file2 = JSON.parse(node_fs.readFileSync(path2, "utf8"));
-  } catch {
-    return;
-  }
-  if (!LEGACY_KEYS.some((key2) => key2 in file2)) return;
-  for (const key2 of LEGACY_KEYS) delete file2[key2];
-  writeJsonAtomic$2(path2, file2);
-}
 const PRODUCT_NAME = { "zh-CN": "AIbertAI", "en-US": "AIbertAI" };
 function productName(locale2) {
   return PRODUCT_NAME[locale2];
@@ -2989,8 +2855,8 @@ function isUser(value) {
   const user = value;
   return Boolean(user && typeof user === "object" && typeof user.id === "string" && user.id && typeof user.name === "string");
 }
-function launch(args, executable = runtimeBin()) {
-  const proc = node_child_process.spawn(executable, args, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true, ...runtimeSpawnEnv() });
+function launch(args) {
+  const proc = node_child_process.spawn(sourceEmployeeRuntime().executable, args, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
   const stderr = runtimeOutputLogger("stderr");
   proc.stderr?.on("data", (chunk) => stderr.write(chunk));
   proc.on("exit", () => stderr.flush());
@@ -3006,8 +2872,7 @@ function runLogin(options2) {
     }
     let proc;
     try {
-      const source = sourceEmployeeRuntime();
-      proc = source ? launch(["desktop-source-login", options2.server], source.executable) : launch(["login", "--server", options2.server, "--no-browser", "--lang", options2.lang, ...options2.desktopReturn ? ["--desktop-return", options2.desktopReturn] : []], loginRuntimeBin());
+      proc = launch(["desktop-source-login", options2.server]);
     } catch (error) {
       console.error(`[main] runtime login could not start: ${error.message}`);
       reject(new LoginError(ErrorCode.runtimeUnavailable));
@@ -3086,14 +2951,11 @@ function runLogin(options2) {
 function runLogout(profileDir2, dataKey, server, userId) {
   return new Promise((resolve, reject) => {
     let proc;
-    let source;
     try {
-      source = sourceEmployeeRuntime();
-      proc = source ? launch(["desktop-source-logout", profileDir2, server, userId], source.executable) : launch(["logout", "--profile-dir", profileDir2, ...server ? ["--server", server] : []]);
+      proc = launch(["desktop-source-logout", profileDir2, server, userId]);
     } catch (error) {
       console.warn(`[main] runtime logout could not start: ${error.message}`);
-      if (source) return reject(error);
-      resolve();
+      reject(error);
       return;
     }
     const stdout = runtimeOutputLogger("stdout");
@@ -3104,7 +2966,7 @@ function runLogout(profileDir2, dataKey, server, userId) {
       clearTimeout(timer2);
       if (note2) {
         console.warn(`[main] runtime logout ${note2}`);
-        if (source) return reject(new Error("source_runtime_logout_failed"));
+        return reject(new Error("source_runtime_logout_failed"));
       }
       resolve();
     };
@@ -3233,13 +3095,6 @@ function writeAuth(accountId, file2) {
   writeJsonAtomic$1(authFile(accountId), file2);
   authCache.set(accountId, file2);
 }
-function legacyCredentials(accountId) {
-  return readLegacyCredentials(authFile(accountId));
-}
-function dropLegacyCredentials(accountId) {
-  dropLegacyCredentials$1(authFile(accountId));
-  authCache.delete(accountId);
-}
 function statusOf(f) {
   const account = f.accounts.find((a) => a.id === f.currentId) ?? null;
   return { loggedIn: account !== null, account, lastServer: account?.server ?? f.lastServer };
@@ -3356,8 +3211,6 @@ async function completeLogin(server, signal, onAuthorize) {
   const desktopReturn = desktopReturnURL();
   const user = await runLogin({
     server: normalized.url,
-    lang: locale(),
-    desktopReturn,
     signal,
     authorize: (url2) => {
       if (signal.aborted) return;
@@ -3372,7 +3225,7 @@ async function completeLogin(server, signal, onAuthorize) {
       chosen.id = id22;
       const existing = before.accounts.find((account2) => account2.id === id22);
       signal.throwIfAborted();
-      if (existing && (existing.server.url !== normalized.url || (sourceEmployeeRuntime() && currentAccount()?.id === id22))) {
+      if (existing && (existing.server.url !== normalized.url || currentAccount()?.id === id22)) {
         await beforeAccountUpdate(id22);
         if (signal.aborted) notifyAccountChanged();
       }
@@ -3397,16 +3250,10 @@ async function logout() {
   cancelAccountLogin();
   const current = currentAccount();
   if (current) {
-    const confirmed = await beforeLogout().catch(() => false);
+    await beforeLogout().catch(() => false);
     const file2 = readAuth(current.id);
-    if (sourceEmployeeRuntime()) {
-      await revokeRuntimeCredentials(current.id, current.server.url);
-      writeAuth(current.id, { ...file2?.dataKey ? { dataKey: file2.dataKey } : {}, loggedIn: false, user: current.user, server: current.server });
-    } else {
-      writeAuth(current.id, { ...file2?.dataKey ? { dataKey: file2.dataKey } : {}, loggedIn: false, user: current.user, server: current.server });
-      if (!confirmed) await revokeRuntimeCredentials(current.id, current.server.url);
-      node_fs.rmSync(runtimeCredentialsFile(current.id), { force: true });
-    }
+    await revokeRuntimeCredentials(current.id, current.server.url);
+    writeAuth(current.id, { ...file2?.dataKey ? { dataKey: file2.dataKey } : {}, loggedIn: false, user: current.user, server: current.server });
   }
   const latest = accountsState();
   if (!current || latest.currentId === current.id) writeAccounts({ ...latest, currentId: null });
@@ -3415,11 +3262,7 @@ async function logout() {
 async function revokeRuntimeCredentials(accountId, server) {
   const stored = readAuth(accountId);
   const dataKey = openString(stored?.dataKey);
-  if (!dataKey) {
-    if (sourceEmployeeRuntime()) throw new Error(ErrorCode.credentialsLocked);
-    console.warn("[main] cannot open the data key; deleting the runtime credentials without revoking them");
-    return;
-  }
+  if (!dataKey) throw new Error(ErrorCode.credentialsLocked);
   await runLogout(profileDir(accountId), dataKey, server, stored?.user?.id);
 }
 const encryptedProfileFiles = [
@@ -3521,7 +3364,7 @@ function setupAccounts() {
     if (!isValidServer(args[0])) throw new Error(ErrorCode.invalidServer);
     return [args[0]];
   };
-  handle("auth:branding", serverConfig, (_event, server) => readServerBranding(server.url, (input, init) => fetchWithServerCertificate(input, init, server.url)));
+  handle("auth:branding", serverConfig, (_event, server) => readServerBranding(server.url, (input, init) => fetchWithServerSession(input, init, server.url)));
   const requestId = (args) => args[1] === void 0 ? void 0 : text(args[1], ErrorCode.invalidRequest, 64);
   handle("auth:login", (args) => [serverConfig(args)[0], requestId(args)], async (event, server, id2) => {
     const r = await runAccountLogin(event, id2, (superseded, onAuthorize) => login(server, superseded, onAuthorize)).catch((error) => {
@@ -4014,7 +3857,7 @@ function activateAll(fileshare, directories) {
 }
 async function directoriesInUse() {
   const [projects, sessions2] = await Promise.all([
-    runtimeRequest(MONKEYAI_METHODS.projectsList.name, {}).catch(() => []),
+    runtimeRequest(AIBERTAI_METHODS.projectsList.name, {}).catch(() => []),
     runtimeRequest("session/list", {}).catch(() => ({ sessions: [] }))
   ]);
   const paths = [
@@ -11918,22 +11761,22 @@ class CapabilityHost {
     const generation = ++this.generation;
     const target = runtimeAcpTarget(endpoint2);
     const stream = createWebSocketStream(target.url, { protocols: target.protocols, WebSocket: this.options.WebSocket });
-    const connection = client({ name: this.options.name }).onRequest(MONKEYAI_METHODS.capabilitySession.name, (p) => p, async ({ params }) => {
+    const connection = client({ name: this.options.name }).onRequest(AIBERTAI_METHODS.capabilitySession.name, (p) => p, async ({ params }) => {
       const provider = this.options.providers.find((item) => item.id === params.capability);
       if (!provider?.session) throw RequestError.resourceNotFound(params.capability);
       return await provider.session(params) ?? {};
-    }).onRequest(MONKEYAI_METHODS.capabilityReset.name, (p) => p, async ({ params }) => {
+    }).onRequest(AIBERTAI_METHODS.capabilityReset.name, (p) => p, async ({ params }) => {
       const provider = this.options.providers.find((item) => item.id === params.capability);
       if (!provider) throw RequestError.resourceNotFound(params.capability);
       await provider.reset?.();
       this.registered.delete(provider.id);
       await this.sync(connection, provider.id);
       return {};
-    }).onNotification(MONKEYAI_METHODS.sessionDeleted.name, (p) => p, ({ params }) => {
+    }).onNotification(AIBERTAI_METHODS.sessionDeleted.name, (p) => p, ({ params }) => {
       if (typeof params.sessionId === "string") this.options.onSessionDeleted(params.sessionId);
-    }).onNotification(MONKEYAI_METHODS.deviceRemoteChanged.name, () => ({}), () => {
+    }).onNotification(AIBERTAI_METHODS.deviceRemoteChanged.name, () => ({}), () => {
       if (generation === this.generation) this.options.onDeviceRemoteChanged?.();
-    }).onNotification(MONKEYAI_METHODS.authChanged.name, () => ({}), () => {
+    }).onNotification(AIBERTAI_METHODS.authChanged.name, () => ({}), () => {
       if (generation === this.generation) this.options.onAuthChanged?.();
     }).connect(stream);
     this.connection = connection;
@@ -11967,8 +11810,8 @@ class CapabilityHost {
       const manifest = provider.manifest();
       const text2 = manifest ? JSON.stringify(manifest) : null;
       if ((this.registered.get(provider.id) ?? null) === text2) continue;
-      if (manifest) await connection.agent.request(MONKEYAI_METHODS.capabilitiesRegister.name, { manifest });
-      else if (this.registered.has(provider.id)) await connection.agent.request(MONKEYAI_METHODS.capabilitiesUnregister.name, { id: provider.id });
+      if (manifest) await connection.agent.request(AIBERTAI_METHODS.capabilitiesRegister.name, { manifest });
+      else if (this.registered.has(provider.id)) await connection.agent.request(AIBERTAI_METHODS.capabilitiesUnregister.name, { id: provider.id });
       if (text2) this.registered.set(provider.id, text2);
       else this.registered.delete(provider.id);
     }
@@ -12247,6 +12090,7 @@ class BrowserService extends node_events.EventEmitter {
   }
   activateRuntime(accountId) {
     id(accountId);
+    if (this.accountId && this.accountId !== accountId) this.clearSharedPages();
     this.invalidate("runtime_replaced");
     this.accountId = accountId;
     this.previousBearer = null;
@@ -12264,11 +12108,17 @@ class BrowserService extends node_events.EventEmitter {
     return { ...this.descriptor };
   }
   runtimeClosed() {
+    this.clearSharedPages();
     this.invalidate("runtime_stopped");
     this.previousBearer = null;
     this.descriptor = null;
     this.accountId = null;
     this.changed();
+  }
+  clearSharedPages() {
+    for (const connectionId of this.connections.keys()) {
+      void this.bridge.request(connectionId, { kind: "clear_shared" }, { timeoutMs: 1500 }).catch(() => {});
+    }
   }
   /** 界面那条路：当前凭据，或宽限期内刚被换掉的上一代 */
   uiTokenMatches(token) {
@@ -12315,7 +12165,7 @@ class BrowserService extends node_events.EventEmitter {
     if (!registration) throw new BrowserControlError("session_not_registered");
     return registration;
   }
-  /** The extension popup is MonkeyAI's own surface, so it follows the desktop. */
+  /** The extension popup is AIbertAI's own surface, so it follows the desktop. */
   setLocale(value) {
     if (this.locale === value) return;
     this.locale = value;
@@ -12659,6 +12509,10 @@ class BrowserService extends node_events.EventEmitter {
       return;
     }
     if (!this.connection(connectionId)) throw new BrowserControlError("browser_disconnected");
+    if (event.kind === "shared_changed") {
+      this.changed();
+      return;
+    }
     const target = this.targets.get(event.grantId);
     if (!target || target.tab.connectionId !== connectionId) return;
     if (["revoked", "needs_rebind"].includes(target.tab.state)) return;
@@ -14435,7 +14289,7 @@ function browserExtensionId(directory) {
   return node_crypto.createHash("sha256").update(Buffer.from(manifest.key, "base64")).digest("hex").slice(0, 32).replace(/[0-9a-f]/g, (c) => String.fromCharCode(97 + parseInt(c, 16)));
 }
 function helperPath$1(options2) {
-  return options2.appImage ? node_path.join(options2.userData, "browser-host", "bin", options2.version.replace(/[^a-zA-Z0-9._-]/g, "_"), "monkeyai-browser-host") : options2.executable;
+  return options2.appImage ? node_path.join(options2.userData, "browser-host", "bin", options2.version.replace(/[^a-zA-Z0-9._-]/g, "_"), "aibertai-browser-host") : options2.executable;
 }
 function targetRegistered(target, options2, extensionId, run2) {
   try {
@@ -14491,7 +14345,11 @@ function registerBrowserHost(options2, run2 = node_child_process.execFileSync) {
   return warnings;
 }
 function hasBrowserHostRegistration(options2) {
-  return node_fs.existsSync(markerPath(options2));
+  try {
+    return JSON.parse(node_fs.readFileSync(markerPath(options2), "utf8")).name === hostName(options2);
+  } catch {
+    return false;
+  }
 }
 function unregisterBrowserHost(options2, run2 = node_child_process.execFileSync) {
   const marker = markerPath(options2);
@@ -14546,10 +14404,9 @@ function setupBrowserControl(enabled = true) {
     handle("browser-control:status", none, () => ({ available: false, instance: "", stateVersion: 0, connections: [], extensionId: "", registered: false, reason: "host_unavailable" }));
     return;
   }
-  const platformName = { darwin: "mac", win32: "win", linux: "linux" }[process.platform] ?? process.platform;
-  const executable = electron.app.isPackaged ? node_path.join(resourcesDir, "bin", process.platform === "win32" ? "monkeyai-browser-host.exe" : "monkeyai-browser-host") : node_path.join(resourcesDir, "bin", `${platformName}-${process.arch}`, process.platform === "win32" ? "monkeyai-browser-host-dev.exe" : "monkeyai-browser-host-dev");
+  const executable = bundled("aibertai-browser-host");
   const ohos = process.platform === "ohos";
-  const extensionSource = electron.app.isPackaged ? node_path.join(resourcesDir, "browser-extension") : node_path.resolve(__dirname, "../../../browser-extension/dist-dev");
+  const extensionSource = electron.app.isPackaged ? node_path.join(resourcesDir, "browser-extension") : node_path.resolve(__dirname, "../../../../browser-extension");
   let exportedDirectory = "";
   if (ohos) {
     const saved = readHarmonyExtensionLocation(electron.app.getPath("userData"));
@@ -14623,7 +14480,6 @@ function setupBrowserControl(enabled = true) {
     reason2 = value === "version_mismatch" ? value : "native_host_unavailable";
     publish();
   });
-  void start2();
   if (!ohos && hasBrowserHostRegistration(registration)) {
     try {
       registrationWarnings = registerBrowserHost(registration);
@@ -14631,6 +14487,7 @@ function setupBrowserControl(enabled = true) {
     } catch {
     }
   }
+  if (registered) void start2();
   const scope2 = (value) => {
     const input = record$2(value, "invalid_browser_scope"), account = currentAccount();
     if (!account || !isLoggedIn(account.id) || input.accountId !== account.id || typeof input.sessionId !== "string" || !BROWSER_ID.test(input.sessionId)) throw new Error("invalid_browser_scope");
@@ -14639,6 +14496,22 @@ function setupBrowserControl(enabled = true) {
   handle("browser-control:status", none, () => {
     registered = ohos ? true : browserHostRegistered(registration);
     return status2();
+  });
+  handle("browser-control:shared-page", (args) => {
+    if (args[0] !== "read" && args[0] !== "focus") throw new Error("invalid_browser_action");
+    return [args[0]];
+  }, async (_event, action) => {
+    const account = currentAccount();
+    if (!account || !isLoggedIn(account.id)) throw new Error("invalid_browser_scope");
+    const connections = currentService.listConnections();
+    for (const connection of connections) {
+      const result = await currentBridge.request(connection.id, { kind: "shared_page", action }).catch(() => null);
+      if (!result?.page) continue;
+      if (currentAccount()?.id !== account.id || !isLoggedIn(account.id) ||
+          !currentService.connection(connection.id)) throw new Error("invalid_browser_scope");
+      return { ...publicPage(result.page), text: typeof result.text === "string" ? result.text.slice(0, 32000) : "" };
+    }
+    return null;
   });
   handle("browser-control:reset-site-permissions", (args) => {
     const account = currentAccount(), accountId = text(args[0], "invalid_browser_scope", 128);
@@ -14802,7 +14675,6 @@ const READY_TIMEOUT_MS$1 = 2e4;
 const LOGOUT_TIMEOUT_MS = 1e4;
 const RELOAD_TIMEOUT_MS = 15e3;
 let child$2 = null;
-let handoff = null;
 let status$1 = "stopped";
 let activeProfile = null;
 let activeServerUrl = null;
@@ -14833,7 +14705,7 @@ async function refreshDeviceRemoteStatus() {
   }
   const current = () => !quitting$1 && request2 === remoteStatusSequence && child$2 === proc && endpoint$2 === selected && currentAccount() === account;
   try {
-    const value = await runtimeRequest(MONKEYAI_METHODS.deviceRemoteStatus.name, {});
+    const value = await runtimeRequest(AIBERTAI_METHODS.deviceRemoteStatus.name, {});
     if (current()) onDeviceRemoteChanged(value);
   } catch {
     if (current()) writeLog("warn", "main", "remote access state refresh failed");
@@ -14899,11 +14771,6 @@ function onStdoutLine(proc, token, raw, logger, authorizationServer) {
   if (authorizationServer) ready2.sourcePreview = true;
   endpoint$2 = ready2;
   restart$2 = recordReady();
-  if (handoff !== null) {
-    if (event.credentials === "saved") dropLegacyCredentials(handoff);
-    else console.warn("[main] the runtime did not save the handed-over credentials; keeping the old copy for the next start");
-    handoff = null;
-  }
   console.log(`[main] runtime ${typeof event.version === "string" && event.version ? event.version + " " : ""}ready at ${endpoint$2.httpBase}`);
   capabilities?.connect(endpoint$2);
   onEndpoint(endpoint$2);
@@ -14925,18 +14792,9 @@ async function start$2(account) {
     activeProfile = null;
     activeServerUrl = null;
   };
-  let sourceRuntime;
-  let bin, runtimeArgs, dataKey;
+  let sourceRuntime, dataKey;
   try {
     sourceRuntime = sourceEmployeeRuntime();
-    if (sourceRuntime) {
-      bin = sourceRuntime.executable;
-      runtimeArgs = ["desktop-source-runtime", profile2, sourceRuntime.file];
-    } else {
-      bin = runtimeBin();
-      const engine = engineBin();
-      runtimeArgs = ["serve", "--profile-dir", profile2, ...engine ? ["--engine-bin", engine] : []];
-    }
     dataKey = getDataKey(account.id);
     await activateBrowserRuntime(account.id);
   } catch (error) {
@@ -14949,17 +14807,15 @@ async function start$2(account) {
     return;
   }
   const token = node_crypto.randomBytes(32).toString("base64url");
-  const legacy = sourceRuntime ? null : legacyCredentials(account.id);
-  handoff = legacy ? account.id : null;
-  const init = { type: "init", designBridge: Boolean(sourceRuntime && desktopPlatform().features.design), machineId: installationId(), device: {
+  const init = { type: "init", designBridge: desktopPlatform().features.design, machineId: installationId(), device: {
     ...deviceIdentity(),
     arch: process.arch,
     locale: typeof readPrefs().locale === "string" ? readPrefs().locale : electron.app.getLocale(),
     system_locale: electron.app.getSystemLocale(),
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     electron_version: process.versions.electron
-  }, serverUrl: account.server.url, userId: account.user.id, deviceName: deviceName(), dataKey, token, clientVersion: electron.app.isPackaged ? electron.app.getVersion() : "dev", platform: "desktop", webOrigin: webOrigin$1, ...legacy ? { credentials: { server: account.server.url, ...legacy } } : {} };
-  const proc = node_child_process.spawn(bin, runtimeArgs, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true, ...runtimeSpawnEnv() });
+  }, serverUrl: account.server.url, userId: account.user.id, deviceName: deviceName(), dataKey, token, clientVersion: electron.app.isPackaged ? electron.app.getVersion() : "dev", platform: "desktop", webOrigin: webOrigin$1 };
+  const proc = node_child_process.spawn(sourceRuntime.executable, ["desktop-source-runtime", profile2, sourceRuntime.file], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
   child$2 = proc;
   const stdout = runtimeOutputLogger("stdout");
   const stderr = runtimeOutputLogger("stderr");
@@ -14971,7 +14827,7 @@ async function start$2(account) {
     pending2 += String(chunk);
     let newline;
     while ((newline = pending2.indexOf("\n")) !== -1) {
-      onStdoutLine(proc, token, pending2.slice(0, newline), stdout, sourceRuntime ? account.server.url : void 0);
+      onStdoutLine(proc, token, pending2.slice(0, newline), stdout, account.server.url);
       pending2 = pending2.slice(newline + 1);
     }
   });
@@ -15108,8 +14964,8 @@ function whenReady() {
 async function logoutRuntime() {
   if (endpoint$2?.sourcePreview) {
     try {
-      const remote = await runtimeRequest(MONKEYAI_METHODS.deviceRemoteStatus.name, {});
-      if (remote?.device?.enabled) await runtimeRequest(MONKEYAI_METHODS.deviceRemoteSet.name, { enabled: false });
+      const remote = await runtimeRequest(AIBERTAI_METHODS.deviceRemoteStatus.name, {});
+      if (remote?.device?.enabled) await runtimeRequest(AIBERTAI_METHODS.deviceRemoteSet.name, { enabled: false });
     } catch {
       writeLog("warn", "main", "could not save the remote access preference before logout");
     }
@@ -15126,7 +14982,7 @@ async function logoutRuntime() {
   let prepareTimer;
   try {
     await Promise.race([
-      capabilities.request(MONKEYAI_METHODS.authLogoutPrepare.name, {}),
+      capabilities.request(AIBERTAI_METHODS.authLogoutPrepare.name, {}),
       new Promise((_, reject) => {
         prepareTimer = setTimeout(() => reject(new Error("timed out")), LOGOUT_TIMEOUT_MS);
       })
@@ -15143,7 +14999,7 @@ async function logoutRuntime() {
     timer2 = setTimeout(() => reject(new Error("timed out")), LOGOUT_TIMEOUT_MS);
   });
   try {
-    await Promise.race([capabilities.request(MONKEYAI_METHODS.authLogout.name, {}), limit]);
+    await Promise.race([capabilities.request(AIBERTAI_METHODS.authLogout.name, {}), limit]);
     return true;
   } catch (error) {
     console.warn(`[main] runtime logout failed: ${error.message}`);
@@ -15166,7 +15022,7 @@ async function reloadRuntimeCredentials(accountId, server) {
     timer2 = setTimeout(() => reject(new Error("timed out")), RELOAD_TIMEOUT_MS);
   });
   try {
-    await Promise.race([capabilities.request(MONKEYAI_METHODS.authCredentials.name, { server }), limit]);
+    await Promise.race([capabilities.request(AIBERTAI_METHODS.authCredentials.name, { server }), limit]);
     return true;
   } catch (error) {
     console.warn(`[main] runtime did not reload the credentials: ${error.message}`);
@@ -15192,24 +15048,7 @@ const deviceConnections = new DeviceConnections(async (target, connectionId) => 
   const account = deviceAccount();
   if (!account || account.userId !== target.userId || account.serverId !== target.serverId) throw new Error(ErrorCode.deviceTargetChanged);
   const params = { serverId: target.serverId, machineId: target.machineId, ...connectionId ? { connectionId } : {} };
-  let result;
-  if (!sourceEmployeeRuntime() && !electron.app.isPackaged && process.env.AIBERTAI_REMOTE_CONNECTION_RUNTIME === "1" && process.env.AIBERTAI_KNOWLEDGE_RUNTIME_BIN) {
-    let dataKey;
-    try {
-      dataKey = getDataKey(account.accountId);
-    } catch {
-      // Use the existing credential provider when the local profile is locked.
-    }
-    if (dataKey) result = await desktopKnowledge.request(process.env.AIBERTAI_KNOWLEDGE_RUNTIME_BIN, {
-      server: account.serverUrl,
-      userId: account.userId,
-      profileDir: profileDir(account.accountId),
-      dataKey
-    }, MONKEYAI_METHODS.devicesConnect.name, params);
-  }
-  const beforeFallback = deviceAccount();
-  if (!beforeFallback || beforeFallback.accountId !== account.accountId || beforeFallback.serverUrl !== account.serverUrl || beforeFallback.serverId !== account.serverId) throw new Error(ErrorCode.deviceTargetChanged);
-  if (result === void 0) result = await runtimeRequest(MONKEYAI_METHODS.devicesConnect.name, params);
+  const result = await runtimeRequest(AIBERTAI_METHODS.devicesConnect.name, params);
   const after = deviceAccount();
   if (!after || after.accountId !== account.accountId || after.serverUrl !== account.serverUrl || after.serverId !== account.serverId) throw new Error(ErrorCode.deviceTargetChanged);
   return result;
@@ -15225,7 +15064,7 @@ function deviceAccount() {
 }
 async function runtimeDevices(sender) {
   const account = deviceAccount();
-  const result = await accountRuntimeRequest(sender, MONKEYAI_METHODS.devicesList.name, {});
+  const result = await accountRuntimeRequest(sender, AIBERTAI_METHODS.devicesList.name, {});
   if (!account || deviceAccount()?.accountId !== account.accountId || deviceAccount()?.serverUrl !== account.serverUrl) throw new Error(ErrorCode.deviceTargetChanged);
   if (result.serverId) {
     if (serverIdentity && serverIdentity.serverId !== result.serverId) {
@@ -15334,15 +15173,14 @@ async function localRuntimeRequest(sender, method2, params) {
   if (child$2 !== runtimeProcess || endpoint$2 !== selected) throw new Error(ErrorCode.deviceTargetChanged);
   return result;
 }
-const desktopKnowledge = require("./desktop-knowledge.cjs");
 const desktopSessionArchive = require("./desktop-session-archive.cjs");
 async function localSessionArchive(sender, sessionId, kind, parameter) {
   const account = deviceAccount(), frame2 = captureMainFrame(sender);
   if (!account) return;
-  if (kind === "messages" && sourceEmployeeRuntime()) return;
+  if (kind === "messages") return;
   const binding = deviceWindows.capture(sender, account);
   if (binding.target?.transport === "relay") return;
-  const executable = electron.app.isPackaged ? bundled("aibertai-native") : process.env.AIBERTAI_KNOWLEDGE_RUNTIME_BIN;
+  const executable = sourceEmployeeRuntime().executable;
   const result = await desktopSessionArchive.read(executable, profileDir(account.accountId), sessionId, kind, parameter);
   deviceWindows.assertCurrent(sender, binding, deviceAccount());
   if (!mainFrameAlive(sender, frame2)) throw new Error(ErrorCode.deviceTargetChanged);
@@ -15358,47 +15196,8 @@ async function accountRuntimeRequest(sender, method2, params) {
     const current = currentAccount();
     if (current !== account || !mainFrameAlive(sender, frame2)) throw new Error(ErrorCode.deviceTargetChanged);
   };
-  if (desktopKnowledge.handles(method2)) {
-    if (method2.startsWith("_monkeyai/kb/") && (params?.serverUrl !== account.server.url || params?.userId !== account.user.id)) {
-      throw new Error(ErrorCode.deviceTargetChanged);
-    }
-    if (sourceEmployeeRuntime()) {
-      await syncRuntimeToAccount();
-      await whenReady();
-      assertCurrent();
-      const result = await runtimeRequest(method2, params);
-      assertCurrent();
-      return result;
-    }
-    const executable = electron.app.isPackaged ? bundled("aibertai-native") : process.env.AIBERTAI_KNOWLEDGE_RUNTIME_BIN;
-    if (executable) {
-      let dataKey;
-      try {
-        dataKey = getDataKey(account.id);
-      } catch {
-        // The existing request path handles credentials it has already loaded.
-      }
-      if (dataKey) {
-        try {
-          const result = await desktopKnowledge.request(executable, {
-            server: account.server.url,
-            userId: account.user.id,
-            profileDir: profileDir(account.id),
-            dataKey
-          }, method2, params);
-          assertCurrent();
-          if (result !== void 0) {
-            if (!electron.app.isPackaged && process.env.AIBERTAI_TRACE_KNOWLEDGE_RUNTIME === "1") {
-              writeLog("info", "main", `[account-runtime] ${method2}`);
-            }
-            return result;
-          }
-        } catch (error) {
-          assertCurrent();
-          throw error;
-        }
-      }
-    }
+  if (method2.startsWith("_monkeyai/kb/") && (params?.serverUrl !== account.server.url || params?.userId !== account.user.id)) {
+    throw new Error(ErrorCode.deviceTargetChanged);
   }
   await syncRuntimeToAccount();
   assertCurrent();
@@ -15407,7 +15206,18 @@ async function accountRuntimeRequest(sender, method2, params) {
   assertCurrent();
   if (!child$2 || status$1 !== "ready" || !endpoint$2 || activeAccountId !== account.id || activeServerUrl !== account.server.url) throw new Error(ErrorCode.deviceTargetChanged);
   const runtimeProcess = child$2, selected = endpoint$2;
-  const result = await runtimeRequest(method2, params);
+  const result = method2 === "_monkeyai/feedback/submit"
+    ? await globalThis.fetch(selected.httpBase + "/_aibertai/feedback", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${selected.token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(params),
+        redirect: "error",
+        signal: AbortSignal.timeout(45000)
+      }).then((response) => {
+        if (!response.ok) throw new Error("feedback_unavailable");
+        return response.json();
+      })
+    : await runtimeRequest(method2, params);
   assertCurrent();
   if (child$2 !== runtimeProcess || endpoint$2 !== selected) throw new Error(ErrorCode.deviceTargetChanged);
   return result;
@@ -15451,6 +15261,25 @@ function setupRuntime(options2) {
   setLogoutHook(logoutRuntime);
   setReloadCredentialsHook(reloadRuntimeCredentials);
   handle("runtime:endpoint", (args) => [args[0] === void 0 ? void 0 : text(args[0], ErrorCode.invalidDeviceTicket, 256)], (event, rejectedToken) => readyRuntime(event.sender, rejectedToken));
+  handle("runtime:restart-local", none, async (event) => {
+    const account = currentAccount(), frame = captureMainFrame(event.sender);
+    if (!account || runtimeTarget(event.sender)?.transport === "relay") throw new Error(ErrorCode.runtimeUnavailable);
+    const restart = transition.catch(() => {}).then(async () => {
+      if (currentAccount() !== account || quitting$1 || !mainFrameAlive(event.sender, frame)) throw new Error(ErrorCode.deviceTargetChanged);
+      if (child$2) {
+        if (status$1 !== "ready" || activeAccountId !== account.id) throw new Error(ErrorCode.runtimeNotReady);
+        await runtimeRequest("_aibertai/runtime/prepare-restart", {});
+      }
+      await stop();
+      if (currentAccount() !== account || quitting$1) throw new Error(ErrorCode.deviceTargetChanged);
+      restart$2 = initialRestartState();
+      await start$2(account);
+      if (!child$2) throw new Error(ErrorCode.runtimeUnavailable);
+      await whenReady();
+    });
+    transition = restart;
+    await restart;
+  });
   handle("runtime:session-archive", (args) => {
     const sessionId = text(args[0], ErrorCode.invalidRequest, 36);
     if (args[1] === "messages") return [sessionId, args[1], integer$1(args[2], ErrorCode.invalidRequest, 1, 100)];
@@ -15912,14 +15741,9 @@ class UploadTransfer {
 }
 const desktopFileTransfer = require("./desktop-file-transfer.cjs");
 function remoteTransferFetch(scope, input, init, filesOrigin) {
-  const source = sourceEmployeeRuntime();
-  const executable = source?.executable ?? process.env.AIBERTAI_KNOWLEDGE_RUNTIME_BIN;
-  if (executable && (source || !electron.app.isPackaged && process.env.AIBERTAI_REMOTE_FILE_RUNTIME === "1")) {
-    return desktopFileTransfer.request(executable, {
-      serverUrl: scope.serverUrl, machineId: scope.target.machineId, filesOrigin
-    }, input, init);
-  }
-  return fetchWithServerCertificate(input, init, scope.serverUrl);
+  return desktopFileTransfer.request(sourceEmployeeRuntime().executable, {
+    serverUrl: scope.serverUrl, machineId: scope.target.machineId, filesOrigin
+  }, input, init);
 }
 const selections = /* @__PURE__ */ new Map();
 const transfers = /* @__PURE__ */ new Map();
@@ -15978,7 +15802,6 @@ async function stageEmployeeAttachments(profile, files, assertCurrent) {
 }
 function attachmentDestination(sender) {
   if (runtimeTarget(sender)?.transport !== "relay") {
-    if (!sourceEmployeeRuntime()) return async (files2) => files2;
     const account = currentAccount(), frame = captureMainFrame(sender);
     if (!account) throw new Error(ErrorCode.noActiveAccount);
     const assertCurrent = () => {
@@ -16846,7 +16669,7 @@ function localHtmlResources(runtime, sessionId, entryPath) {
     const range = request.headers.get("range");
     if (range && !/^bytes=(?:\d+-\d*|-\d+)$/.test(range)) throw new Error(ErrorCode.fileReadFailed);
     signal.throwIfAborted();
-    const { url } = await runtime.request(MONKEYAI_METHODS.workspaceLink.name, {
+    const { url } = await runtime.request(AIBERTAI_METHODS.workspaceLink.name, {
       sessionId, path: resource.path, purpose: "resource", ttl: 60e3
     });
     const address = new URL(url);
@@ -16899,7 +16722,7 @@ function setupFiles() {
       scope2.assertCurrent();
       abort.signal.throwIfAborted();
       if (result.canceled || !result.filePath) return { saved: false };
-      const { url: url2 } = await scope2.request(MONKEYAI_METHODS.workspaceLink.name, { sessionId, path: path2, purpose: "download" });
+      const { url: url2 } = await scope2.request(AIBERTAI_METHODS.workspaceLink.name, { sessionId, path: path2, purpose: "download" });
       const headerTimer = setTimeout(() => abort.abort(new Error(ErrorCode.fileReadTimeout)), 3e4);
       let response;
       try {
@@ -18003,22 +17826,44 @@ const HTML_PREVIEW_SCHEME = "monkeyai-preview";
 const MAX_RENDER_BYTES = 32 * 1024 * 1024;
 const HTML_PREVIEW_POLICY = `sandbox allow-scripts allow-same-origin; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob: https: ${WORKSPACE_IMAGE_CSP_SOURCES}; font-src data:; media-src data: blob: https:; connect-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'`;
 const RESOURCE_POLICY = "sandbox allow-scripts allow-same-origin; default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; media-src 'self' data: blob: https:; connect-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'; object-src 'none'";
-function htmlPreviewPolicy(resources) {
+function externalHtmlPreviewPolicy(content) {
+  const scripts = new Set(), styles = new Set();
+  const html = content.replace(/<!--[\s\S]*?-->/g, "");
+  for (const [, name, attributes] of html.matchAll(/<(script|link)\b([^>]+)>/gi)) {
+    const tag = name.toLowerCase();
+    if (tag === "link" && !/\srel\s*=\s*(?:"[^"]*\bstylesheet\b[^"]*"|'[^']*\bstylesheet\b[^']*'|stylesheet\b)/i.test(attributes)) continue;
+    const attr = tag === "script" ? "src" : "href";
+    const match = attributes.match(new RegExp(`\\s${attr}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'=<>]+))`, "i"));
+    if (!match) continue;
+    let url;
+    try {
+      url = new URL(match[1] ?? match[2] ?? match[3]);
+    } catch {
+      continue;
+    }
+    if (url.protocol === "https:" && !url.username && !url.password) (tag === "script" ? scripts : styles).add(url.origin);
+  }
+  if (!scripts.size && !styles.size) return;
+  return `sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'${scripts.size ? " " + [...scripts].join(" ") : ""}; style-src 'unsafe-inline'${styles.size ? " " + [...styles].join(" ") : ""}; img-src data: blob: https:; font-src data: https:; media-src data: blob: https:; connect-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'`;
+}
+function htmlPreviewPolicy(resources, rendering) {
   const policy = resources ? RESOURCE_POLICY : HTML_PREVIEW_POLICY;
-  if (!sourceEmployeeRuntime()) return policy;
-  return policy.replaceAll(" https:", "").replace(WORKSPACE_IMAGE_CSP_SOURCES, "http://127.0.0.1:*/_aibertai/workspace/file");
+  const local = policy.replaceAll(" https:", "").replace(WORKSPACE_IMAGE_CSP_SOURCES, "http://127.0.0.1:*/_aibertai/workspace/file");
+  return rendering ? local.replace("frame-src 'none'", "frame-src about:") : local;
 }
 class HtmlPreviewPages {
   pages = /* @__PURE__ */ new Map();
-  create(ownerId, scope2, path2, content, maxBytes = MAX_HTML_PREVIEW_BYTES, resources) {
+  create(ownerId, scope2, path2, content, maxBytes = MAX_HTML_PREVIEW_BYTES, resources, rendering = false) {
     if (typeof path2 !== "string" || !path2 || path2.length > 8192 || typeof content !== "string" || Buffer.byteLength(content, "utf8") > maxBytes)
       throw new Error(ErrorCode.invalidHtmlPreview);
     const identity2 = scope2.device ? [scope2.accountId, deviceKey(scope2.device), scope2.sessionId, path2] : [scope2.accountId, scope2.sessionId, path2];
     const key2 = node_crypto.createHash("sha256").update(JSON.stringify(identity2)).digest("hex").slice(0, 32);
     const origin = `${HTML_PREVIEW_SCHEME}://${key2}`;
+    const externalPolicy = resources && !scope2.device && !rendering ? externalHtmlPreviewPolicy(content) : void 0;
+    if (externalPolicy) resources = void 0;
     const version2 = node_crypto.randomUUID(), prefix = resources ? `${origin}/${version2}/` : void 0;
     const url2 = prefix ? prefix + encodeURIComponent(node_path.posix.basename(path2)) : `${origin}/${version2}.html`;
-    this.pages.set(url2, { ...scope2, ownerId, content, prefix, resources, abort: new AbortController() });
+    this.pages.set(url2, { ...scope2, ownerId, content, prefix, resources, rendering, externalPolicy, abort: new AbortController() });
     return url2;
   }
   key(input) {
@@ -18034,7 +17879,7 @@ class HtmlPreviewPages {
     const page = this.pages.get(this.key(request2.url));
     const headers = {
       "Content-Type": "text/html; charset=utf-8",
-      "Content-Security-Policy": htmlPreviewPolicy(page?.resources),
+      "Content-Security-Policy": page?.externalPolicy ?? htmlPreviewPolicy(page?.resources, page?.rendering),
       "Cache-Control": "no-store",
       "Referrer-Policy": "no-referrer",
       "X-Content-Type-Options": "nosniff"
@@ -18060,24 +17905,9 @@ class HtmlPreviewPages {
     }
   }
 }
-const designOrigins = /* @__PURE__ */ new Set();
-function setDesignMediaOrigins(values) {
-  designOrigins.clear();
-  for (const value of values) {
-    try {
-      const url2 = new URL(value);
-      if ((url2.protocol === "http:" || url2.protocol === "https:") && !url2.username && !url2.password) designOrigins.add(url2.origin);
-    } catch {
-    }
-  }
-}
-function getDesignMediaOrigins() {
-  return [...designOrigins];
-}
 function webContentCsp() {
-  const source = sourceEmployeeRuntime();
-  const origin = source ? currentAccount()?.server.url : void 0;
-  return designMediaCsp(source ? origin ? [origin] : [] : getDesignMediaOrigins());
+  const origin = currentAccount()?.server.url;
+  return designMediaCsp(origin ? [origin] : []);
 }
 const WEB_SCHEME = "app";
 const WEB_HOST = "monkeyai";
@@ -18321,14 +18151,15 @@ function decryptCookieValue(key2, encrypted, hostKey, schemaVersion = 0) {
 }
 async function readChromeCookies(pageUrl, options2 = {}) {
   const root = options2.root ?? chromeUserDataDir();
-  if (!root || !["darwin", "win32", "linux"].includes(process.platform)) return [];
+  if (process.platform === "win32") throw new Error(ErrorCode.chromeImportUnavailable);
+  if (!root || !["darwin", "linux"].includes(process.platform)) return [];
   const page = new URL(pageUrl);
   if (page.protocol !== "https:" && page.protocol !== "http:") return [];
   const profile2 = selectedProfile(root);
   if (!profile2) return [];
   const source = cookieStore(root, profile2.directory);
   if (!source) return [];
-  const key2 = await chromeEncryptionKey(root, options2.decryptWindowsKey);
+  const key2 = await chromeEncryptionKey(root);
   return readProfileCookies(page, key2, source);
 }
 function selectedProfile(root) {
@@ -18371,15 +18202,12 @@ function readProfileCookies(page, key2, source) {
 function cookieStore(root, profile2) {
   return [node_path.join(root, profile2, "Network", "Cookies"), node_path.join(root, profile2, "Cookies")].find(node_fs.existsSync);
 }
-async function chromeEncryptionKey(root, decryptWindows) {
+async function chromeEncryptionKey(root) {
   const state2 = JSON.parse(node_fs.readFileSync(node_path.join(root, "Local State"), "utf8"));
   const encrypted = state2.os_crypt?.encrypted_key;
   if (encrypted) {
     const raw = Buffer.from(encrypted, "base64");
-    if (raw.subarray(0, 5).toString() === "DPAPI") {
-      if (!decryptWindows) throw new Error("reading a DPAPI-protected Chrome key needs the bundled decryptor");
-      return decryptWindows(raw.subarray(5));
-    }
+    if (raw.subarray(0, 5).toString() === "DPAPI") throw new Error(ErrorCode.chromeImportUnavailable);
     if (raw.subarray(0, 3).toString() === "v10") return raw.subarray(3);
   }
   const safeStorage = process.platform === "darwin" ? (await execFileAsync$1("security", ["find-generic-password", "-w", "-s", "Chrome Safe Storage", "-a", "Chrome"])).stdout.trim() : (await execFileAsync$1("secret-tool", ["lookup", "application", "chrome"])).stdout.trim();
@@ -18401,60 +18229,6 @@ function toCookie(page, key2, row, schemaVersion) {
     expirationDate: expirationDate && expirationDate > 0 ? expirationDate : void 0,
     sameSite: row.samesite === 2 ? "strict" : row.samesite === 1 ? "lax" : row.samesite === 0 ? "no_restriction" : "unspecified"
   }];
-}
-const MAX_PAYLOAD = 64 * 1024;
-const TIMEOUT_MS = 1e4;
-function unavailable(detail) {
-  return new Error(`${ErrorCode.chromeImportUnavailable}: ${detail}`);
-}
-function helperPath(helper) {
-  try {
-    return dpapiBin();
-  } catch (error) {
-    throw unavailable(error instanceof Error ? error.message : String(error));
-  }
-}
-async function decryptDpapi(encrypted, helper = helperPath()) {
-  if (encrypted.length === 0 || encrypted.length > MAX_PAYLOAD) throw unavailable(`ciphertext of ${encrypted.length} bytes is out of range`);
-  return new Promise((resolve, reject) => {
-    const child2 = node_child_process.spawn(helper, [], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
-    let settled = false;
-    let timer2;
-    let stdout = Buffer.alloc(0);
-    let stderr = Buffer.alloc(0);
-    const finish = (error, value) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer2);
-      if (error) reject(error);
-      else resolve(value);
-    };
-    timer2 = setTimeout(() => {
-      child2.kill();
-      finish(unavailable(`helper timed out after ${TIMEOUT_MS} ms`));
-    }, TIMEOUT_MS);
-    child2.on("error", (error) => finish(unavailable(`helper failed to start: ${error.message}`)));
-    child2.stdout?.on("data", (chunk) => {
-      if (stdout.length + chunk.length > MAX_PAYLOAD) {
-        child2.kill();
-        return finish(unavailable("helper returned more data than expected"));
-      }
-      stdout = Buffer.concat([stdout, chunk]);
-    });
-    child2.stderr?.on("data", (chunk) => {
-      if (stderr.length < MAX_PAYLOAD) stderr = Buffer.concat([stderr, chunk]);
-    });
-    child2.on("close", (code) => {
-      if (code !== 0) return finish(unavailable(`helper exited with code ${String(code)}: ${stderr.toString("utf8").trim() || "no output"}`));
-      const text2 = stdout.toString("utf8").trim();
-      const plain = /^[A-Za-z0-9+/]+={0,2}$/.test(text2) ? Buffer.from(text2, "base64") : Buffer.alloc(0);
-      if (plain.length === 0) return finish(unavailable("helper did not return base64 plaintext"));
-      finish(void 0, plain);
-    });
-    child2.stdin?.on("error", () => {
-    });
-    child2.stdin?.end(encrypted.toString("base64"));
-  });
 }
 function previewPageTurn(input) {
   if (input.type !== "rawKeyDown" && input.type !== "keyDown" || input.meta || input.control || input.alt) return null;
@@ -19066,7 +18840,7 @@ class BrowserHost {
   }
   async importChromeCookies(owner, scope2, pageUrl) {
     const page = this.ensure(owner, scope2);
-    const cookies = await readChromeCookies(pageUrl, { decryptWindowsKey: decryptDpapi });
+    const cookies = await readChromeCookies(pageUrl);
     const partition = page.view.webContents.session;
     let imported = 0;
     for (const cookie of cookies) {
@@ -19682,7 +19456,7 @@ class HtmlPreviewHost {
           return trace.step("browser-render", () => renderBrowserPreview({ content, width, height, requestId, signal: task.signal, log: this.log, fontFamilies: POSTER_FONT_FAMILIES, fontCss: loadPosterFontCss }));
         }
         trace.event("document-create", "start");
-        const url2 = this.documents.create(ownerId, scope2, path2, content, MAX_RENDER_BYTES);
+        const url2 = this.documents.create(ownerId, scope2, path2, content, MAX_RENDER_BYTES, void 0, true);
         dispose = () => this.documents.revoke(ownerId, url2);
         trace.event("document-create", "done");
         trace.event("window-create", "start");
@@ -19740,7 +19514,7 @@ class HtmlPreviewHost {
         renderer.webContents.on("destroyed", () => trace.event("web-contents", "destroyed"));
         renderer.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
         renderer.webContents.on("will-navigate", (event) => event.preventDefault());
-        desktopPlatform().protectFrames(renderer.webContents.id, () => false);
+        desktopPlatform().protectFrames(renderer.webContents.id, (target) => target === "about:srcdoc");
         renderer.webContents.on("will-redirect", (event) => event.preventDefault());
         try {
           const poster = content.includes("<body data-monkeyai-poster-preview");
@@ -19937,170 +19711,35 @@ function cacheRemoveAccount(accountId) {
     }
   }
 }
-const READY_TIMEOUT_MS = 15e3;
-const DEV_PORT = 18091;
-const DEV_TOKEN = "monkeyai-office-preview-dev";
-let child$1 = null;
 let endpoint$1 = null;
-let restart$1 = initialRestartState();
-let timer$1 = null;
 let stopping$1 = false;
-const readyWaiters = [];
 let privateOfficeStart;
 function officePreviewEndpoint() {
   return endpoint$1;
 }
-function settleReadyWaiters(error) {
-  for (const waiter of readyWaiters.splice(0)) waiter.reject(error);
-}
 function ensureOfficePreview() {
   if (endpoint$1) return Promise.resolve(endpoint$1);
-  const source = sourceEmployeeRuntime();
-  if (source) {
-    if (stopping$1) return Promise.reject(new Error(ErrorCode.officePreviewUnavailable));
-    privateOfficeStart ??= require("./private-office-preview.cjs").startPrivateOfficePreview({
-      token: node_crypto.randomBytes(24).toString("hex"),
-      converter: process.env.AIBERTAI_OFFICE_CONVERTER || "/Applications/LibreOffice.app/Contents/MacOS/soffice",
-      temp: electron.app.getPath("temp"),
-      vendor: node_path.join(webDir, "office-preview"),
-      validate: (bytes, format) => runNativePptxCheck(source.executable, ["verify-office-preview", format], bytes)
-    }).then((ready) => {
-      if (stopping$1) {
-        ready.close();
-        throw new Error(ErrorCode.officePreviewUnavailable);
-      }
-      return endpoint$1 = ready;
-    }).finally(() => { privateOfficeStart = void 0; });
-    return privateOfficeStart;
-  }
-  if (isCircuitOpen(restart$1, Date.now())) return Promise.reject(new Error(ErrorCode.officePreviewUnavailable));
-  return new Promise((resolve, reject) => {
-    const waiter = {
-      resolve: (value) => {
-        clearTimeout(deadline);
-        resolve(value);
-      },
-      reject: (error) => {
-        clearTimeout(deadline);
-        reject(error);
-      }
-    };
-    const deadline = setTimeout(() => {
-      const index2 = readyWaiters.indexOf(waiter);
-      if (index2 >= 0) readyWaiters.splice(index2, 1);
-      reject(new Error(ErrorCode.officePreviewUnavailable));
-    }, READY_TIMEOUT_MS);
-    readyWaiters.push(waiter);
-    start$1();
-  });
-}
-function previewEnv(bin) {
-  const env = { ...process.env, DISABLE_REMOTE_FONTS: "1" };
-  const substitution = node_path.join(node_path.dirname(bin), "font_subtitution.yaml");
-  if (node_fs.existsSync(substitution)) env.FONT_SUBSTITUTION_FILE = substitution;
-  const fonts = node_path.join(resourcesDir, "fonts");
-  if (node_fs.existsSync(fonts)) env.FONT_BUNDLED_DIR = fonts;
-  return env;
-}
-function devPort() {
-  const value = Number(process.env.MONKEYAI_OFFICE_PREVIEW_PORT);
-  return Number.isInteger(value) && value > 0 && value <= 65535 ? String(value) : String(DEV_PORT);
-}
-function endpointFor(port, token) {
-  if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535) return null;
-  return { baseUrl: `http://127.0.0.1:${port}`, token };
-}
-function start$1() {
-  if (child$1 || stopping$1 || timer$1) return;
-  const dev = !electron.app.isPackaged;
-  const token = dev ? process.env.MONKEYAI_OFFICE_PREVIEW_TOKEN || DEV_TOKEN : node_crypto.randomBytes(24).toString("hex");
-  let bin;
-  try {
-    bin = officePreviewBin();
-  } catch (error) {
-    settleReadyWaiters(error instanceof Error ? error : new Error(ErrorCode.officePreviewUnavailable));
-    return;
-  }
-  const env = previewEnv(bin);
-  if (dev) env.PREVIEW_PORT = devPort();
-  const proc = node_child_process.spawn(bin, [token], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true, env });
-  child$1 = proc;
-  proc.stderr?.on("data", (data) => console.warn("[office-preview] " + String(data).trim()));
-  let pending2 = "";
-  proc.stdout?.on("data", (chunk) => {
-    pending2 += String(chunk);
-    let newline;
-    while ((newline = pending2.indexOf("\n")) !== -1) {
-      const line = pending2.slice(0, newline).trim();
-      pending2 = pending2.slice(newline + 1);
-      if (!line.startsWith("{")) continue;
-      let event = null;
-      try {
-        event = JSON.parse(line);
-      } catch {
-        event = null;
-      }
-      if (event?.event !== "ready" || child$1 !== proc) continue;
-      const ready2 = endpointFor(event.port, token);
-      if (!ready2) {
-        forceKill(proc);
-        continue;
-      }
-      endpoint$1 = ready2;
-      restart$1 = recordReady();
-      for (const waiter of readyWaiters.splice(0)) waiter.resolve(ready2);
+  if (stopping$1) return Promise.reject(new Error(ErrorCode.officePreviewUnavailable));
+  const { executable } = sourceEmployeeRuntime();
+  privateOfficeStart ??= require("./private-office-preview.cjs").startPrivateOfficePreview({
+    token: node_crypto.randomBytes(24).toString("hex"),
+    converter: process.env.AIBERTAI_OFFICE_CONVERTER || "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+    temp: electron.app.getPath("temp"),
+    vendor: node_path.join(webDir, "office-preview"),
+    validate: (bytes, format) => runNativePptxCheck(executable, ["verify-office-preview", format], bytes)
+  }).then((ready) => {
+    if (stopping$1) {
+      ready.close();
+      throw new Error(ErrorCode.officePreviewUnavailable);
     }
-  });
-  let gone = false;
-  const onExit = (code) => {
-    if (gone) return;
-    gone = true;
-    if (child$1 !== proc) return;
-    child$1 = null;
-    endpoint$1 = null;
-    settleReadyWaiters(new Error(ErrorCode.officePreviewUnavailable));
-    if (stopping$1) return;
-    restart$1 = recordUnexpectedExit(restart$1, Date.now());
-    const delay = restartDelayMs(restart$1, Date.now());
-    if (delay === null) {
-      console.error(`[office-preview] exited ${restart$1.failures} times in a row (last code ${code}); previews are unavailable, retrying in ${RESTART_COOLDOWN_MS}ms`);
-      timer$1 = setTimeout(() => {
-        timer$1 = null;
-        start$1();
-      }, RESTART_COOLDOWN_MS);
-      return;
-    }
-    if (delay > 0) console.warn(`[office-preview] exited with code ${code}; restarting in ${delay}ms`);
-    timer$1 = setTimeout(() => {
-      timer$1 = null;
-      start$1();
-    }, delay);
-  };
-  proc.on("error", (error) => {
-    console.error(`[office-preview] could not be started: ${error.message}`);
-    onExit(null);
-  });
-  proc.on("exit", (code) => onExit(code));
-}
-function forceKill(proc) {
-  try {
-    proc.kill("SIGKILL");
-  } catch {
-  }
+    return endpoint$1 = ready;
+  }).finally(() => { privateOfficeStart = void 0; });
+  return privateOfficeStart;
 }
 function stopOfficePreview() {
   stopping$1 = true;
-  if (timer$1) clearTimeout(timer$1);
-  timer$1 = null;
-  settleReadyWaiters(new Error(ErrorCode.officePreviewUnavailable));
-  const proc = child$1;
-  child$1 = null;
-  endpoint$1?.close?.();
+  endpoint$1?.close();
   endpoint$1 = null;
-  try {
-    proc?.kill();
-  } catch {
-  }
 }
 electron.app.on("before-quit", stopOfficePreview);
 const MAX_OFFICE_PREVIEW_BYTES = 200 * 1024 * 1024;
@@ -20192,28 +19831,8 @@ function releaseSession(baseUrl, token, id2) {
     request2.end();
   });
 }
-async function localOfficeWorkspaceStat(scope, path) {
-  const params = { sessionId: scope.sessionId, path };
-  if (sourceEmployeeRuntime()) return runtimeRequest(MONKEYAI_METHODS.workspaceStat.name, params);
-  const executable = electron.app.isPackaged ? bundled("aibertai-native") : process.env.AIBERTAI_KNOWLEDGE_RUNTIME_BIN;
-  const account = currentAccount(), runtime = child$2;
-  const assertCurrent = () => {
-    if (!account || currentAccount() !== account || child$2 !== runtime || activeAccountId !== account.id) {
-      throw new Error(ErrorCode.deviceTargetChanged);
-    }
-  };
-  if (executable && runtime && account && activeAccountId === account.id) {
-    const workspace = await runtimeRequest(MONKEYAI_METHODS.sessionWorkspace.name, { sessionId: scope.sessionId }).catch(() => null);
-    assertCurrent();
-    if (typeof workspace?.cwd === "string" && node_path.isAbsolute(workspace.cwd)) {
-      const result = await desktopKnowledge.request(executable, {}, MONKEYAI_METHODS.workspaceStat.name, {
-        workspaceRoot: workspace.cwd, path
-      });
-      assertCurrent();
-      if (result !== void 0) return result;
-    }
-  }
-  return runtimeRequest(MONKEYAI_METHODS.workspaceStat.name, params);
+function localOfficeWorkspaceStat(scope, path) {
+  return runtimeRequest(AIBERTAI_METHODS.workspaceStat.name, { sessionId: scope.sessionId, path });
 }
 class OfficePreviewHost {
   views = /* @__PURE__ */ new Map();
@@ -20274,7 +19893,7 @@ class OfficePreviewHost {
       try {
         if (remoteSource) await remoteSource.download(source);
         else {
-          const { url: url22 } = await runtimeRequest(MONKEYAI_METHODS.workspaceLink.name, { sessionId: scope2.sessionId, path: path2 });
+          const { url: url22 } = await runtimeRequest(AIBERTAI_METHODS.workspaceLink.name, { sessionId: scope2.sessionId, path: path2 });
           await downloadToFile(url22, source);
         }
         remoteSource?.assertCurrent();
@@ -21371,8 +20990,7 @@ function runNativePptxCheck(executable, args, bytes) {
 }
 async function storePrivateEditableDeck(runtime, cwdInput, bytes, slideCount, manifestPath) {
   if (!(bytes instanceof Uint8Array) || !bytes.byteLength || bytes.byteLength > 128 * 1024 * 1024) throw new Error("invalid_pptx_result");
-  const executable = sourceEmployeeRuntime()?.executable;
-  if (!executable) throw new Error("pptx_export_unavailable");
+  const { executable } = sourceEmployeeRuntime();
   await runNativePptxCheck(executable, ["verify-editable-pptx", String(slideCount)], bytes);
   runtime.assertCurrent();
   const cwd = await promises.realpath(cwdInput);
@@ -21611,7 +21229,7 @@ function deviceSession(accountId, target, serverUrl2, webDir2, devUrl) {
         init.headers = headers;
         init.cache = "no-store";
       }
-      const response = await fetchWithServerCertificate(request2, init, configuration.serverUrl);
+      const response = await fetchWithServerSession(request2, init, configuration.serverUrl);
       return trusted ? responseForWindow(response, true) : response;
     });
   }
@@ -21633,7 +21251,7 @@ function activeScope(value) {
 }
 async function sessionWorkspace(value) {
   const scope2 = activeScope(value);
-  const { cwd } = await runtimeRequest(MONKEYAI_METHODS.sessionWorkspace.name, { sessionId: scope2.sessionId }).catch(() => ({ cwd: "" }));
+  const { cwd } = await runtimeRequest(AIBERTAI_METHODS.sessionWorkspace.name, { sessionId: scope2.sessionId }).catch(() => ({ cwd: "" }));
   if (typeof cwd !== "string" || !node_path.isAbsolute(cwd) || !node_fs.statSync(cwd, { throwIfNoEntry: false })?.isDirectory()) throw new Error(ErrorCode.invalidWorkspace);
   if (currentAccount()?.id !== scope2.accountId) throw new Error(ErrorCode.invalidWorkspaceScope);
   return { ...scope2, cwd };
@@ -21724,21 +21342,19 @@ function setupWorkspaceHost(features) {
       }
     }
     const workspace = await sessionWorkspace(value);
-    if (sourceEmployeeRuntime()) {
-      const relative = node_path.isAbsolute(path2) ? node_path.relative(workspace.cwd, path2) : path2;
-      const entry = relative.split(node_path.sep).join("/");
-      if (!entry || entry === ".." || entry.startsWith("../") || node_path.isAbsolute(entry)) throw new Error(ErrorCode.invalidHtmlPreview);
-      const runtime = await captureLocalRuntime(event.sender);
-      const preview = await previews.create(owner, workspace, entry, content, localHtmlResources(runtime, workspace.sessionId, entry));
-      try {
-        runtime.assertCurrent();
-        return preview;
-      } catch (error) {
-        previews.revoke(owner, preview);
-        throw error;
-      }
+    const relative = node_path.isAbsolute(path2) ? node_path.relative(workspace.cwd, path2) : path2;
+    const entry = relative.split(node_path.sep).join("/");
+    if (!entry || entry === ".." || entry.startsWith("../") || node_path.isAbsolute(entry)) throw new Error(ErrorCode.invalidHtmlPreview);
+    const runtime = await captureLocalRuntime(event.sender);
+    const preview = await previews.create(owner, workspace, entry, content, localHtmlResources(runtime, workspace.sessionId, entry));
+    try {
+      runtime.assertCurrent();
+      return preview;
+    } catch (error) {
+      previews.revoke(owner, preview);
+      throw error;
     }
-    return previews.create(owner, workspace, path2, content);
+
   });
   handle("workspace:html-preview:show", (args) => [url(args[0]), bounds(args[1]), args[2] === void 0 ? false : flag(args[2], ErrorCode.invalidHtmlPreview)], (event, target, area, pageTurns) => previews.show(ownerOf(event), target, area, pageTurns));
   handle("workspace:html-preview:hide", (args) => [url(args[0])], (event, target) => previews.hide(ownerOf(event), target));
@@ -21775,25 +21391,23 @@ function setupWorkspaceHost(features) {
       }
     }
     const workspace = await sessionWorkspace(value);
-    if (sourceEmployeeRuntime()) {
-      const runtime = await captureLocalRuntime(event.sender);
-      const request = { sessionId: workspace.sessionId, path: path2 };
-      const stat = await runtime.request(MONKEYAI_METHODS.workspaceStat.name, request);
-      if (!stat?.exists) throw new Error(ErrorCode.invalidPath);
-      return office.create(owner, workspace, path2, {
-        size: stat.size,
-        fingerprint: `${stat.size}:${stat.mtimeMs}`,
-        assertCurrent: runtime.assertCurrent,
-        download: async (destination) => {
-          const { url } = await runtime.request(MONKEYAI_METHODS.workspaceLink.name, { ...request, purpose: "resource", ttl: 60e3 });
-          const target = new URL(url);
-          if (target.origin !== runtime.httpBase || target.pathname !== "/_aibertai/workspace/file") throw new Error(ErrorCode.invalidFileLink);
-          await downloadToFile(target, destination);
-          runtime.assertCurrent();
-        }
-      });
-    }
-    return office.create(owner, workspace, path2);
+    const runtime = await captureLocalRuntime(event.sender);
+    const request = { sessionId: workspace.sessionId, path: path2 };
+    const stat = await runtime.request(AIBERTAI_METHODS.workspaceStat.name, request);
+    if (!stat?.exists) throw new Error(ErrorCode.invalidPath);
+    return office.create(owner, workspace, path2, {
+      size: stat.size,
+      fingerprint: `${stat.size}:${stat.mtimeMs}`,
+      assertCurrent: runtime.assertCurrent,
+      download: async (destination) => {
+        const { url } = await runtime.request(AIBERTAI_METHODS.workspaceLink.name, { ...request, purpose: "resource", ttl: 60e3 });
+        const target = new URL(url);
+        if (target.origin !== runtime.httpBase || target.pathname !== "/_aibertai/workspace/file") throw new Error(ErrorCode.invalidFileLink);
+        await downloadToFile(target, destination);
+        runtime.assertCurrent();
+      }
+    });
+
   });
   handle("workspace:office-preview:show", (args) => [officeUrl(args[0]), bounds(args[1])], (event, target, area) => office.show(ownerOf(event), target, area));
   handle("workspace:office-preview:hide", (args) => [officeUrl(args[0])], (event, target) => office.hide(ownerOf(event), target));
@@ -21816,7 +21430,7 @@ function setupWorkspaceHost(features) {
   ], async (event, value, bytes, slideCount, manifestPath) => {
     const runtime = await captureLocalRuntime(event.sender);
     const workspace = await sessionWorkspace(value);
-    const state = await runtime.request(MONKEYAI_METHODS.sessionWorkspace.name, { sessionId: workspace.sessionId });
+    const state = await runtime.request(AIBERTAI_METHODS.sessionWorkspace.name, { sessionId: workspace.sessionId });
     const design = state.capabilities?.design;
     if (!design || !MANIFEST.test(manifestPath) || manifestPath !== `${design.localDesignPath}/slide-manifest.json`) throw new Error(ErrorCode.invalidPath);
     const run = () => {
@@ -21870,6 +21484,9 @@ function setupWorkspaceHost(features) {
     return browser.importChromeCookies(owner, scope2, url2);
   });
   return {
+    renderDesignPreview(scope, input, signal) {
+      return previews.render(RENDER_OWNER, scope, input.path, input.html, input.width, input.height, input.requestId, signal, input.backend);
+    },
     attach(owner) {
       const id2 = owner.id;
       owner.webContents.on("before-input-event", (_event, input) => {
@@ -22457,10 +22074,10 @@ function setupDeviceAccess() {
       writeLog("warn", "main", "remote access sleep prevention update failed");
     }
   };
-  handle("device:remote:status", (args) => [args[0] === void 0 ? false : flag(args[0], ErrorCode.invalidRequest)], (event, refresh) => localRuntimeRequest(event.sender, MONKEYAI_METHODS.deviceRemoteStatus.name, { refresh }));
+  handle("device:remote:status", (args) => [args[0] === void 0 ? false : flag(args[0], ErrorCode.invalidRequest)], (event, refresh) => localRuntimeRequest(event.sender, AIBERTAI_METHODS.deviceRemoteStatus.name, { refresh }));
   handle("device:remote:set", (args) => [flag(args[0], ErrorCode.invalidRequest)], async (event, enabled2) => {
     try {
-      return await localRuntimeRequest(event.sender, MONKEYAI_METHODS.deviceRemoteSet.name, { enabled: enabled2 });
+      return await localRuntimeRequest(event.sender, AIBERTAI_METHODS.deviceRemoteSet.name, { enabled: enabled2 });
     } catch (error) {
       throw runtimeReasonError(error);
     }
@@ -22485,7 +22102,7 @@ function setupDeviceAccess() {
     syncPower();
     powerChanges = powerChanges.catch(() => {
     }).then(async () => {
-      if (runtimeStatus() === "ready") await runtimeRequest(MONKEYAI_METHODS.deviceRemotePower.name, { state: state2 });
+      if (runtimeStatus() === "ready") await runtimeRequest(AIBERTAI_METHODS.deviceRemotePower.name, { state: state2 });
     }).catch(() => {
     });
   };
@@ -22505,280 +22122,29 @@ function validateUserCode(value) {
   return code;
 }
 function setupPairing() {
-  handle("pairing:create", none, (event) => localRuntimeRequest(event.sender, MONKEYAI_METHODS.pairingCreate.name, {}));
-  handle("pairing:status", (args) => [validatePairingId(args[0])], (event, pairingId) => localRuntimeRequest(event.sender, MONKEYAI_METHODS.pairingStatus.name, { pairingId }));
+  handle("pairing:create", none, (event) => localRuntimeRequest(event.sender, AIBERTAI_METHODS.pairingCreate.name, {}));
+  handle("pairing:status", (args) => [validatePairingId(args[0])], (event, pairingId) => localRuntimeRequest(event.sender, AIBERTAI_METHODS.pairingStatus.name, { pairingId }));
   handle("pairing:approve", (args) => [validatePairingId(args[0]), validateUserCode(args[1])], async (event, pairingId, userCode) => {
-    await localRuntimeRequest(event.sender, MONKEYAI_METHODS.pairingApprove.name, { pairingId, userCode });
+    await localRuntimeRequest(event.sender, AIBERTAI_METHODS.pairingApprove.name, { pairingId, userCode });
     return void 0;
   });
   handle("pairing:cancel", (args) => [validatePairingId(args[0])], async (event, pairingId) => {
-    await localRuntimeRequest(event.sender, MONKEYAI_METHODS.pairingCancel.name, { pairingId });
+    await localRuntimeRequest(event.sender, AIBERTAI_METHODS.pairingCancel.name, { pairingId });
     return void 0;
   });
 }
-const uuid$1 = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
-const MAX_DOCUMENT = 96 * 1024;
-const runtimeInstallerFilename = (version2, arch = "x64") => `monkeyai-runtime-${version2}-linux-${arch}`;
-class RuntimeInstallError extends Error {
-  constructor(reason2) {
-    super(reason2);
-    this.reason = reason2;
-  }
-  reason;
-}
-const invalid = () => {
-  throw new RuntimeInstallError("invalid_release");
-};
 function runtimeInstallArch(value = "x64") {
-  if (value !== "x64" && value !== "arm64") return invalid();
+  if (value !== "x64" && value !== "arm64") throw new Error("invalid_release");
   return value;
-}
-async function readInstallDocument(url2, fetch2) {
-  const controller2 = new AbortController();
-  const timeout = setTimeout(() => controller2.abort(), 1e4);
-  try {
-    const response = await fetch2(url2, { signal: controller2.signal, redirect: "error", cache: "no-store", credentials: "omit", headers: { Accept: "application/json" } });
-    if (!response.ok) {
-      await response.body?.cancel();
-      throw new RuntimeInstallError(response.status === 404 ? "not_published" : "network_error");
-    }
-    if (!response.body || Number(response.headers.get("content-length") ?? 0) > MAX_DOCUMENT) {
-      await response.body?.cancel();
-      return invalid();
-    }
-    const reader2 = response.body.getReader(), chunks = [];
-    let size = 0;
-    try {
-      for (; ; ) {
-        const { value, done } = await reader2.read();
-        if (done) break;
-        size += value.byteLength;
-        if (size > MAX_DOCUMENT) {
-          await reader2.cancel();
-          return invalid();
-        }
-        chunks.push(value);
-      }
-    } finally {
-      reader2.releaseLock();
-    }
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
-  } catch (error) {
-    if (error instanceof RuntimeInstallError) throw error;
-    throw new RuntimeInstallError("network_error");
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-function object(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return invalid();
-  return value;
-}
-function bytes(value, max) {
-  if (typeof value !== "string" || value.length > max * 2) return invalid();
-  const decoded = Buffer.from(value, "base64");
-  if (decoded.length > max || decoded.toString("base64") !== value) return invalid();
-  return decoded;
-}
-function verifyInstallOffer(raw, config2, target, now = Date.now(), arch = "x64") {
-  runtimeInstallArch(arch);
-  if (!uuid$1.test(target.serverId) || !uuid$1.test(target.userId)) return invalid();
-  const envelope = object(raw);
-  if (typeof envelope.keyId !== "string" || !Object.hasOwn(config2.keys, envelope.keyId)) return invalid();
-  const payload = bytes(envelope.payload, 64 * 1024), signature = bytes(envelope.signature, 64);
-  const publicKey = node_crypto.createPublicKey(config2.keys[envelope.keyId]);
-  if (publicKey.asymmetricKeyType !== "ed25519" || signature.length !== 64 || !node_crypto.verify(null, payload, publicKey, signature)) return invalid();
-  const manifest = object(JSON.parse(payload.toString("utf8")));
-  if (manifest.schema !== 1 || typeof manifest.version !== "string" || !/^\d+\.\d+\.\d+$/.test(manifest.version)) return invalid();
-  const created = typeof manifest.createdAt === "string" ? Date.parse(manifest.createdAt) : NaN;
-  const expires = typeof manifest.expiresAt === "string" ? Date.parse(manifest.expiresAt) : NaN;
-  if (!Number.isFinite(created) || !Number.isFinite(expires) || expires <= created || expires - created > 180 * 864e5 || created > now + 3e5) return invalid();
-  if (expires <= now) throw new RuntimeInstallError("release_expired");
-  if (!Array.isArray(manifest.artifacts) || manifest.artifacts.length !== 1) return invalid();
-  const artifact = object(manifest.artifacts[0]);
-  if (artifact.os !== "linux" || artifact.arch !== arch || artifact.path !== `linux/${arch}/${runtimeInstallerFilename(manifest.version, arch)}` || typeof artifact.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(artifact.sha256) || !Number.isSafeInteger(artifact.size) || artifact.size < 1 || artifact.size > 1024 ** 3) return invalid();
-  const base = new URL(config2.base), url2 = new URL(artifact.path, base);
-  if (!["https:", "http:"].includes(base.protocol) || base.username || base.password || base.search || base.hash || !base.pathname.endsWith("/") || url2.origin !== base.origin || !url2.pathname.startsWith(base.pathname)) return invalid();
-  const server = new URL(target.server);
-  if (!["https:", "http:"].includes(server.protocol) || server.username || server.password || server.search || server.hash) return invalid();
-  const result = { available: true, arch, version: manifest.version, url: url2.href, sha256: artifact.sha256, size: artifact.size, ...target };
-  return { ...result, command: installationCommand(result) };
-}
-const quote = (value) => "'" + value.replace(/'/g, "'\\''") + "'";
-function installationPlatformCheck(arch) {
-  const machine = runtimeInstallArch(arch) === "arm64" ? "aarch64" : "x86_64";
-  return `  [ "$(uname -s)" = Linux ] && [ "$(uname -m)" = ${machine} ] || { echo "Linux ${arch} is required" >&2; exit 1; }`;
-}
-function installationSetup(offer2, executable) {
-  const setup = `setup --server ${quote(offer2.server)} --server-id ${quote(offer2.serverId)} --user ${quote(offer2.userId)}`;
-  return [
-    '  if [ "$(id -u)" -eq 0 ]; then',
-    `    ${executable} ${setup}`,
-    "  else",
-    `    sudo -- ${executable} ${setup}`,
-    "  fi"
-  ];
-}
-function installationCommand(offer2) {
-  return [
-    "(",
-    "  set -eu",
-    installationPlatformCheck(offer2.arch),
-    "  command -v curl >/dev/null && command -v sha256sum >/dev/null",
-    '  runtime_install_dir="$(mktemp -d)"',
-    `  trap 'rm -rf "$runtime_install_dir"' EXIT`,
-    `  curl --fail --silent --show-error --retry 2 --connect-timeout 15 --max-time 300 --max-filesize ${offer2.size} --output "$runtime_install_dir/monkeyai-runtime" ${quote(offer2.url)}`,
-    `  printf '%s  %s\\n' ${quote(offer2.sha256)} "$runtime_install_dir/monkeyai-runtime" | sha256sum --check --status`,
-    '  chmod 700 "$runtime_install_dir/monkeyai-runtime"',
-    ...installationSetup(offer2, '"$runtime_install_dir/monkeyai-runtime"'),
-    ")"
-  ].join("\n");
-}
-function localInstallationCommand(offer2, filename) {
-  if (!filename || filename === "." || filename === ".." || filename.includes("/") || filename.includes("\0")) return invalid();
-  const executable = quote("./" + filename);
-  return [
-    "(",
-    installationPlatformCheck(offer2.arch),
-    `  runtime_installer_checksum="$(sha256sum < ${executable})" &&`,
-    `  [ "\${runtime_installer_checksum%% *}" = ${quote(offer2.sha256)} ] &&`,
-    `  chmod 700 ${executable} &&`,
-    ...installationSetup(offer2, executable),
-    ")"
-  ].join("\n");
-}
-async function loadInstallOffer(config2, target, fetch2, arch = "x64") {
-  runtimeInstallArch(arch);
-  if (!config2.base) throw new RuntimeInstallError("download_not_configured");
-  if (!Object.keys(config2.keys).length) throw new RuntimeInstallError("signing_not_configured");
-  const raw = await readInstallDocument(new URL(`linux/${arch}/latest.json`, config2.base).href, fetch2);
-  let offer2;
-  try {
-    offer2 = verifyInstallOffer(raw, config2, target, Date.now(), arch);
-  } catch (error) {
-    if (error instanceof RuntimeInstallError) throw error;
-    return invalid();
-  }
-  const controller2 = new AbortController(), timeout = setTimeout(() => controller2.abort(), 1e4);
-  try {
-    const response = await fetch2(offer2.url, { method: "HEAD", redirect: "error", credentials: "omit", cache: "no-store", signal: controller2.signal });
-    await response.body?.cancel();
-    if (!response.ok) throw new RuntimeInstallError(response.status === 404 ? "not_published" : "network_error");
-    const size = response.headers.get("content-length");
-    if (size !== null && Number(size) !== offer2.size) return invalid();
-    return offer2;
-  } catch (error) {
-    if (error instanceof RuntimeInstallError) throw error;
-    throw new RuntimeInstallError("network_error");
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-function validateInstallServer(raw, target) {
-  const value = object(raw), runtime = object(value.monkeyai_runtime), features = object(runtime.features);
-  if (typeof value.issuer !== "string" || value.issuer.replace(/\/$/, "") !== target.server.replace(/\/$/, "") || runtime.server_id !== target.serverId || features.device_grant !== true || features.runtime_relay !== true || !Array.isArray(value.grant_types_supported) || !value.grant_types_supported.includes("urn:ietf:params:oauth:grant-type:device_code") || typeof value.device_authorization_endpoint !== "string" || new URL(value.device_authorization_endpoint).origin !== new URL(target.server).origin) throw new RuntimeInstallError("server_unsupported");
-}
-function distribution() {
-  return { base: "", keys: {} };
-}
-function scope(event) {
-  const account = currentAccount(), frame2 = captureMainFrame(event.sender);
-  if (!account) throw new Error(ErrorCode.noActiveAccount);
-  return () => {
-    if (currentAccount() !== account || !mainFrameAlive(event.sender, frame2)) throw new Error(ErrorCode.deviceTargetChanged);
-    trustedWindow(event);
-  };
-}
-async function offer(event, assertCurrent, arch = "x64") {
-  const account = currentAccount();
-  if (!account) throw new Error(ErrorCode.noActiveAccount);
-  const config2 = distribution();
-  if (!config2.base) return { available: false, reason: "download_not_configured" };
-  if (!Object.keys(config2.keys).length) return { available: false, reason: "signing_not_configured" };
-  const fetch2 = (input, init) => desktopPlatform().fetch(input, init);
-  try {
-    const directory = await runtimeDevices(event.sender);
-    assertCurrent();
-    if (!directory.supported || !directory.serverId) return { available: false, reason: "server_unsupported" };
-    const target = { server: account.server.url.replace(/\/$/, ""), serverId: directory.serverId, userId: account.user.id };
-    try {
-      const discovery = await readInstallDocument(target.server + "/.well-known/oauth-authorization-server", (input, init) => fetchWithServerCertificate(input, init, target.server));
-      assertCurrent();
-      validateInstallServer(discovery, target);
-    } catch (error) {
-      if (error instanceof RuntimeInstallError && (error.reason === "not_published" || error.reason === "invalid_release")) throw new RuntimeInstallError("server_unsupported");
-      throw error;
-    }
-    const result = await loadInstallOffer(config2, target, fetch2, arch);
-    assertCurrent();
-    return result;
-  } catch (error) {
-    assertCurrent();
-    if (error instanceof RuntimeInstallError) return { available: false, reason: error.reason };
-    return { available: false, reason: "network_error" };
-  }
-}
-async function download(offer2, destination, assertCurrent) {
-  const temporary = await promises.mkdtemp(node_path.join(node_path.dirname(destination), ".monkeyai-runtime-"));
-  const path2 = node_path.join(temporary, "monkeyai-runtime");
-  const controller2 = new AbortController(), timeout = setTimeout(() => controller2.abort(), 3e5);
-  try {
-    assertCurrent();
-    const response = await desktopPlatform().fetch(offer2.url, { redirect: "error", credentials: "omit", cache: "no-store", signal: controller2.signal });
-    if (!response.ok || !response.body) {
-      await response.body?.cancel();
-      throw new Error(ErrorCode.runtimeDownloadFailed);
-    }
-    const length = response.headers.get("content-length");
-    if (length !== null && Number(length) !== offer2.size) {
-      await response.body.cancel();
-      throw new Error(ErrorCode.runtimeDownloadInvalid);
-    }
-    const file2 = await promises.open(path2, "wx", 384);
-    const reader2 = response.body.getReader(), hash2 = node_crypto.createHash("sha256");
-    let size = 0;
-    try {
-      for (; ; ) {
-        assertCurrent();
-        const { value, done } = await reader2.read();
-        if (done) break;
-        size += value.byteLength;
-        if (size > offer2.size) throw new Error(ErrorCode.runtimeDownloadInvalid);
-        hash2.update(value);
-        await file2.writeFile(value);
-      }
-      if (size !== offer2.size || hash2.digest("hex") !== offer2.sha256) throw new Error(ErrorCode.runtimeDownloadInvalid);
-      await file2.chmod(493);
-      await file2.sync();
-    } finally {
-      try {
-        await file2.close();
-      } finally {
-        await reader2.cancel().catch(() => {
-        });
-        reader2.releaseLock();
-      }
-    }
-    assertCurrent();
-    await promises.rename(path2, destination);
-  } finally {
-    clearTimeout(timeout);
-    controller2.abort();
-    await promises.rm(temporary, { recursive: true, force: true });
-  }
 }
 function setupRuntimeInstaller() {
-  handle("devices:installation", (args) => [runtimeInstallArch(args[0])], (event, arch) => offer(event, scope(event), arch));
-  handle("devices:download-installer", (args) => [text(args[0], ErrorCode.invalidRequest, 80), text(args[1], ErrorCode.invalidRequest, 64), runtimeInstallArch(args[2])], async (event, version2, checksum, arch) => {
-    const assertCurrent = scope(event);
-    const result = await offer(event, assertCurrent, arch);
-    if (!result.available) throw new Error(result.reason);
-    if (result.arch !== arch || result.version !== version2 || result.sha256 !== checksum) throw new Error(ErrorCode.runtimeReleaseChanged);
-    const selected = await electron.dialog.showSaveDialog(trustedWindow(event), { defaultPath: runtimeInstallerFilename(result.version, arch), properties: ["showOverwriteConfirmation"] });
-    assertCurrent();
-    if (selected.canceled || !selected.filePath) return { saved: false };
-    await download(result, selected.filePath, assertCurrent);
-    return { saved: true, localCommand: localInstallationCommand(result, node_path.basename(selected.filePath)) };
+  handle("devices:installation", (args) => [runtimeInstallArch(args[0])], () => {
+    if (!currentAccount()) throw new Error(ErrorCode.noActiveAccount);
+    return { available: false, reason: "download_not_configured" };
+  });
+  handle("devices:download-installer", (args) => [text(args[0], ErrorCode.invalidRequest, 80), text(args[1], ErrorCode.invalidRequest, 64), runtimeInstallArch(args[2])], () => {
+    if (!currentAccount()) throw new Error(ErrorCode.noActiveAccount);
+    throw new Error("download_not_configured");
   });
 }
 function setupAccountRequests() {
@@ -22887,7 +22253,7 @@ function setupDeviceDirectory(options2) {
     if (!isDeviceAlias(args[1])) throw new Error(ErrorCode.invalidDeviceAlias);
     return [target, args[1]];
   }, async (event, target, alias) => {
-    await accountRuntimeRequest(event.sender, MONKEYAI_METHODS.devicesRename.name, { ...target, alias }).catch((error) => {
+    await accountRuntimeRequest(event.sender, AIBERTAI_METHODS.devicesRename.name, { ...target, alias }).catch((error) => {
       throw runtimeReasonError(error);
     });
   });
@@ -23143,38 +22509,33 @@ class DeviceWorkbenches {
 const STOP_GRACE_MS = 3e3;
 let child = null;
 let options$1 = null;
-let endpoint = null;
-let serverUrl;
 let restart = initialRestartState();
 let timer = null;
 let stopping = false;
 let catalogOrigin;
 const catalogRequests = new Map();
 function start() {
-  if (!options$1 || child || stopping || options$1.privateCatalog && !catalogOrigin) return;
+  if (!options$1 || child || stopping || !catalogOrigin) return;
   const proc = electron.utilityProcess.fork(options$1.entry, [], { serviceName: "monkeyai-design", stdio: ["ignore", "pipe", "pipe"] });
   child = proc;
   const stdout = runtimeOutputLogger("stdout", "design");
   const stderr = runtimeOutputLogger("stderr", "design");
   proc.stdout?.on("data", (data) => stdout.write(data));
   proc.stderr?.on("data", (data) => stderr.write(data));
-  if (options$1.privateCatalog) {
-    proc.on("message", (message) => {
-      if (message?.type !== "private-catalog-result") return;
-      const pending = catalogRequests.get(message.id);
-      if (pending?.proc === proc) pending.finish(message.error ? new Error(message.error) : null, message.data);
-    });
-    proc.postMessage({ type: "init-private-catalog", origin: catalogOrigin });
-  } else {
-    const configuration = { type: "init", version: options$1.version, expertDir: options$1.expertDir, debug: !electron.app.isPackaged };
-    void readBuiltinCertificates().then((ca) => {
-      if (child === proc) proc.postMessage({ ...configuration, ca });
-    }).catch(() => {
-      stderr.write("bundled CA is unavailable\n");
-      proc.kill();
-    });
-    proc.postMessage({ type: "runtime", endpoint, serverUrl });
-  }
+  proc.on("message", (message) => {
+    if (message?.type === "private-design-render") {
+      void answerPrivateDesignRender(proc, message);
+      return;
+    }
+    if (message?.type === "private-design-media-model") {
+      void answerPrivateDesignMediaModel(proc, message);
+      return;
+    }
+    if (message?.type !== "private-catalog-result") return;
+    const pending = catalogRequests.get(message.id);
+    if (pending?.proc === proc) pending.finish(message.error ? new Error(message.error) : null, message.data);
+  });
+  proc.postMessage({ type: "init-private-catalog", origin: catalogOrigin });
   void (options$1.imagePreflight ?? Promise.resolve({ state: "failed", reason: "probe_failed" })).then((result) => {
     if (child === proc && !stopping) proc.postMessage({ type: "image-preflight", result });
   }).catch(() => {
@@ -23215,6 +22576,54 @@ function setupDesignProvider(next) {
   start();
   electron.app.on("before-quit", () => void stopDesignProvider());
 }
+async function answerPrivateDesignRender(proc, message) {
+  const request = catalogRequests.get(message.operationId);
+  const input = message.input;
+  const account = currentAccount();
+  const reply = { type: "private-design-render-result", operationId: message.operationId };
+  try {
+    if (!request?.capture || request.proc !== proc || request.rendering || !workspaceHost ||
+        !account || request.accountId !== account.id || request.server !== account.server.url ||
+        !input || input.sessionId !== request.capture.sessionId || !UUID$2.test(input.requestId) ||
+        typeof input.path !== "string" || input.path.length > 2048 ||
+        typeof input.html !== "string" || Buffer.byteLength(input.html) > MAX_RENDER_REQUEST_BYTES ||
+        ![input.width, input.height].every((value) => Number.isSafeInteger(value) && value >= 1 && value <= 16384) ||
+        input.backend !== void 0 && !["desktop", "browser"].includes(input.backend)) {
+      throw new Error("invalid_design_render_request");
+    }
+    request.rendering = true;
+    reply.data = await workspaceHost.renderDesignPreview({ accountId: account.id, sessionId: input.sessionId }, input, request.abort.signal);
+  } catch {
+    reply.error = "design_canvas_preview_failed";
+  }
+  if (catalogRequests.get(message.operationId) === request && request) proc.postMessage(reply);
+}
+
+function privateDesignUsesMedia(tool, params) {
+  return ["canvas_generate_media", "canvas_resume_media", "canvas_media", "canvas_html_image_media"].includes(tool) ||
+    tool === "canvas_production" && ["start", "rerun", "generate", "resume_task"].includes(params?.action);
+}
+
+async function answerPrivateDesignMediaModel(proc, message) {
+  const { operationId, requestId, sessionId, kind, modelId } = message;
+  const pending = catalogRequests.get(operationId);
+  if (pending?.proc !== proc || pending.mediaSession !== sessionId || !UUID$2.test(requestId)) return;
+  const reply = { type: "private-design-media-model-result", requestId };
+  const active = () => currentAccount()?.id === pending.accountId &&
+    currentAccount()?.server.url === pending.server && child$2 === pending.runtime;
+  try {
+    if (!active() || !["image", "video"].includes(kind) || modelId != null && !UUID$2.test(modelId)) {
+      throw new Error("invalid_design_media_model");
+    }
+    reply.data = await runtimeRequest("_aibertai/design/media-model", { sessionId, kind, ...(modelId ? { modelId } : {}) });
+    if (!active()) throw new Error("device_target_changed");
+  } catch {
+    delete reply.data;
+    reply.error = "design_media_model_unavailable";
+  }
+  if (catalogRequests.get(operationId) === pending) proc.postMessage(reply);
+}
+
 function requestPrivateDesignCatalog(origin, tool, args) {
   if (catalogOrigin !== origin) {
     catalogOrigin = origin;
@@ -23225,14 +22634,20 @@ function requestPrivateDesignCatalog(origin, tool, args) {
   if (!proc || catalogRequests.size >= 64) throw new Error("design_catalog_unavailable");
   const id = node_crypto.randomUUID();
   return new Promise((resolve, reject) => {
-    const deadline = setTimeout(() => finish(new Error("design_request_timeout")), tool === "design_session_open" ? 120e3 : 12e3);
+    const capture = tool === "design_model_tool" && args.name === "canvas_capture_preview" ? args : null;
+    const media = tool === "design_model_tool" ? privateDesignUsesMedia(args.name, args.args) : privateDesignUsesMedia(tool, args.params);
+    const mediaSession = media ? (args.sessionId ?? args.params?.sessionId) : null;
+    const account = capture || media ? currentAccount() : null;
+    const abort = capture ? new AbortController() : null;
+    const deadline = setTimeout(() => finish(new Error("design_request_timeout")), media ? 21 * 60e3 : tool === "design_session_open" || tool === "design_model_tool" ? 120e3 : 12e3);
     function finish(error, data) {
       clearTimeout(deadline);
+      abort?.abort();
       catalogRequests.delete(id);
       if (error) reject(error);
       else resolve(data);
     }
-    catalogRequests.set(id, { proc, finish });
+    catalogRequests.set(id, { proc, finish, capture, abort, mediaSession, runtime: child$2, accountId: account?.id, server: account?.server.url });
     try {
       proc.postMessage({ type: "private-catalog", id, tool, args });
     } catch (error) {
@@ -23250,21 +22665,25 @@ async function answerRuntimeDesignTool(proc, server, event) {
   };
   const reply = { type: "design_tool_result", id };
   try {
-    if (!current() || !["canvas_get_document", "canvas_create_text", "canvas_create_html", "canvas_commit_html"].includes(name) ||
+    const open = name === "design_session_open", list = name === "design_tool_catalog";
+    if (!current() || typeof name !== "string" || !/^(?:canvas|design)_[a-z_]{1,48}$/.test(name) ||
         typeof sessionId !== "string" || !UUID$2.test(sessionId) ||
-        typeof cwd !== "string" || !node_path.isAbsolute(cwd) ||
-        !design || !args || typeof args !== "object" || Array.isArray(args)) {
+        typeof cwd !== "string" || !node_path.isAbsolute(cwd) || !open && !design ||
+        !args || typeof args !== "object" || Array.isArray(args)) {
       throw new Error("invalid_design_tool_request");
     }
-    const result = await requestPrivateDesignCatalog(new URL(server).origin, "design_model_tool", { name, args, cwd, sessionId, design });
+    const result = await requestPrivateDesignCatalog(new URL(server).origin, open ? name : list ? name : "design_model_tool", open
+      ? { cwd, sessionId, selection: args }
+      : { name, args, cwd, sessionId, design });
     if (!result || Buffer.byteLength(JSON.stringify(result)) > 48 * 1024) throw new Error("design_tool_result_too_large");
     reply.result = result;
-  } catch {
-    reply.error = "design_tool_failed";
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "";
+    reply.error = /^[a-z][a-z0-9_]{1,70}$/.test(reason) ? "design_" + reason.replace(/^design_/, "") : "design_tool_failed";
   }
   if (!current()) return;
   proc.stdin?.write(JSON.stringify(reply) + "\n");
-  if (reply.result && name !== "canvas_get_document") {
+  if (reply.result && !["design_tool_catalog", "canvas_get_document", "canvas_get_selection"].includes(name)) {
     for (const window of liveWindows()) {
       const sender = window.webContents;
       if (runtimeTarget(sender)?.transport !== "relay") sender.send("design:canvas-changed", sessionId);
@@ -23273,7 +22692,7 @@ async function answerRuntimeDesignTool(proc, server, event) {
 }
 function privateDesignCatalogArguments(input) {
   const [tool, value] = input;
-  if (!["design_catalog", "design_catalog_detail", "design_resource_media"].includes(tool) ||
+  if (!["design_features", "design_catalog", "design_catalog_detail", "design_resource_media"].includes(tool) ||
       !value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("invalid_design_catalog_arguments");
   }
@@ -23304,10 +22723,12 @@ function privateDesignWorkspaceArguments(input) {
   }
   const tools = [
     "design_session_open", "design_state", "canvas_get", "canvas_apply", "canvas_select", "canvas_create_text",
+    "canvas_create_image", "canvas_create_video",
     "canvas_create_media_project", "canvas_duplicate", "canvas_export_upload", "canvas_upload_status",
     "canvas_import_video", "canvas_import_audio", "canvas_import_extracted_media", "canvas_append_media_project",
     "canvas_import_image", "canvas_import_project_source", "canvas_create_html", "canvas_update_html",
-    "design_style_decision", "design_system_set", "canvas_prepare_pptx"
+    "design_style_decision", "design_system_set", "canvas_prepare_pptx", "canvas_production",
+    "canvas_generate_media", "canvas_resume_media", "canvas_media", "canvas_html_image_media"
   ];
   const { dataUrl, ...metadata } = value;
   const image = tool === "canvas_import_image" || tool === "canvas_import_project_source" && value.kind === "image";
@@ -23317,11 +22738,6 @@ function privateDesignWorkspaceArguments(input) {
     throw new Error("invalid_design_workspace_arguments");
   }
   return [tool, value];
-}
-function setDesignRuntime(next, server) {
-  endpoint = next;
-  serverUrl = next ? server : void 0;
-  child?.postMessage({ type: "runtime", endpoint, serverUrl });
 }
 function stopDesignProvider() {
   stopping = true;
@@ -23957,9 +23373,8 @@ function setupUpdater(onStatus = () => {
     } };
   };
   if (!electron.app.isPackaged) return inactive("unsupported");
-  const source = sourceEmployeeRuntime();
-  const privateOrigin = source ? currentAccount()?.server.url : void 0;
-  if (source && !privateOrigin) return inactive("unconfigured");
+  const privateOrigin = currentAccount()?.server.url;
+  if (!privateOrigin) return inactive("unconfigured");
   let sessionEnded = false;
   try {
     const feed = aibertaiUpdateFeed(options2.override, privateOrigin);
@@ -25860,10 +25275,10 @@ electron.protocol.registerSchemesAsPrivileged([
   { scheme: WEB_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
   { scheme: HTML_PREVIEW_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }
 ]);
-const webDir = electron.app.isPackaged ? node_path.join(process.resourcesPath, "web") : node_path.resolve(__dirname, "../../../web", platform.webDist);
-const webDevUrl = electron.app.isPackaged ? void 0 : process.env.MONKEYAI_WEB_URL;
-if (webDevUrl && !isTrustedNavigation(webDevUrl, webDevUrl)) throw new Error("MONKEYAI_WEB_URL must be an HTTP(S) URL without credentials");
-if (!electron.app.isPackaged && process.env.MONKEYAI_DEBUG_PORT) electron.app.commandLine.appendSwitch("remote-debugging-port", process.env.MONKEYAI_DEBUG_PORT);
+const webDir = electron.app.isPackaged ? node_path.join(process.resourcesPath, "web") : node_path.resolve(__dirname, "../../../web");
+const webDevUrl = electron.app.isPackaged ? void 0 : process.env.AIBERTAI_WEB_URL;
+if (webDevUrl && !isTrustedNavigation(webDevUrl, webDevUrl)) throw new Error("AIBERTAI_WEB_URL must be an HTTP(S) URL without credentials");
+if (!electron.app.isPackaged && process.env.AIBERTAI_DEBUG_PORT) electron.app.commandLine.appendSwitch("remote-debugging-port", process.env.AIBERTAI_DEBUG_PORT);
 let mainWindow = null;
 let mainWorkbench = null;
 const workbenches = new DeviceWorkbenches({
@@ -25981,9 +25396,9 @@ function createKnowledgeWorkbench(id2) {
   return owner;
 }
 function configureWorkbench(win, homeUrl = webDevUrl ?? WEB_URL) {
-  const refreshCertificates = setupWorkbenchCertificates(win.webContents, () => currentAccount()?.server.url);
+  const refreshNetwork = setupWorkbenchNetwork(win.webContents, () => currentAccount()?.server.url);
   const refresh = () => {
-    void refreshCertificates().catch((error) => writeLog("error", "main", `workbench network reset failed: ${String(error)}`));
+    void refreshNetwork().catch((error) => writeLog("error", "main", `workbench network reset failed: ${String(error)}`));
   };
   const stopObserving = addAccountChangeListener(refresh);
   win.webContents.once("destroyed", stopObserving);
@@ -26082,7 +25497,7 @@ function createTray() {
   });
 }
 function localBrandIcon() {
-  const path = process.env.MONKEYAI_LOCAL_BRAND_ICON;
+  const path = electron.app.isPackaged ? void 0 : node_path.join(webDir, "brand-icon.png");
   if (!path) return null;
   const icon = electron.nativeImage.createFromPath(path);
   return icon.isEmpty() ? null : icon;
@@ -26096,12 +25511,13 @@ function appDataDirectory() {
   }
 }
 const appData = appDataDirectory();
-const defaultDataDir = electron.app.isPackaged ? electron.app.getPath("userData") : node_path.join(appData, electron.app.getName());
-const location$1 = locationPaths({ platform: process.platform, localAppData: process.env.LOCALAPPDATA, appData, name: electron.app.getName() });
+const dataLocationOptions = { platform: process.platform, localAppData: process.env.LOCALAPPDATA, appData, name: electron.app.getName() };
+const defaultDataDir = electron.app.isPackaged ? electron.app.getPath("userData") : node_path.join(appData, dataLocationOptions.name);
+const location$1 = locationPaths(dataLocationOptions);
 const dataPaths = { defaultDir: defaultDataDir, locationFile: location$1.file, recoveryDir: location$1.recoveryDir };
 function resolveDataStartup() {
   try {
-    if (electron.app.isPackaged) sourceEmployeeRuntime();
+    sourceEmployeeRuntime();
     return resolveStartup({ env: process.env[platform.userDataEnvironment], defaultDir: defaultDataDir, ...location$1 });
   } catch (error) {
     electron.dialog.showErrorBox("AIbertAI", `AIbertAI cannot start: ${error instanceof Error ? error.message : String(error)}`);
@@ -26158,16 +25574,7 @@ function onReady() {
       if (!quitting) void payloadRecovery.report().catch((error) => writeLog("error", "main", `web payload recovery dialog failed: ${String(error)}`));
     }
   }));
-  handle("design:media-origins", (args) => {
-    const value = args[0];
-    if (!Array.isArray(value) || value.length > 8 || value.some((item) => typeof item !== "string" || item.length > 2048)) throw new Error(ErrorCode.invalidDesignOrigins);
-    return [value];
-  }, (_event, origins) => {
-    setDesignMediaOrigins(origins);
-  });
   handle("design:private-catalog", privateDesignCatalogArguments, async (event, tool, args) => {
-    const source = sourceEmployeeRuntime();
-    if (!source) return null;
     const account = deviceAccount();
     if (!account) throw new Error(ErrorCode.noActiveAccount);
     const binding = deviceWindows.capture(event.sender, account), frame = captureMainFrame(event.sender);
@@ -26179,8 +25586,6 @@ function onReady() {
     return result;
   });
   handle("design:private-workspace", privateDesignWorkspaceArguments, async (event, tool, params) => {
-    const source = sourceEmployeeRuntime();
-    if (!source) return null;
     const runtime = await captureLocalRuntime(event.sender);
     const origin = new URL(deviceAccount().serverUrl).origin;
     const workspace = await runtime.request("_monkeyai/session/workspace", { sessionId: params.sessionId });
@@ -26219,19 +25624,18 @@ function onReady() {
   const imageWorker = setupImageWorker(platform.imageWorkerEntry);
   if (platform.features.design) {
     if (!platform.designProviderEntry) throw new Error("Design provider entry is missing");
-    setupDesignProvider({ entry: platform.designProviderEntry, version: electron.app.isPackaged ? electron.app.getVersion() : "dev", expertDir: electron.app.isPackaged ? node_path.join(process.resourcesPath, "design-expert") : node_path.join(electron.app.getAppPath(), "../../packages/design-expert"), imagePreflight: imageWorker.preflight(), privateCatalog: Boolean(sourceEmployeeRuntime()) });
+    setupDesignProvider({ entry: platform.designProviderEntry, imagePreflight: imageWorker.preflight() });
   }
   setRuntimeEndpointListener((endpoint2) => {
-    if (platform.features.design && !sourceEmployeeRuntime()) setDesignRuntime(endpoint2, currentAccount()?.server.url);
     if (endpoint2) void restoreProjectAccess();
   });
   workspaceHost = setupWorkspaceHost(platform.features);
   handle("dialog:pickFolder", none, async (event) => {
-    const workspace = sourceEmployeeRuntime() ? await captureLocalRuntime(event.sender) : null;
+    const workspace = await captureLocalRuntime(event.sender);
     const r = await electron.dialog.showOpenDialog(trustedWindow(event), { properties: ["openDirectory", "createDirectory"] });
     const selected = r.canceled ? null : r.filePaths[0] ?? null;
     if (!selected) return null;
-    if (workspace) await workspace.request("_aibertai/workspace/authorize", { cwd: selected });
+    await workspace.request("_aibertai/workspace/authorize", { cwd: selected });
     persistFileAccess(r.filePaths);
     return selected;
   });
@@ -26258,7 +25662,6 @@ function onReady() {
     text(args[0], ErrorCode.invalidPath, 36),
     text(args[1], ErrorCode.invalidPath, 4096)
   ], async (event, sessionId, uri) => {
-    if (!sourceEmployeeRuntime()) throw new Error(ErrorCode.runtimeUnavailable);
     const local = await captureLocalRuntime(event.sender);
     const result = await local.request("_aibertai/session/attachment/read", { sessionId, uri });
     if (typeof result?.name === "string" && typeof result?.base64 === "string" && result.base64.length <= Math.ceil((32 * 1024 * 1024) / 3) * 4) {
@@ -26273,7 +25676,7 @@ function onReady() {
   });
   handle("images:fetch", raw, (_event, url2) => {
     const server = currentAccount()?.server.url;
-    return fetchRemoteImage(url2, (input, init) => fetchWithServerCertificate(input, init, server));
+    return fetchRemoteImage(url2, (input, init) => fetchWithServerSession(input, init, server));
   });
   handle("feedback:capture", none, async (event) => encodeCapture(await event.sender.capturePage()));
   handle("edit:command", (args) => [editCommand(args[0])], (event, command2) => {

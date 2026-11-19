@@ -21,7 +21,7 @@ import (
 )
 
 const sourceGrantFilename = "source-credentials.enc.json"
-const sourceGrantScopes = "device:bind device:connect device:publish device:manage session:report session:read session:control files:read files:write resources:manage"
+const sourceGrantScopes = "device:bind device:connect device:publish device:manage session:report session:read session:control files:read files:write resources:manage environment:read environment:manage"
 
 var (
 	errSourceLoginCancelled = errors.New("source_login_cancelled")
@@ -134,10 +134,11 @@ func (s *sourceGrantStore) replace(auth authorization) (sourceGrant, error) {
 }
 
 type desktopSourceAuth struct {
-	mu     sync.Mutex
-	client *client
-	store  *sourceGrantStore
-	grant  sourceGrant
+	mu          sync.Mutex
+	client      *client
+	store       *sourceGrantStore
+	grant       sourceGrant
+	oauthClient string
 }
 
 func (s *desktopSourceAuth) access(ctx context.Context) (authorization, error) {
@@ -146,7 +147,11 @@ func (s *desktopSourceAuth) access(ctx context.Context) (authorization, error) {
 	if time.Until(s.grant.Expires) > 2*time.Minute {
 		return s.grant.Auth, nil
 	}
-	auth, err := s.client.refreshDesktopGrant(ctx, s.grant.Auth.Refresh)
+	client := s.oauthClient
+	if client == "" {
+		client = clientID
+	}
+	auth, err := s.client.refreshSourceGrant(ctx, client, s.grant.Auth.Refresh)
 	if err != nil {
 		return authorization{}, err
 	}
@@ -161,8 +166,8 @@ func (s *desktopSourceAuth) access(ctx context.Context) (authorization, error) {
 	return grant.Auth, nil
 }
 
-func (c *client) refreshDesktopGrant(ctx context.Context, refresh string) (authorization, error) {
-	fields := url.Values{"client_id": {clientID}, "grant_type": {"refresh_token"}, "refresh_token": {refresh}}
+func (c *client) refreshSourceGrant(ctx context.Context, oauthClient, refresh string) (authorization, error) {
+	fields := url.Values{"client_id": {oauthClient}, "grant_type": {"refresh_token"}, "refresh_token": {refresh}}
 	resp, err := c.request(ctx, http.MethodPost, "/oauth/token", "", "", "",
 		"application/x-www-form-urlencoded", strings.NewReader(fields.Encode()), http.StatusBadRequest)
 	if err != nil {

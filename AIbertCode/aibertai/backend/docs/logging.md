@@ -10,9 +10,9 @@
 
 | 环境变量 | 默认值 | 约束 |
 | --- | --- | --- |
-| `MONKEYAI_LOG_LEVEL` | `warn` | 启动参数 `--log-level` 优先 |
+| `AIBERTAI_LOG_LEVEL` | `warn` | 启动参数 `--log-level` 优先 |
 
-未设置环境变量和启动参数时，默认级别为 WARN；显式设置 `info` 或 `debug` 仍按指定级别生效。无效日志级别会使入口启动失败，不回显配置值。旧的 `MONKEYAI_LOG_DEDUP_*` 环境变量不再读取。
+未设置环境变量和启动参数时，默认级别为 WARN；显式设置 `info` 或 `debug` 仍按指定级别生效。无效日志级别会使入口启动失败，不回显配置值。
 
 ## 错误详情
 
@@ -28,6 +28,4 @@
 
 ## 部署
 
-Compose 为各服务使用 `json-file` 轮转，默认每文件 20 MiB、保留 5 个文件，可通过 `MONKEYAI_LOG_MAX_SIZE`、`MONKEYAI_LOG_MAX_FILES` 调整。现有容器需要重建才能采用新的 Docker 日志驱动设置。重复故障会逐条写入容器日志，日志保留量由轮转配置控制。
-
-Nginx 日志调整暂缓，沿用本次 PR 之前的 access/error 日志配置；本次后端日志改造不改变 Nginx 的输出格式、开关和日志诊断范围。
+Go 服务把结构化日志写到 stdout，启动失败等诊断写到 stderr。本机开发可重定向到 `../.local-dev/` 下的日志文件。内网运行时，日志保存、轮转和访问权限由实际使用的服务管理器配置。

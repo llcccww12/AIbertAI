@@ -196,7 +196,7 @@ type workspaceRequest struct {
 	Paths     []string
 }
 
-func (h *relaySessionHost) workspaceQuery(method string, raw json.RawMessage) (any, error) {
+func (h *relaySessionHost) workspaceQuery(ctx context.Context, method string, raw json.RawMessage) (any, error) {
 	var p workspaceRequest
 	if json.Unmarshal(raw, &p) != nil || !validUUID(p.SessionID) || p.Offset < 0 || p.Offset > 1000000 {
 		return nil, errors.New("invalid_request")
@@ -206,6 +206,9 @@ func (h *relaySessionHost) workspaceQuery(method string, raw json.RawMessage) (a
 		return nil, err
 	}
 	defer root.Close()
+	if method == "_monkeyai/workspace/changes" || method == "_monkeyai/workspace/diff" {
+		return workspaceGit(ctx, root, method, p.Path)
+	}
 	if method == "_monkeyai/session/workspace" {
 		meta := row.workspaceMetadata()
 		if design := workspaceDesign(root, row.ID); design != nil {

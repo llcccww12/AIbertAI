@@ -183,7 +183,7 @@ try {
             request_id: "review",
             client: {
               client_id: "monkeyai-desktop",
-              name: "MonkeyAI Desktop",
+              name: "AIbertAI Desktop",
               redirect_uri: redirect,
             },
             authenticated,

@@ -94,7 +94,7 @@ try {
     })
     page.setDefaultTimeout(15000)
     await page.addInitScript(() =>
-      localStorage.setItem("monkeyai-admin-language", "zh-CN")
+      localStorage.setItem("aibertai-admin-language", "zh-CN")
     )
     const errors = [],
       entries = [],

@@ -76,6 +76,7 @@ type connectorTool struct {
 	ConnectorName, Name       string
 	Description               string
 	Schema                    json.RawMessage
+	Local                     bool
 }
 
 func (t connectorTool) alias() string {
@@ -137,7 +138,8 @@ func (c *client) activeConnectorTools(ctx context.Context, auth authorization, p
 				len(tool.Schema) > 64<<10 || json.Unmarshal(tool.Schema, &object) != nil || object == nil || string(object["type"]) != `"object"` {
 				continue
 			}
-			selected := connectorTool{entry.ID, credential, entry.Name, tool.Name, tool.Description, tool.Schema}
+			selected := connectorTool{ConnectorID: entry.ID, CredentialID: credential, ConnectorName: entry.Name,
+				Name: tool.Name, Description: tool.Description, Schema: tool.Schema}
 			result[selected.alias()] = selected
 		}
 	}

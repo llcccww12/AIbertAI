@@ -3,30 +3,23 @@ package driver
 import (
 	"context"
 	"errors"
+	"path/filepath"
 
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/lifecycle"
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/standalone"
+	"aibertai.local/engine/internal/lifecycle"
+	"aibertai.local/engine/internal/standalone"
 )
 
+func runtimeInstalled(spec lifecycle.Spec, files standalone.Files) bool {
+	pkg := spec.RuntimePackage
+	return pkg != nil && pkg.SourceRuntime() && files.Version == pkg.Version &&
+		filepath.Base(files.Binary) == "aibertai-native"
+}
+
 func (d *Driver) runtimeFiles(ctx context.Context, spec lifecycle.Spec) (standalone.Files, error) {
-	if d.runtimeSource != nil {
-		files, err := d.runtimeSource(ctx, spec)
-		if err != nil {
-			return standalone.Files{}, err
-		}
-		if files.Binary != "" {
-			return files, nil
-		}
+	if d.runtimeSource == nil || spec.RuntimePackage == nil || !spec.RuntimePackage.SourceRuntime() {
+		return standalone.Files{}, errors.New("请先迁移到 AIbertAI 源码运行时")
 	}
-	image, err := d.image(ctx, spec)
-	if err != nil {
-		return standalone.Files{}, err
-	}
-	version := image.Config.Labels["com.chaitin.monkeyai.runtime.version"]
-	if !lifecycle.ValidRuntimeVersion(version) {
-		version = ""
-	}
-	return standalone.Files{Binary: standalone.Binary, Engine: standalone.Engine, Version: version}, nil
+	return d.runtimeSource(ctx, spec)
 }
 func (d *Driver) UpdateRuntime(ctx context.Context, spec lifecycle.Spec) error {
 	if spec.DesiredState != lifecycle.DesiredStopped || spec.RuntimePackage == nil || !spec.PersistentContainer || d.runtimeUpdater == nil {

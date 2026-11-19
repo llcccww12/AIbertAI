@@ -4,7 +4,7 @@ SQLC ?= go run github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION)
 .PHONY: build check fmt generate sqlc-check run test
 
 build:
-	go build -o bin/monkeyai-server ./cmd/server
+	go build -o bin/aibertai-server ./cmd/server
 
 check: sqlc-check test
 	go vet ./...

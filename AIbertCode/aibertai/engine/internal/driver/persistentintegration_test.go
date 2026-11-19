@@ -15,16 +15,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/control"
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/dockerapi"
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/lifecycle"
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/runtimeupdate"
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/standalone"
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/storage"
+	"aibertai.local/engine/internal/control"
+	"aibertai.local/engine/internal/dockerapi"
+	"aibertai.local/engine/internal/lifecycle"
+	"aibertai.local/engine/internal/runtimeupdate"
+	"aibertai.local/engine/internal/standalone"
+	"aibertai.local/engine/internal/storage"
 )
 
 func TestPersistentDockerRuntimeIntegration(t *testing.T) {
-	image, resources := os.Getenv("MONKEYAI_PERSISTENCE_TEST_IMAGE"), os.Getenv("MONKEYAI_RUNTIME_TEST_RESOURCES")
+	image, resources := os.Getenv("MONKEYAI_PERSISTENCE_TEST_IMAGE"), os.Getenv("AIBERTAI_RUNTIME_TEST_RELEASE")
 	if image == "" || resources == "" {
 		t.Skip("需要一次性 Docker-in-Docker 及真实 runtime 发行资源")
 	}
@@ -41,7 +41,7 @@ func TestPersistentDockerRuntimeIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer driver.Close()
-	folder := filepath.Join(resources, "26.1105.2", runtime.GOARCH)
+	folder := filepath.Join(resources, runtime.GOARCH)
 	raw, err := os.ReadFile(filepath.Join(folder, "manifest.json"))
 	var release lifecycle.RuntimePackage
 	if err != nil || json.Unmarshal(raw, &release) != nil {
@@ -66,9 +66,7 @@ func TestPersistentDockerRuntimeIntegration(t *testing.T) {
 		}
 		for _, mount := range mounts {
 			if mount.Target == "/var/lib/monkeyai" {
-				return runtimeupdate.New(mount.Source, client).WithPreparer(func(ctx context.Context, payload, destination string, release lifecycle.RuntimePackage, reuse []string) (lifecycle.RuntimePackage, error) {
-					return driver.PrepareRuntime(ctx, spec, payload, destination, release, reuse)
-				})
+				return runtimeupdate.New(mount.Source, client)
 			}
 		}
 		t.Fatal("缺少 runtime 持久目录")
@@ -86,6 +84,7 @@ func TestPersistentDockerRuntimeIntegration(t *testing.T) {
 	spec.Image, spec.ImageDigest = image, image[len(image)-71:]
 	spec.PersistentContainer, spec.NetworkPolicy = true, "public-only"
 	spec.Runtime = &lifecycle.Runtime{Server: "https://example.com", ServerID: "server", UserID: "user"}
+	spec.RuntimePackage = &release
 	store := lifecycle.FileStore{Root: filepath.Join(root, "states")}
 	coordinator, _ := lifecycle.NewCoordinator(store, driver)
 	t.Cleanup(func() {
@@ -106,7 +105,7 @@ func TestPersistentDockerRuntimeIntegration(t *testing.T) {
 	if output, err := exec.Command("docker", "exec", "--user", "0", original, "sh", "-c", "printf preserved > /etc/monkeyai-persistence-check").CombinedOutput(); err != nil {
 		t.Fatal(err, string(output))
 	}
-	_ = exec.Command("docker", "exec", original, standalone.Binary, "login", "--device-code", "--state-dir", standalone.StateDir, "--server", "https://127.0.0.1:1").Run()
+	_ = exec.Command("docker", "exec", original, filepath.Join("/var/lib/monkeyai/_engine/releases", release.Version, "aibertai-native"), "login", "--device-code", "--state-dir", standalone.StateDir, "--server", "http://127.0.0.1:1", "--server-id", "40000000-0000-4000-8000-000000000001", "--user", "40000000-0000-4000-8000-000000000002").Run()
 	before, err := driver.Status(t.Context(), spec)
 	if err != nil || !before.Valid() {
 		t.Fatal("runtime 初始化", before, err)
@@ -142,7 +141,7 @@ func TestPersistentDockerRuntimeIntegration(t *testing.T) {
 		t.Fatal("runtime 更新改变设备身份", after, before, err)
 	}
 	selected, err := driver.runtimeFiles(t.Context(), spec)
-	if err != nil || selected.Version != release.Version || selected.Binary == standalone.Binary {
+	if err != nil || selected.Version != release.Version || filepath.Base(selected.Binary) != "aibertai-native" {
 		t.Fatal("没有切换独立 runtime", selected, err)
 	}
 	t.Log("真实 Docker/gVisor 保留容器、系统层、runtime 身份及独立版本切换通过")

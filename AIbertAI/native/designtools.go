@@ -7,17 +7,61 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"sync"
 	"time"
 )
 
 const designReadTool = "canvas_get_document"
+const designSelectionTool = "canvas_get_selection"
 const designTextTool = "canvas_create_text"
 const designCreateHTMLTool = "canvas_create_html"
 const designCommitHTMLTool = "canvas_commit_html"
 
+const designProductionTool = "canvas_production"
+const designPreparePPTXTool = "canvas_prepare_pptx"
+
+func designTool(name string) bool {
+	switch name {
+	case designReadTool, designSelectionTool, designTextTool, designCreateHTMLTool, designCommitHTMLTool,
+		designProductionTool, designPreparePPTXTool, "design_await_style_choice", "canvas_add_artifact_asset",
+		"canvas_capture_preview", "design_jury_submit", "canvas_create_image", "canvas_create_video",
+		"canvas_compose_media_project", "canvas_create_layer_group", "canvas_group_story_assets", "canvas_update_node",
+		"canvas_delete_node", "design_catalog_search", "design_catalog_detail", "design_catalog_logo_batch":
+		return true
+	}
+	return false
+}
+
 func designWriteTool(name string) bool {
-	return name == designTextTool || name == designCreateHTMLTool || name == designCommitHTMLTool
+	switch name {
+	case designReadTool, designSelectionTool, "design_await_style_choice", "design_catalog_search", "design_catalog_detail":
+		return false
+	}
+	return designTool(name)
+}
+
+type desktopDesignTool struct {
+	Name, Description string
+	Schema            json.RawMessage `json:"inputSchema"`
+}
+
+func (b *desktopDesignBridge) tools(ctx context.Context, row acpSession, design json.RawMessage) ([]desktopDesignTool, error) {
+	out, err := b.call(ctx, row, design, "design_tool_catalog", json.RawMessage(`{}`))
+	var tools []desktopDesignTool
+	if err != nil || json.Unmarshal([]byte(out), &tools) != nil || len(tools) == 0 || len(tools) > 32 {
+		return nil, errors.New("design_tool_catalog_unavailable")
+	}
+	return tools, nil
+}
+
+func (b *desktopDesignBridge) ensureCanvas(ctx context.Context, row acpSession) (json.RawMessage, error) {
+	args := json.RawMessage(`{"templateRef":null,"designSystemRef":null,"mediaModelId":null}`)
+	result, err := b.call(ctx, row, nil, "design_session_open", args)
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(result), nil
 }
 
 type desktopDesignBridge struct {
@@ -66,11 +110,18 @@ func (b *desktopDesignBridge) call(ctx context.Context, row acpSession, design j
 	if err := b.send(map[string]any{"event": "design_tool", "id": id, "sessionId": row.ID, "cwd": row.CWD, "design": design, "name": name, "arguments": args}); err != nil {
 		return "", err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	timeout := 20 * time.Second
+	if name == "canvas_capture_preview" || name == "design_await_style_choice" || name == "design_session_open" {
+		timeout = 125 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	select {
 	case reply := <-ch:
 		if reply.Error != "" || len(reply.Result) == 0 {
+			if strings.HasPrefix(reply.Error, "design_") {
+				return "", errors.New(reply.Error)
+			}
 			return "", errors.New("design_tool_failed")
 		}
 		return string(reply.Result), nil
@@ -81,34 +132,6 @@ func (b *desktopDesignBridge) call(ctx context.Context, row acpSession, design j
 
 func validDesignToolArguments(name string, raw json.RawMessage) bool {
 	raw = bytes.TrimSpace(raw)
-	if len(raw) < 2 || len(raw) > 12<<10 || raw[0] != '{' {
-		return false
-	}
-	switch name {
-	case designReadTool:
-		return decodeWorkspaceTool(raw, &struct{}{}) == nil
-	case designTextTool:
-		var p struct {
-			Title   string
-			Content string
-		}
-		return decodeWorkspaceTool(raw, &p) == nil && len(p.Title) <= 160 && len(p.Content) > 0 && len(p.Content) <= 8000
-	case designCreateHTMLTool:
-		var p struct {
-			Title         string
-			Width, Height *int
-			SlideIndex    *int `json:"slide_index"`
-		}
-		return decodeWorkspaceTool(raw, &p) == nil && len(p.Title) <= 160 &&
-			(p.Width == nil || *p.Width > 0 && *p.Width <= 16384) &&
-			(p.Height == nil || *p.Height > 0 && *p.Height <= 16384) &&
-			(p.SlideIndex == nil || *p.SlideIndex > 0 && *p.SlideIndex <= 512)
-	case designCommitHTMLTool:
-		var p struct {
-			NodeID string `json:"node_id"`
-		}
-		return decodeWorkspaceTool(raw, &p) == nil && validUUID(p.NodeID)
-	default:
-		return false
-	}
+	var object map[string]json.RawMessage
+	return designTool(name) && len(raw) <= 48<<10 && json.Unmarshal(raw, &object) == nil && object != nil
 }

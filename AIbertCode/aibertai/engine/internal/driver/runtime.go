@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/control"
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/lifecycle"
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/standalone"
+	"aibertai.local/engine/internal/control"
+	"aibertai.local/engine/internal/lifecycle"
+	"aibertai.local/engine/internal/standalone"
 )
 
 type runtimeEvent struct {
@@ -100,7 +100,7 @@ func demux(r io.Reader, out io.Writer) error {
 		}
 	}
 }
-func (d *Driver) runRuntime(ctx context.Context, s lifecycle.Spec, _ string, args []string, handle func(runtimeEvent) error) (code uint32, resultErr error) {
+func (d *Driver) runRuntime(ctx context.Context, s lifecycle.Spec, args []string, handle func(runtimeEvent) error) (code uint32, resultErr error) {
 	c, err := d.runtimeContainer(ctx, s)
 	if err != nil {
 		return 0, err
@@ -108,6 +108,9 @@ func (d *Driver) runRuntime(ctx context.Context, s lifecycle.Spec, _ string, arg
 	files, err := d.runtimeFiles(ctx, s)
 	if err != nil {
 		return 0, err
+	}
+	if !runtimeInstalled(s, files) {
+		return 0, errors.New("目标 runtime 版本尚未安装")
 	}
 	id, err := d.execCreate(ctx, c, s, files.Binary, args)
 	if err != nil {
@@ -167,7 +170,7 @@ func (d *Driver) Status(ctx context.Context, s lifecycle.Spec) (standalone.Statu
 	defer cancel()
 	var status standalone.Status
 	found, missing := false, false
-	code, err := d.runRuntime(ctx, s, "monkeyai-status", []string{"status", "--state-dir", standalone.StateDir}, func(event runtimeEvent) error {
+	code, err := d.runRuntime(ctx, s, []string{"status", "--state-dir", standalone.StateDir}, func(event runtimeEvent) error {
 		switch event.Event {
 		case "status":
 			if found {
@@ -198,7 +201,10 @@ func (d *Driver) Login(ctx context.Context, s lifecycle.Spec, authorize func(str
 	ctx, cancel := context.WithTimeout(ctx, 11*time.Minute)
 	defer cancel()
 	authorized := false
-	code, err := d.runRuntime(ctx, s, "monkeyai-login", []string{"login", "--device-code", "--state-dir", standalone.StateDir, "--server", s.Runtime.Server, "--server-id", s.Runtime.ServerID, "--user", s.Runtime.UserID, "--name", "MonkeyAI Cloud"}, func(event runtimeEvent) error {
+	code, err := d.runRuntime(ctx, s, []string{"login", "--device-code", "--state-dir", standalone.StateDir, "--server", s.Runtime.Server, "--server-id", s.Runtime.ServerID, "--user", s.Runtime.UserID, "--name", "AIbertAI Cloud"}, func(event runtimeEvent) error {
+		if event.Event == "error" && event.Reason == "cloud_existing_identity_migration_required" {
+			return errors.New("云电脑的已有设备身份需要迁移")
+		}
 		if event.Event == "authorize" {
 			if authorized || event.UserCode == "" || len(event.UserCode) > 16 {
 				return errors.New("运行时设备申请无效")
@@ -225,8 +231,11 @@ func (d *Driver) Serve(ctx context.Context, s lifecycle.Spec, observe bool) erro
 	if err != nil {
 		return err
 	}
+	if !runtimeInstalled(s, files) {
+		return errors.New("目标 runtime 版本尚未安装")
+	}
 	path := filepath.Join(d.instanceDir(s), "serve.json")
-	args := []string{"serve", "--state-dir", standalone.StateDir, "--engine-bin", files.Engine}
+	args := []string{"serve", "--state-dir", standalone.StateDir}
 	raw, err := os.ReadFile(path)
 	if err == nil {
 		var saved struct{ ID, Fingerprint string }

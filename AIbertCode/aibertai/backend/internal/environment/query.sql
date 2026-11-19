@@ -136,6 +136,7 @@ SELECT NOT EXISTS(SELECT 1 FROM environment_runtimes WHERE machine_id=sqlc.arg(m
  SELECT 1 FROM environments e JOIN environment_runtimes r ON r.environment_id=e.id JOIN users u ON u.id=e.user_id JOIN hosts h ON h.id=e.host_id
  WHERE r.machine_id=sqlc.arg(machine_id)::uuid AND e.user_id=sqlc.arg(user_id)::uuid AND e.desired='running' AND e.phase<>'failed'
  AND e.generation=r.generation AND e.instance_id=r.instance_id AND u.status='active' AND u.deleted_at IS NULL AND h.status='active'
+ AND (NOT sqlc.arg(source_only)::boolean OR (e.spec->'runtime_package'->'files') ? 'aibertai-native')
  AND (
   NOT EXISTS(SELECT 1 FROM settings c WHERE c.key='billing'
    AND ((SELECT value->'environment' FROM settings WHERE key='billing')->>'enabled')::boolean
@@ -249,7 +250,8 @@ ORDER BY prepaid_until DESC LIMIT 1;
 
 -- name: OpenPrepaidBillingHour :one
 INSERT INTO environment_billing_periods(environment_id,user_id,generation,pricing,cpu_millis,memory_bytes,started_at,confirmed_until,prepaid_until)
-VALUES($1,$2,$3,$4,$5,$6,$7,$7,$7+interval '1 hour') RETURNING *;
+VALUES($1,$2,$3,$4,$5,$6,sqlc.arg(started_at)::timestamptz,sqlc.arg(started_at)::timestamptz,
+ sqlc.arg(started_at)::timestamptz+interval '1 hour') RETURNING *;
 
 -- name: UserPaidBillingHours :many
 SELECT DISTINCT ON(p.environment_id) p.* FROM environment_billing_periods p

@@ -135,7 +135,7 @@ func (s *Service) requestUpgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m, raw, err := s.manifest(s.version, host.Architecture)
-	if err != nil || !hasInstaller(m.Files) {
+	if err != nil || !preparedHostRelease(m.Files) {
 		fail(w, r, 503, "服务器升级资源不完整")
 		return
 	}

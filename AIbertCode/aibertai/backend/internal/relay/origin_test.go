@@ -38,10 +38,10 @@ func TestRelayHTTPOrigins(t *testing.T) {
 func TestRelayRejectsInvalidOrigins(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	for _, origin := range []string{"ftp://ai.example.com", "ws://ai.example.com", "//ai.example.com", "http:///missing-host", "http://:8080", "http://user:password@ai.example.com", "http://ai.example.com/path", "http://ai.example.com?query=1", "http://ai.example.com?", "http://ai.example.com#fragment", "http://[fd00::1", "http://ai.example.com:invalid"} {
-		for _, name := range []string{"MONKEYAI_PUBLIC_URL", "MONKEYAI_RUNTIME_FILES_ORIGIN"} {
+		for _, name := range []string{"AIBERTAI_PUBLIC_URL", "AIBERTAI_RUNTIME_FILES_ORIGIN"} {
 			t.Run(name+"/"+origin, func(t *testing.T) {
 				config := Config{PublicURL: "http://192.168.1.20:8080", FilesOrigin: "http://203.0.113.20:8080"}
-				if name == "MONKEYAI_PUBLIC_URL" {
+				if name == "AIBERTAI_PUBLIC_URL" {
 					config.PublicURL = origin
 				} else {
 					config.FilesOrigin = origin

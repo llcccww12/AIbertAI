@@ -31,6 +31,7 @@ type selectedModelConfig struct {
 	Kind                string  `json:"kind"`
 	ContextWindowTokens int     `json:"context_window_tokens"`
 	MaxOutputTokens     int     `json:"max_output_tokens"`
+	SupportsReasoning   bool    `json:"supports_reasoning"`
 }
 
 func (m selectedModelConfig) inputBudget() int {
@@ -50,6 +51,10 @@ func (c *client) selectedModel(ctx context.Context, auth authorization) (string,
 }
 
 func (c *client) selectedModelConfig(ctx context.Context, auth authorization) (selectedModelConfig, error) {
+	return c.modelConfig(ctx, auth, modelID)
+}
+
+func (c *client) modelConfig(ctx context.Context, auth authorization, requested string) (selectedModelConfig, error) {
 	for page := 1; page <= 100; page++ {
 		var catalog struct {
 			Total  int                   `json:"total_count"`
@@ -59,11 +64,11 @@ func (c *client) selectedModelConfig(ctx context.Context, auth authorization) (s
 			return selectedModelConfig{}, err
 		}
 		for _, model := range catalog.Models {
-			if !validUUID(model.ID) || (modelID != "" && model.ID != modelID) {
+			if !validUUID(model.ID) || (requested != "" && model.ID != requested) {
 				continue
 			}
 			if model.Kind != "text" || (model.Protocol != "openai_chat_completions" && model.Protocol != "openai_responses") {
-				if modelID == "" {
+				if requested == "" {
 					continue
 				}
 				return selectedModelConfig{}, errors.New("指定模型必须支持 OpenAI Responses 或 Chat Completions")
@@ -92,9 +97,9 @@ func (c *client) createInvocationKey(ctx context.Context, auth authorization, sc
 	return key, err
 }
 
-func (c *client) chat(ctx context.Context, protocol, key, session, prompt string, delta func(string) error) (modelUsage, string, error) {
+func (c *client) chat(ctx context.Context, protocol, key, session, selected, prompt string, delta func(string) error) (modelUsage, string, error) {
 	var usage modelUsage
-	request := map[string]any{"model": modelID, "stream": true}
+	request := map[string]any{"model": selected, "stream": true}
 	path := "/v1/chat/completions"
 	if protocol == "openai_responses" {
 		path = "/v1/responses"

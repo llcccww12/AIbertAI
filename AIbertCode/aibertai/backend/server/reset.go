@@ -9,18 +9,18 @@ import (
 	"io"
 	"log/slog"
 	"net/mail"
-	"os"
 	"strings"
 
 	"aibertai.local/backend/internal/database"
+	"aibertai.local/backend/internal/envconfig"
 	"aibertai.local/backend/internal/identity"
 	"github.com/jackc/pgx/v5"
 )
 
 // Reset 重置现有管理员的密码，成功提交后将账号和新密码写入 output。
 func Reset(ctx context.Context, args []string, input io.Reader, output io.Writer) error {
-	url := strings.TrimSpace(os.Getenv("MONKEYAI_DATABASE_URL"))
-	flags := flag.NewFlagSet("monkeyai-server reset", flag.ContinueOnError)
+	url := strings.TrimSpace(envconfig.Getenv("AIBERTAI_DATABASE_URL"))
+	flags := flag.NewFlagSet("aibertai-server reset", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.StringVar(&url, "database-url", url, "PostgreSQL 连接地址")
 	if err := flags.Parse(args); err != nil {
@@ -34,12 +34,12 @@ func Reset(ctx context.Context, args []string, input io.Reader, output io.Writer
 		return errors.New("reset 参数无效，请使用 reset --help 查看用法")
 	}
 	if strings.TrimSpace(url) == "" {
-		return errors.New("MONKEYAI_DATABASE_URL 或 --database-url 不能为空")
+		return errors.New("AIBERTAI_DATABASE_URL 或 --database-url 不能为空")
 	}
 	pool, err := database.Open(ctx, url)
 	if err != nil {
 		slog.WarnContext(ctx, "操作失败", "module", "server", "operation", "Reset", "error", err)
-		return errors.New("无法连接数据库，请检查 MONKEYAI_DATABASE_URL 或 --database-url")
+		return errors.New("无法连接数据库，请检查 AIBERTAI_DATABASE_URL 或 --database-url")
 	}
 	defer pool.Close()
 
@@ -74,7 +74,7 @@ func Reset(ctx context.Context, args []string, input io.Reader, output io.Writer
 }
 
 func PrintResetUsage(output io.Writer) {
-	if _, err := io.WriteString(output, "用法: monkeyai-server reset [--database-url PostgreSQL连接地址]\n输入现有管理员的邮箱，命令仅重置该账号的密码。\n数据库连接默认读取 MONKEYAI_DATABASE_URL，成功后输出账号和随机新密码。\n"); err != nil {
+	if _, err := io.WriteString(output, "用法: aibertai-server reset [--database-url PostgreSQL连接地址]\n输入现有管理员的邮箱，命令仅重置该账号的密码。\n数据库连接默认读取 AIBERTAI_DATABASE_URL，成功后输出账号和随机新密码。\n"); err != nil {
 		slog.Error("写入输出失败", "module", "server", "operation", "PrintResetUsage", "error", err)
 	}
 }

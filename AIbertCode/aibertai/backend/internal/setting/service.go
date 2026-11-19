@@ -258,15 +258,16 @@ func (s *Service) AgentConfig(ctx context.Context) (Config, error) {
 		}
 		if record.Key == "session_reporting" {
 			var setting struct {
-				Enabled bool `json:"enabled"`
+				Enabled bool   `json:"enabled"`
+				Level   string `json:"level"`
 			}
 			if err := json.Unmarshal(value, &setting); err != nil {
 				return Config{}, fmt.Errorf("读取会话上报设置: %w", err)
 			}
-			value, err = json.Marshal(struct {
-				Enabled bool   `json:"enabled"`
-				Level   string `json:"level"`
-			}{setting.Enabled, "stats"})
+			if setting.Level != "full" {
+				setting.Level = "stats"
+			}
+			value, err = json.Marshal(setting)
 			if err != nil {
 				return Config{}, err
 			}

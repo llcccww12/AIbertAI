@@ -1,9 +1,7 @@
 package environment
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -25,13 +23,21 @@ func meterFixture(t *testing.T, credits string) (*Service, string, string, *time
 	if _, err := s.pool.Exec(t.Context(), `UPDATE settings SET value=jsonb_set(value,'{root_credits}',$1::jsonb) WHERE key='billing'`, credits); err != nil {
 		t.Fatal(err)
 	}
-	b, _ := json.Marshal(BillingConfig{Enabled: true, CPU: 3600_000000})
-	if _, err := s.pool.Exec(t.Context(), `UPDATE host_environment_configs SET billing=$1`, b); err != nil {
-		t.Fatal(err)
-	}
+	setComputePrice(t, s, BillingConfig{Enabled: true, CPU: 3600_000000})
 	at := time.Now().UTC().Truncate(time.Second)
 	s.now = func() time.Time { return at }
 	return s.WithBilling(charges), user, host, &at
+}
+
+func setComputePrice(t *testing.T, s *Service, pricing BillingConfig) {
+	t.Helper()
+	raw, err := json.Marshal(pricing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.pool.Exec(t.Context(), `UPDATE settings SET value=jsonb_set(value,'{environment}',$1::jsonb) WHERE key='billing'`, raw); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func cost(t *testing.T, s *Service, user, want string, count int) {
@@ -71,127 +77,105 @@ func TestComputeMeterLifecycleAndIdempotency(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	*at = at.Add(30 * time.Second)
-	settle(t, s, false)
-	cost(t, s, user, "0", 0)
-	syncState(t, s, host, observe(e.Environment, "running"))
-	*at = at.Add(60 * time.Second)
-	syncState(t, s, host, observe(e.Environment, "running"))
-	settle(t, s, false)
-	settle(t, s, false)
-	cost(t, s, user, "60", 1)
-	*at = at.Add(15 * time.Second)
+	cost(t, s, user, "3600", 1)
 	stopped, err := s.Change(t.Context(), &user, e.Environment.ID, "stopped", Change{1, "stop-meter"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	*at = at.Add(15 * time.Second)
 	syncState(t, s, host, observe(stopped.Environment, "stopped"))
-	settle(t, s, true)
-	cost(t, s, user, "90", 2)
+	started, err := s.Change(t.Context(), &user, e.Environment.ID, "running", Change{2, "restart-meter"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	syncState(t, s, host, observe(started.Environment, "running"))
+	cost(t, s, user, "3600", 1)
 	*at = at.Add(time.Hour)
+	syncState(t, s, host, observe(started.Environment, "running"))
 	settle(t, s, false)
-	cost(t, s, user, "90", 2)
-	if got := balance(t, s, user); got != "9910" {
+	cost(t, s, user, "7200", 2)
+	if got := balance(t, s, user); got != "2800" {
 		t.Fatalf("余额=%s", got)
 	}
 }
 
-func TestComputeBalanceExhaustionStopsAndChargesTail(t *testing.T) {
-	s, user, host, at := meterFixture(t, "5")
-	e, err := s.Create(t.Context(), user, Creation{"余额环境", "create-debt"})
+func TestComputeInsufficientBalanceStopsAtRenewal(t *testing.T) {
+	s, user, host, at := meterFixture(t, "4000")
+	e, err := s.Create(t.Context(), user, Creation{"余额环境", "balance-create"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	syncState(t, s, host, observe(e.Environment, "running"))
-	*at = at.Add(10 * time.Second)
+	*at = at.Add(time.Hour)
 	syncState(t, s, host, observe(e.Environment, "running"))
-	settle(t, s, false)
-	q := sqlc.New(s.pool)
-	stopped, err := q.GetEnvironment(t.Context(), sqlc.GetEnvironmentParams{ID: e.Environment.ID})
-	if err != nil {
-		t.Fatal(err)
+	current, err := sqlc.New(s.pool).GetEnvironment(t.Context(), sqlc.GetEnvironmentParams{ID: e.Environment.ID})
+	if err != nil || current.Desired != "stopped" || current.BillingStopReason != "insufficient_credits" {
+		t.Fatalf("余额不足后未停止：%v %s %s", err, current.Desired, current.BillingStopReason)
 	}
-	if stopped.Desired != "stopped" || stopped.BillingStopReason != "insufficient_credits" || stopped.Generation != 2 || stopped.Phase != "running" {
-		t.Fatalf("余额耗尽未正确停止：%+v", stopped)
-	}
-	if got := balance(t, s, user); got != "-5" {
-		t.Fatalf("尾费应实收，余额=%s", got)
-	}
-	_, err = s.Create(t.Context(), user, Creation{"不应创建", "create-denied"})
-	var denied *failure
-	if !errors.As(err, &denied) || denied.code != "insufficient_credits" {
-		t.Fatalf("负余额准入=%v", err)
-	}
-	*at = at.Add(2 * time.Second)
-	syncState(t, s, host, Observation{EnvironmentID: stopped.ID, InstanceID: stopped.InstanceID, Generation: stopped.Generation, Phase: "stopped"})
-	settle(t, s, true)
-	cost(t, s, user, "12", 2)
-	if got := balance(t, s, user); got != "-7" {
-		t.Fatalf("停机尾费未结清，余额=%s", got)
-	}
+	cost(t, s, user, "3600", 1)
 }
 
 func TestComputeUnknownIntervalIsNeverBackfilled(t *testing.T) {
 	s, user, host, at := meterFixture(t, "10000")
-	e, err := s.Create(t.Context(), user, Creation{"断线环境", "create-gap"})
+	e, err := s.Create(t.Context(), user, Creation{"断线环境", "unknown-create"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	syncState(t, s, host, observe(e.Environment, "running"))
-	*at = at.Add(30 * time.Second)
-	syncState(t, s, host, observe(e.Environment, "running"))
-	*at = at.Add(time.Hour)
+	*at = at.Add(2 * time.Hour)
 	settle(t, s, false)
-	cost(t, s, user, "30", 1)
-	// 模拟服务重启后重新接管同一持久计量记录。
-	s = NewService(s.pool).WithBilling(billing.NewService(s.pool))
-	s.now = func() time.Time { return *at }
-	syncState(t, s, host, observe(e.Environment, "running"))
-	*at = at.Add(20 * time.Second)
-	syncState(t, s, host, observe(e.Environment, "running"))
-	settle(t, s, false)
-	cost(t, s, user, "50", 2)
+	current, err := sqlc.New(s.pool).GetEnvironment(t.Context(), sqlc.GetEnvironmentParams{ID: e.Environment.ID})
+	if err != nil || current.Desired != "stopped" || current.BillingStopReason != "billing_unavailable" {
+		t.Fatalf("运行状态不明时没有停止续费：%v %s %s", err, current.Desired, current.BillingStopReason)
+	}
+	cost(t, s, user, "3600", 1)
 }
 
-func TestComputeConcurrentSettlementAndRollback(t *testing.T) {
-	s, user, host, at := meterFixture(t, "10000")
-	e, err := s.Create(t.Context(), user, Creation{"并发环境", "create-concurrent"})
-	if err != nil {
+func TestComputeConcurrentPurchaseAndRollback(t *testing.T) {
+	s, user, _, _ := meterFixture(t, "10000")
+	in := Creation{"并发环境", "create-concurrent"}
+	if _, err := s.pool.Exec(t.Context(), `CREATE FUNCTION reject_compute() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.category='environment' THEN RAISE EXCEPTION 'test failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_compute BEFORE INSERT ON credit_ledger_entries FOR EACH ROW EXECUTE FUNCTION reject_compute()`); err != nil {
 		t.Fatal(err)
 	}
-	syncState(t, s, host, observe(e.Environment, "running"))
-	*at = at.Add(60 * time.Second)
-	syncState(t, s, host, observe(e.Environment, "running"))
-	if _, err = s.pool.Exec(t.Context(), `CREATE FUNCTION reject_compute() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.category='environment' THEN RAISE EXCEPTION 'test failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_compute BEFORE INSERT ON credit_ledger_entries FOR EACH ROW EXECUTE FUNCTION reject_compute()`); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.settleBilling(t.Context(), false); err == nil {
+	if _, err := s.Create(t.Context(), user, in); err == nil {
 		t.Fatal("未触发账务回滚")
 	}
 	cost(t, s, user, "0", 0)
-	if got := balance(t, s, user); got != "10000" {
-		t.Fatalf("失败事务提前扣费：%s", got)
+	var environments int
+	if err := s.pool.QueryRow(t.Context(), "SELECT count(*) FROM environments WHERE user_id=$1", user).Scan(&environments); err != nil || environments != 0 {
+		t.Fatalf("扣费失败仍创建了环境：%d，%v", environments, err)
 	}
-	if _, err = s.pool.Exec(t.Context(), `DROP TRIGGER reject_compute ON credit_ledger_entries`); err != nil {
+	if _, err := s.pool.Exec(t.Context(), `DROP TRIGGER reject_compute ON credit_ledger_entries`); err != nil {
 		t.Fatal(err)
 	}
 	var wg sync.WaitGroup
+	results := make(chan Result, 8)
 	errs := make(chan error, 8)
 	for range 8 {
-		wg.Go(func() { errs <- s.settleBilling(context.Background(), false) })
+		wg.Go(func() {
+			out, err := s.Create(t.Context(), user, in)
+			results <- out
+			errs <- err
+		})
 	}
 	wg.Wait()
+	close(results)
 	close(errs)
 	for err := range errs {
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	cost(t, s, user, "60", 1)
+	var expected string
+	for out := range results {
+		if expected != "" && expected != out.Environment.ID {
+			t.Fatal("重试创建了多个云电脑")
+		}
+		expected = out.Environment.ID
+	}
+	cost(t, s, user, "3600", 1)
 }
 
-func TestComputeSplitsAccountCycle(t *testing.T) {
+func TestComputeKeepsPrepaidHourAcrossAccountCycle(t *testing.T) {
 	s, user, host, at := meterFixture(t, "10000")
 	zone, _ := time.LoadLocation("Asia/Shanghai")
 	now := at.In(zone)
@@ -204,17 +188,15 @@ func TestComputeSplitsAccountCycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	*at = at.Add(time.Minute)
 	syncState(t, s, host, observe(e.Environment, "running"))
-	*at = at.Add(60 * time.Second)
+	cost(t, s, user, "3600", 1)
+	*at = at.Add(59 * time.Minute)
 	syncState(t, s, host, observe(e.Environment, "running"))
-	settle(t, s, false)
-	cost(t, s, user, "60", 2)
+	cost(t, s, user, "7200", 2)
 	var accounts int
-	if err = s.pool.QueryRow(t.Context(), `SELECT count(*) FROM credit_accounts WHERE user_id=$1 AND balance=9970`, user).Scan(&accounts); err != nil {
-		t.Fatal(err)
-	}
-	if accounts != 2 {
-		t.Fatalf("跨周期未拆分：%d", accounts)
+	if err = s.pool.QueryRow(t.Context(), `SELECT count(*) FROM credit_accounts WHERE user_id=$1 AND balance=6400`, user).Scan(&accounts); err != nil || accounts != 2 {
+		t.Fatalf("续费未计入新周期：%d，%v", accounts, err)
 	}
 }
 
@@ -224,40 +206,17 @@ func TestComputeConfigChangeAndDisable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	setComputePrice(t, s, BillingConfig{Enabled: true, CPU: 720_000000})
 	syncState(t, s, host, observe(e.Environment, "running"))
-	*at = at.Add(30 * time.Second)
+	cost(t, s, user, "3600", 1)
+	*at = at.Add(time.Hour)
 	syncState(t, s, host, observe(e.Environment, "running"))
-	var setup SetupView
-	if err = s.transaction(t.Context(), func(q *sqlc.Queries) error {
-		var err error
-		setup, err = s.setupView(t.Context(), q, host, s.pool)
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
-	pricing := BillingConfig{Enabled: true, CPU: 7200_000000}
-	saved, err := s.saveSetup(t.Context(), host, Setup{Resource: *setup.Resource, MaxEnvironments: setup.MaxEnvironments, UserMaxEnvironments: setup.UserMaxEnvironments, Billing: &pricing})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if saved.Billing != pricing {
-		t.Fatal("价格配置未更新")
-	}
-	settle(t, s, true)
-	cost(t, s, user, "30", 1)
-	syncState(t, s, host, observe(e.Environment, "running"))
-	*at = at.Add(10 * time.Second)
+	cost(t, s, user, "4320", 2)
+	setComputePrice(t, s, BillingConfig{})
+	*at = at.Add(time.Hour)
 	syncState(t, s, host, observe(e.Environment, "running"))
 	settle(t, s, false)
-	cost(t, s, user, "50", 2)
-	pricing.Enabled = false
-	if _, err = s.saveSetup(t.Context(), host, Setup{Resource: *saved.Resource, MaxEnvironments: saved.MaxEnvironments, UserMaxEnvironments: saved.UserMaxEnvironments, Billing: &pricing}); err != nil {
-		t.Fatal(err)
-	}
-	*at = at.Add(60 * time.Second)
-	syncState(t, s, host, observe(e.Environment, "running"))
-	settle(t, s, false)
-	cost(t, s, user, "50", 2)
+	cost(t, s, user, "4320", 2)
 	current, err := sqlc.New(s.pool).GetEnvironment(t.Context(), sqlc.GetEnvironmentParams{ID: e.Environment.ID})
 	if err != nil || current.Desired != "running" {
 		t.Fatalf("关闭收费不应停止环境：%v", err)
@@ -265,66 +224,49 @@ func TestComputeConfigChangeAndDisable(t *testing.T) {
 }
 
 func TestComputeBudgetIncludesAllRunningEnvironments(t *testing.T) {
-	s, user, host, at := meterFixture(t, "600")
-	a, err := s.Create(t.Context(), user, Creation{"环境一", "budget-a"})
+	s, user, host, _ := meterFixture(t, "8000")
+	a, err := s.Create(t.Context(), user, Creation{"环境 A", "budget-a"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := s.Create(t.Context(), user, Creation{"环境二", "budget-b"})
+	b, err := s.Create(t.Context(), user, Creation{"环境 B", "budget-b"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	syncState(t, s, host, observe(a.Environment, "running"), observe(b.Environment, "running"))
-	*at = at.Add(60 * time.Second)
-	syncState(t, s, host, observe(a.Environment, "running"), observe(b.Environment, "running"))
-	settle(t, s, false)
 	budget, enabled, err := s.billingBudget(t.Context(), user)
 	if err != nil || !enabled || budget == nil {
 		t.Fatalf("预算查询失败：%v", err)
 	}
-	if budget.Balance.String() != "480" || budget.RunningEnvironments != 2 || budget.RemainingSeconds == nil || *budget.RemainingSeconds != 240 || !budget.LowBalance {
+	if budget.Balance.String() != "800" || budget.RunningEnvironments != 2 || budget.RemainingSeconds == nil || *budget.RemainingSeconds != 3600 || !budget.LowBalance {
 		t.Fatalf("用户合计预算错误：%+v", budget)
 	}
 	views := []View{a.Environment, b.Environment}
 	if err = s.billingViews(t.Context(), views); err != nil {
 		t.Fatal(err)
 	}
-	if views[0].Billing == nil || views[0].Billing.HourlyCredits.String() != "3600" || views[0].Billing.SettledCredits != "60.000000" {
+	if views[0].Billing == nil || views[0].Billing.HourlyCredits.String() != "3600" || views[0].Billing.SettledSeconds != 3600 {
 		t.Fatalf("计费展示信息错误：%+v", views[0].Billing)
 	}
 }
 
-func TestComputeMinuteRoundingAccumulatesExactly(t *testing.T) {
+func TestComputePrepaidHourUsesExactDecimal(t *testing.T) {
 	s, user, host, at := meterFixture(t, "10000")
-	pricing, _ := json.Marshal(BillingConfig{Enabled: true, CPU: 100000})
-	if _, err := s.pool.Exec(t.Context(), `UPDATE host_environment_configs SET billing=$1`, pricing); err != nil {
-		t.Fatal(err)
-	}
+	setComputePrice(t, s, BillingConfig{Enabled: true, CPU: 100000})
 	e, err := s.Create(t.Context(), user, Creation{"小额计费", "create-small"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	syncState(t, s, host, observe(e.Environment, "running"))
-	for range 60 {
-		*at = at.Add(60 * time.Second)
+	for range 59 {
+		*at = at.Add(time.Minute)
 		syncState(t, s, host, observe(e.Environment, "running"))
-		settle(t, s, false)
 	}
-	cost(t, s, user, "0.1", 60)
+	cost(t, s, user, "0.1", 1)
 }
 
 func TestComputeRejectsInvalidPricing(t *testing.T) {
-	s, _, host, _ := meterFixture(t, "10000")
-	var setup SetupView
-	if err := s.transaction(t.Context(), func(q *sqlc.Queries) error {
-		var err error
-		setup, err = s.setupView(t.Context(), q, host, s.pool)
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
 	for _, pricing := range []BillingConfig{{Enabled: true, CPU: -1}, {Enabled: true, CPU: 1000000000000_000000}} {
-		if _, err := s.saveSetup(t.Context(), host, Setup{Resource: *setup.Resource, MaxEnvironments: setup.MaxEnvironments, UserMaxEnvironments: setup.UserMaxEnvironments, Billing: &pricing}); err == nil {
+		if err := pricing.validate(); err == nil {
 			t.Fatal("接受非法环境价格")
 		}
 	}
@@ -343,8 +285,8 @@ func TestComputeDeletedUserStillSettlesHistoricalUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	settle(t, s, false)
-	cost(t, s, user, "30", 1)
-	if got := balance(t, s, user); got != "9970" {
+	cost(t, s, user, "3600", 1)
+	if got := balance(t, s, user); got != "6400" {
 		t.Fatalf("删除用户导致历史费用丢失：%s", got)
 	}
 	if _, err = s.Create(t.Context(), user, Creation{"不应创建", "deleted-admission"}); err == nil {
@@ -380,7 +322,7 @@ func TestComputeInspectionFailureDoesNotExtendBilling(t *testing.T) {
 	failed.Reason = "inspect_failed"
 	syncState(t, s, host, failed)
 	settle(t, s, true)
-	cost(t, s, user, "30", 1)
+	cost(t, s, user, "3600", 1)
 	current, err := sqlc.New(s.pool).GetEnvironment(t.Context(), sqlc.GetEnvironmentParams{ID: e.Environment.ID})
 	if err != nil || current.Phase != "failed" {
 		t.Fatalf("不能把巡检失败当作已停止：%v", err)
@@ -391,7 +333,7 @@ func TestComputeInspectionFailureDoesNotExtendBilling(t *testing.T) {
 	}
 	syncState(t, s, host, observe(e.Environment, "running"))
 	settle(t, s, false)
-	cost(t, s, user, "30", 1)
+	cost(t, s, user, "3600", 1)
 }
 
 func TestComputePriceUsesExactDecimal(t *testing.T) {

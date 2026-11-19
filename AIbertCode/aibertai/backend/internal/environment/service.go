@@ -20,6 +20,7 @@ type Service struct {
 	ready          RuntimeReadiness
 	images         ImageResolver
 	runtimeCatalog RuntimeCatalog
+	sourceRuntime  bool
 	credits        CreditBilling
 	now            func() time.Time
 	billingWake    chan struct{}
@@ -144,12 +145,12 @@ func (s *Service) CreateOnHost(ctx context.Context, user, requestedHost string, 
 				return conflict("runtime_network_required", "云环境需要 public-only 网络访问后台")
 			}
 			spec.Runtime = &Runtime{Server: s.runtime.server, ServerID: s.runtime.serverID, UserID: user}
-			if s.runtimeCatalog != nil {
-				release, err := s.runtimeCatalog.Current(host.Architecture)
+			if s.runtimeCatalog != nil || s.sourceRuntime {
+				release, err := s.runtimeForProvisioning(host.Architecture)
 				if err != nil {
 					return conflict("configuration_unavailable", "server runtime 发行资源尚未准备完成")
 				}
-				if !spec.PersistentContainer || capabilities.RuntimeProtocol < release.Protocol() || capabilities.RuntimeProtocol > 2 {
+				if !spec.PersistentContainer || capabilities.RuntimeProtocol < release.Protocol() || capabilities.RuntimeProtocol > 3 {
 					return conflict("host_unavailable", "宿主引擎尚不支持独立 runtime")
 				}
 				spec.RuntimePackage = &release
@@ -250,6 +251,9 @@ func (s *Service) Change(ctx context.Context, user *string, id, desired string, 
 			return err
 		}
 		if desired == "running" {
+			if s.sourceRuntime && spec.Runtime != nil && (spec.RuntimePackage == nil || !spec.RuntimePackage.SourceRuntime()) {
+				return conflict("runtime_upgrade_required", "请先迁移到 AIbertAI 源码运行时")
+			}
 			if env.Desired != "stopped" || env.Phase != "stopped" || env.ObservedGeneration != env.Generation {
 				return conflict("environment_must_stop", "必须先确认停止，才能重新启动环境")
 			}
@@ -297,7 +301,7 @@ func (s *Service) Change(ctx context.Context, user *string, id, desired string, 
 			}
 			spec.PersistentContainer = report.EnvironmentProtocol >= 2 && report.EnvironmentProtocol <= 3
 		}
-		if desired == "stopped" {
+		if desired == "stopped" && (spec.RuntimePackage == nil || !spec.RuntimePackage.SourceRuntime()) {
 			spec.RuntimePackage = nil
 		}
 		spec.Generation++

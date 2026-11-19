@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/control"
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/lifecycle"
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/standalone"
+	"aibertai.local/engine/internal/control"
+	"aibertai.local/engine/internal/lifecycle"
+	"aibertai.local/engine/internal/standalone"
 )
 
 type fakeExecutor struct {

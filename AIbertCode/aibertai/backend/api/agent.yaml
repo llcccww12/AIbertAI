@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: MonkeyAI Agent API
+  title: AIbertAI Agent API
   description: 错误使用稳定 code 和本地化 message，不含 reason。Accept-Language 支持 zh-CN 和 en-US，缺省或未知语言回退 zh-CN；响应返回 Content-Language、Vary 和 X-Request-ID。错误文案追加 [trace_id] 链路编号，与日志 trace_id 对应，使用当前 OTel Trace ID。
   version: 1.0.0
 servers:
@@ -279,7 +279,7 @@ paths:
   /api/v1/environments/{id}/runtime/upgrade:
     post:
       summary: 不重建容器更新本人环境的 runtime
-      description: 需要 environment:manage。环境必须已确认停止，宿主支持独立更新；保留容器、目录与设备身份。version 省略时选择 server 当前最新版本，显式版本可回退到 server 已有版本。请求使用 generation 与 request_key 保证并发安全和幂等，响应不缓存。
+      description: 需要 environment:manage。环境必须已确认停止，宿主支持独立更新；保留容器、目录与设备身份。已绑定设备从旧运行时迁到源码运行时时，需要原设备为指定 version 和 generation 签署的 identity_proof。普通更新可省略 version 以选择最新版本。请求使用 generation 与 request_key 保证并发安全和幂等，响应不缓存。
       parameters:
       - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
       requestBody:
@@ -502,7 +502,7 @@ paths:
   /api/v1/design-resources/token:
     post:
       summary: 为当前用户已登记设备签发设计凭据
-      description: hub JWT 使用 aud=respub-design；本地媒体 JWT 使用 aud=monkeyai-design-media 及 sub=用户ID，密钥独立，有效期10分钟。instance_id 由 Pro 入口复用持久化统计身份。响应 no-store，禁止记录凭据。设备移除后不得签发，已签发短期凭据按过期时间失效。
+      description: hub JWT 使用 aud=respub-design；本地媒体 JWT 使用 aud=monkeyai-design-media 及 sub=用户ID，密钥独立，有效期10分钟。instance_id 由宿主提供。响应 no-store，禁止记录凭据。设备移除后不得签发，已签发短期凭据按过期时间失效。
       requestBody:
         required: true
         content:
@@ -1451,7 +1451,7 @@ paths:
       - {name: path, in: path, required: true, schema: {type: string}, description: 'ACP、cap/{server}/mcp、uploads/* 或 files/{grant}/* 白名单目标'}
     get:
       summary: 转发 WebSocket、MCP SSE 或获准文件
-      description: ticket Bearer 或 monkeyai.v1 与 monkeyai.token.<ticket> WebSocket 子协议；中转消费票据，只转发 monkeyai.v1。安装版允许 app://monkeyai，开发 Origin 通过 MONKEYAI_RUNTIME_DESKTOP_ORIGINS 显式配置；业务 Host 为 device.internal。文件另外要求限定 grant。不接受 OAuth token 替代 ticket，已转发 JSON-RPC 错误保留原格式。
+      description: ticket Bearer 或 monkeyai.v1 与 monkeyai.token.<ticket> WebSocket 子协议；中转消费票据，只转发 monkeyai.v1。安装版允许 app://monkeyai，开发 Origin 通过 AIBERTAI_RUNTIME_DESKTOP_ORIGINS 显式配置；业务 Host 为 device.internal。文件另外要求限定 grant。不接受 OAuth token 替代 ticket，已转发 JSON-RPC 错误保留原格式。
       security:
         - RuntimeTicket: []
       responses:
@@ -1519,7 +1519,7 @@ paths:
       summary: 建立原生客户端端点桥接 WebSocket
       description: >-
         仅接受 OAuth Bearer access token，不接受 Cookie 或 URL token。
-        非空 Origin 必须匹配 MONKEYAI_PUBLIC_URL；HTTP 使用 WS，HTTPS 使用 WSS。
+        非空 Origin 必须匹配 AIBERTAI_PUBLIC_URL；HTTP 使用 WS，HTTPS 使用 WSS。
         Upgrade 后 5 秒内发送 hello，服务端依次发送 welcome、directory.snapshot。
         使用协议主版本 1，UTF-8 JSON 文本消息最大 256 KiB（含分片累计），禁用压缩。
         request/response/event 信封及关闭码详见 design/endpoint-bridge-design.md。
@@ -3620,6 +3620,34 @@ paths:
           $ref: '#/components/responses/ResourceError401'
         '404':
           $ref: '#/components/responses/ResourceError404'
+  /api/v1/experts/desktop-import/{key}:
+    put:
+      summary: 一次性导入当前用户的旧本机专家
+      description: 同一用户重复提交相同导入标识时返回已有记录，保留后续对该记录的编辑。
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-f]{64}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserExpertInput'
+      responses:
+        '200':
+          description: 导入后的个人资源详情。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExpertResource'
+        '400':
+          $ref: '#/components/responses/ResourceError400'
+        '401':
+          $ref: '#/components/responses/ResourceError401'
   /api/v1/experts/{id}:
     get:
       summary: 读取自己的个人专家
@@ -3882,6 +3910,42 @@ paths:
           $ref: '#/components/responses/ResourceError428'
         '500':
           $ref: '#/components/responses/ResourceError500'
+  /api/v1/connectors/desktop-import/{key}:
+    put:
+      summary: 一次性导入当前用户的旧本机连接器
+      description: 同一用户重复提交相同导入标识时返回已有记录，保留后续对该记录的编辑。
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-f]{64}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+              - $ref: '#/components/schemas/UserConnectorInput'
+              - type: object
+                properties:
+                  http_headers:
+                    type: object
+                    additionalProperties:
+                      type: string
+                    description: 导入当前账号的 Header 凭证。响应仅返回凭证元数据。
+      responses:
+        '200':
+          description: 导入后的个人资源详情。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorResource'
+        '400':
+          $ref: '#/components/responses/ResourceError400'
+        '401':
+          $ref: '#/components/responses/ResourceError401'
   /api/v1/connectors/{id}:
     get:
       summary: 读取自己的个人 Connector
@@ -5400,6 +5464,7 @@ components:
         generation: {type: integer, format: int64, minimum: 1}
         request_key: {type: string, minLength: 1, maxLength: 128}
         version: {type: string, pattern: '^[0-9]{1,8}\.[0-9]{1,8}\.[0-9]{1,8}$'}
+        identity_proof: {type: string, maxLength: 86, minLength: 86, pattern: '^[A-Za-z0-9_-]{86}$', description: 原设备私钥签署的单次升级证明。}
       additionalProperties: false
     EnvironmentRuntimeInfo:
       type: object
@@ -6765,7 +6830,7 @@ components:
         id:
           type: string
           format: uuid
-          description: MonkeyAI 内部模型 UUID，模型代理兼容使用该值作为请求的 model。
+          description: AIbertAI 内部模型 UUID，模型代理兼容使用该值作为请求的 model。
         model:
           type: string
           description: 格式为 model_id@id，由数据库 models.model_id 与内部模型 UUID 拼接；Agent 调用模型代理时将此值作为请求的 model，代理精确定位配置并转换为上游模型名称。
@@ -6775,7 +6840,7 @@ components:
         protocol:
           type: string
           enum: [openai_chat_completions, openai_responses, anthropic, image_generation, video_generation, openai_embeddings]
-          description: MonkeyAI 与上游服务通信时使用的协议。
+          description: AIbertAI 与上游服务通信时使用的协议。
         kind:
           type: string
           enum: [text, image, video, embedding]
@@ -7796,7 +7861,7 @@ components:
         callback_url:
           type: string
           readOnly: true
-          description: OAuth MCP 的专属完整回调地址，格式为 {MONKEYAI_PUBLIC_URL}/oauth/connectors/{id}/callback；非 OAuth 连接为空字符串。
+          description: OAuth MCP 的专属完整回调地址，格式为 {AIBERTAI_PUBLIC_URL}/oauth/connectors/{id}/callback；非 OAuth 连接为空字符串。
         config_revision:
           type: integer
         credential_configured:

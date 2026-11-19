@@ -208,6 +208,9 @@ WHERE
     group_id = $1
     AND removed_at IS NULL;
 
+-- name: HasGroupMemberships :one
+SELECT EXISTS (SELECT 1 FROM group_users WHERE group_id = $1 AND removed_at IS NULL);
+
 -- name: TouchGrantedModels :execresult
 UPDATE models SET updated_at = now()
 WHERE id IN (SELECT resource_id FROM resource_access_grants WHERE group_id = $1 AND resource_type = 'model');
@@ -233,7 +236,7 @@ DELETE FROM resource_access_grants
 WHERE group_id = $1;
 
 -- name: RootName :one
-SELECT COALESCE((SELECT NULLIF(value ->> 'workspace_name', '') FROM settings WHERE key = 'branding'), 'Monkey AI')::text;
+SELECT COALESCE((SELECT NULLIF(value ->> 'workspace_name', '') FROM settings WHERE key = 'branding'), 'AIbertAI')::text;
 
 -- name: RootDirectMemberIDs :many
 SELECT u.id::text FROM users u

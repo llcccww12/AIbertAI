@@ -1,6 +1,6 @@
 # AIbertAI 管理后台
 
-管理后台使用 React、TypeScript、Vite 和 Tailwind CSS。
+管理后台使用 React、TypeScript、Vite 和 Tailwind CSS。启动步骤及 API 代理配置见[管理平台启动指南](../README.md#本机开发)。
 
 ## 品牌设置
 
@@ -16,13 +16,6 @@
 - 图表与表单仅有的容器宽度断点使用 `ResizeObserver`，按内容宽度判断，表单通过上下文跟随最近分组；不改写样式表。图表和示意图保留传统比例占位回退，避免不支持 `aspect-ratio` 时区域高度塌陷；日期按钮显式设置单元格高度。滚动条同时提供物理定位，兼容旧版不支持的行内逻辑定位。
 - Base UI 1.7.0 的构造点击事件带有版本限定的 pnpm 补丁：Chrome 86 虽有 PointerEvent 构造器，但构造的 click 不会激活复选框。补丁按窗口检测实际行为，必要时使用 MouseEvent，现代浏览器保留 PointerEvent，同时保留修饰键和原组件的确认、校验及禁用逻辑。该共享路径也用于 Checkbox；更新 Base UI 时需复核补丁与浏览器测试。
 - 不支持磁盘暂存的浏览器，大目录导入仍应使用现成 ZIP；复制等安全上下文功能继续遵循浏览器的 HTTPS/权限限制。
-
-安装后重启 Vite 开发服务器，使新的 PostCSS 配置生效：
-
-```sh
-pnpm install --frozen-lockfile
-pnpm dev --force
-```
 
 验证命令：
 
@@ -132,23 +125,9 @@ CHROME_BIN=/path/to/chrome86 pnpm test:browser:auth
 CHROME_BIN=/path/to/current-chrome pnpm test:browser:auth
 ```
 
-## Adding components
+## 公共组件
 
-To add components to your app, run the following command:
-
-```bash
-npx shadcn@latest add button
-```
-
-This will place the ui components in the `src/components` directory. 当前 shadcn 新模板可能包含 Tailwind 4 专用样式，生成后需检查并迁移到现有 Tailwind 3 配置，不能直接覆盖公共组件。新增状态、动态选择器或工具类后，应运行上面的 Chrome 86 浏览器检查。
-
-## Using components
-
-To use the components in your app, import them as follows:
-
-```tsx
-import { Button } from "@/components/ui/button"
-```
+使用 `src/components/ui/` 中的现有组件，例如 `@/components/ui/button`。公共样式基于 Tailwind 3，修改组件后运行对应的浏览器回归。
 
 ## GroupSelect
 
@@ -223,7 +202,7 @@ does not repeat transliteration.
 
 ## 云环境管理
 
-后台“云环境”提供环境详情与操作记录、停止／删除、预设创建与启停、宿主安装与容量、用户额度。接口及状态语义见 [环境控制说明](../design/environment-control.md)。当前容器运行状态不表示 runtime 已连接，联网与客户端接入仍在开发中。
+后台「云环境」可管理环境预设、宿主、额度和运行记录。状态及操作契约见[环境控制说明](../design/environment-control.md)，宿主实际连接和权限需通过设备联调验证。
 
 只检查界面时可使用本机模拟 API：
 

@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/dockerapi"
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/lifecycle"
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/storage"
+	"aibertai.local/engine/internal/dockerapi"
+	"aibertai.local/engine/internal/lifecycle"
+	"aibertai.local/engine/internal/storage"
 )
 
 func TestDockerIntegration(t *testing.T) {

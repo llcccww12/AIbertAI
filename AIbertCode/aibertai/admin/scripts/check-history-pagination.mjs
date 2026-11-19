@@ -66,7 +66,7 @@ try {
       })
       page.setDefaultTimeout(15000)
       await page.addInitScript(() =>
-        localStorage.setItem("monkeyai-admin-language", "zh-CN")
+        localStorage.setItem("aibertai-admin-language", "zh-CN")
       )
       const apiPath = `/api/admin/v1/statistics/${kind === "task" ? "history" : "conversations"}`
       const errors = [],

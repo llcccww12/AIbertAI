@@ -50,11 +50,17 @@ curl -k --proto '=http,https' --tlsv1.2 --fail --progress-bar --show-error --ret
 printf '%s  %s\n' "$5" "$work/installer" | sha256sum -c - >/dev/null || fail '安装器校验失败'
 chmod 700 "$work/installer"
 case "$8" in
- installer) set -- "$work/installer" monkeyai-engine install --insecure --server "$1" --enrollment "$2" --release "$3" --architecture "$4" --manifest-sha256 "$6" --data-dir "$7" ;;
- monkeyai-engine) [ -n "$2" ] || fail '首次安装请从后台添加宿主并复制接入命令'; [ -n "$7" ] || set -- "$1" "$2" "$3" "$4" "$5" "$6" /var/lib/monkeyai-engine/data "$8"; set -- "$work/installer" install --insecure --server "$1" --enrollment "$2" --release "$3" --architecture "$4" --manifest-sha256 "$6" --data-dir "$7" ;;
+ installer)
+  if [ "${bootstrap_mode:-install}" = upgrade ]; then
+   set -- "$work/installer" monkeyai-engine upgrade --server "$1" --release "$3" --architecture "$4" --manifest-sha256 "$6"
+  else
+   if [ -n "$7" ]; then set -- "$work/installer" monkeyai-engine install --insecure --server "$1" --enrollment "$2" --release "$3" --architecture "$4" --manifest-sha256 "$6" --data-dir "$7"
+   else set -- "$work/installer" monkeyai-engine install --insecure --server "$1" --enrollment "$2" --release "$3" --architecture "$4" --manifest-sha256 "$6"; fi
+  fi
+  ;;
  *) fail '安装器名称无效' ;;
 esac
-[ -z "${server_url:-}" ] || set -- "$@" --server-url "$server_url"
+[ -z "${server_url:-}" ] || [ "${bootstrap_mode:-install}" = upgrade ] || set -- "$@" --server-url "$server_url"
 # 完成回执避免依赖旧 systemd 保留已结束的任务状态。
 unit=monkeyai-engine-install-${work##*.}.service
 printf '%s' "$$" > "$work/owner"

@@ -98,7 +98,7 @@ try {
     page.setDefaultTimeout(15000)
     await page.clock.setFixedTime(now)
     await page.addInitScript((theme) => {
-      localStorage.setItem("monkeyai-admin-language", "zh-CN")
+      localStorage.setItem("aibertai-admin-language", "zh-CN")
       localStorage.setItem("theme", theme)
     }, theme)
     const errors = [],

@@ -5,13 +5,13 @@
 - `000001_initial_create_schema.up.sql`：完整创建身份与邮箱认证、OAuth、调用密钥、分组、设置、模型、资源、连接与多凭证、专家、计费、统计索引及审计结构。
 - `000001_initial_create_schema.down.sql`：按依赖逆序删除本版本的表、序列和计费流水保护函数，仅用于可丢弃测试数据库。
 
-首次部署必须使用全新的 PostgreSQL 数据库或数据目录。重建容器但复用旧数据目录不构成全新初始化。收敛前的旧迁移历史不支持直接升级到当前迁移历史，也不能通过 `force 1` 代替数据迁移；需保留这类旧数据时应另行制定迁移方案。使用收敛后迁移历史的现有数据库正常追加迁移，版本 `14` 的升级步骤见下文。
+首次部署必须使用全新的 PostgreSQL 数据库或数据目录。重启服务但复用旧数据目录不构成全新初始化。收敛前的旧迁移历史不支持直接升级到当前迁移历史，也不能通过 `force 1` 代替数据迁移；需保留这类旧数据时应另行制定迁移方案。使用收敛后迁移历史的现有数据库正常追加迁移，版本 `14` 的升级步骤见下文。
 
 从 `backend` 目录执行：
 
 ```sh
-migrate -path migrations -database "$MONKEYAI_DATABASE_URL" up
-migrate -path migrations -database "$MONKEYAI_DATABASE_URL" version
+migrate -path migrations -database "$AIBERTAI_DATABASE_URL" up
+migrate -path migrations -database "$AIBERTAI_DATABASE_URL" version
 ```
 
 成功后 `schema_migrations` 应为 `version=52, dirty=false`，再次 `up` 返回 `no change`。可丢弃测试库执行 `down -all` 后再 `up`，应能完整重建。
@@ -96,9 +96,9 @@ migrate -path migrations -database "$MONKEYAI_DATABASE_URL" version
 从 `backend` 目录执行：
 
 ```sh
-migrate -path migrations -database "$MONKEYAI_DATABASE_URL" version
-migrate -path migrations -database "$MONKEYAI_DATABASE_URL" up
-migrate -path migrations -database "$MONKEYAI_DATABASE_URL" version
+migrate -path migrations -database "$AIBERTAI_DATABASE_URL" version
+migrate -path migrations -database "$AIBERTAI_DATABASE_URL" up
+migrate -path migrations -database "$AIBERTAI_DATABASE_URL" version
 ```
 
 最终应为 `47` 且没有 dirty 标记；再次 `up` 返回 `no change`，随后启动新后端。Compose 部署使用配套的 `MIGRATE_IMAGE` 执行迁移服务，命令已配置为 `up`。

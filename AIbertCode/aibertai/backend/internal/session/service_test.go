@@ -435,6 +435,7 @@ func TestTurnTextDatabase(t *testing.T) {
 		truncated bool
 		wantTitle *string
 		source    *string
+		stats     bool
 	}{
 		{
 			name: "新客户端", input: resource.Object{"text": text, "text_truncated": true},
@@ -444,9 +445,17 @@ func TestTurnTextDatabase(t *testing.T) {
 		{name: "旧客户端"},
 		{name: "显式空值", input: resource.Object{"text": nil}, fields: resource.Object{"title": nil, "title_source": nil}},
 		{name: "未截断正文", input: resource.Object{"text": "正文"}, wantText: stringPtr("正文")},
+		{name: "仅统计模式", input: resource.Object{"text": text, "text_truncated": true}, stats: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			s, identities, _, token := sessionDBFixture(t)
+			s, identities, userID, token := sessionDBFixture(t)
+			settings := setting.NewService(setting.NewPostgres(s.pool))
+			s.WithReportingSettings(settings)
+			if !tt.stats {
+				if _, err := settings.Put(t.Context(), "session_reporting", json.RawMessage(`{"enabled":true,"level":"full"}`), 1, userID); err != nil {
+					t.Fatal(err)
+				}
+			}
 			sessionID, machineID := resource.ID(), resource.ID()
 			router := chi.NewRouter()
 			router.Use(identities.RequireAgent)

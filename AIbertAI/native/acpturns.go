@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/http"
 	"slices"
@@ -19,12 +20,15 @@ const maxACPToolCalls = 4
 var errSessionReportPending = errors.New("session_report_pending")
 
 type acpTurn struct {
+	goalOutcome   string
 	Operation     string              `json:"operationId"`
 	ClientID      string              `json:"clientMessageId,omitempty"`
+	Model         string              `json:"model,omitempty"`
 	Attachments   []acpAttachment     `json:"attachments,omitempty"`
 	Started       time.Time           `json:"startedAt"`
 	Ended         time.Time           `json:"endedAt,omitzero"`
 	Prompt        string              `json:"prompt"`
+	ReportText    bool                `json:"reportText,omitempty"`
 	ModelInput    string              `json:"modelInput,omitempty"`
 	ResponseItems []json.RawMessage   `json:"responseItems,omitempty"`
 	Answer        string              `json:"answer,omitempty"`
@@ -35,6 +39,7 @@ type acpTurn struct {
 	Usage         modelUsage          `json:"usage"`
 	Permissions   reportedPermissions `json:"permissions,omitzero"`
 	Failed        bool                `json:"failed,omitempty"`
+	Interrupted   bool                `json:"interrupted,omitempty"`
 	Acked         bool                `json:"acked,omitempty"`
 }
 
@@ -48,7 +53,13 @@ func (t acpTurn) workspaceTools() []workspaceToolRun {
 
 func (s acpSession) modelHistory() []toolConversationMessage {
 	messages := make([]toolConversationMessage, 0, 2*len(s.Turns))
-	for _, turn := range s.Turns {
+	compacted := 0
+	if s.ContextSummary != nil && s.ContextSummary.Through > 0 && s.ContextSummary.Through <= len(s.Turns) {
+		compacted = s.ContextSummary.Through
+		user, assistant := "Summarize the conversation so far.", s.ContextSummary.Text
+		messages = append(messages, toolConversationMessage{Role: "user", Content: &user}, toolConversationMessage{Role: "assistant", Content: &assistant})
+	}
+	for _, turn := range s.Turns[compacted:] {
 		if turn.Answer != "" {
 			input := turn.Prompt
 			if turn.ModelInput != "" {
@@ -67,11 +78,11 @@ func (s acpSession) modelHistory() []toolConversationMessage {
 	return messages
 }
 
-func (l *acpLive) beginTurn(id, op, clientID, prompt string, attachments []acpAttachment) (acpSession, int, bool, error) {
+func (l *acpLive) beginTurn(id, op, clientID, prompt string, attachments []acpAttachment, cancel context.CancelFunc) (acpSession, int, bool, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	session, ok := l.sessions[id]
-	if !ok || l.workspaces == nil && session.CWD != l.cwd || session.State == "running" || !validUUID(op) || (l.store != nil && session.Model != modelID) {
+	if !ok || l.restarting || l.compacting[id] || l.workspaces == nil && session.CWD != l.cwd || session.State == "running" || !validUUID(op) {
 		return session, 0, false, errors.New("session_unavailable_for_prompt")
 	}
 	for index, turn := range session.Turns {
@@ -102,9 +113,15 @@ func (l *acpLive) beginTurn(id, op, clientID, prompt string, attachments []acpAt
 		session.ConnectorPreferences = &prefs
 	}
 	index := len(session.Turns)
-	session.Turns = append(slices.Clone(session.Turns), acpTurn{Operation: op, ClientID: clientID, Started: started, Prompt: prompt, Attachments: attachments})
+	session.Turns = append(slices.Clone(session.Turns), acpTurn{Operation: op, ClientID: clientID, Model: session.Model, Started: started, Prompt: prompt, Attachments: attachments})
 	if err := l.save(session); err != nil {
 		return session, 0, false, errors.New("session_write_failed")
+	}
+	if cancel != nil {
+		if l.activeTurns == nil {
+			l.activeTurns = make(map[string]context.CancelFunc)
+		}
+		l.activeTurns[id] = cancel
 	}
 	return session, index, false, nil
 }
@@ -116,20 +133,26 @@ func (h *relaySessionHost) submitACPTurn(ctx context.Context, id string, index i
 		return err
 	}
 	if register {
-		if err := live.client.registerSession(ctx, auth, h.reportMachine(), id, turn.Started); err != nil {
+		if err := live.client.registerSession(ctx, auth, h.reportMachine(), id, turn.Model, turn.Started); err != nil {
 			return err
 		}
 	}
 	stop := "complete"
 	if turn.Failed {
 		stop = "error"
+	} else if turn.Interrupted {
+		stop = "interrupted"
 	}
 	tools := turn.workspaceTools()
 	facts := make([]reportedTool, 0, len(tools))
 	for _, tool := range tools {
 		facts = append(facts, tool.Report)
 	}
-	return live.client.reportTurn(ctx, auth, h.reportMachine(), id, index, index-1, turn.Started, turn.Ended, stop, turn.Usage, &turn.Permissions, facts...)
+	input := reportedInput{Kind: "prompt"}
+	if turn.ReportText {
+		input = turnReportInput(turn.Prompt)
+	}
+	return live.client.reportTurn(ctx, auth, h.reportMachine(), id, turn.Model, index, index-1, turn.Started, turn.Ended, stop, turn.Usage, input, &turn.Permissions, facts...)
 }
 
 func (h *relaySessionHost) retryPendingReport(ctx context.Context, id string) error {
@@ -173,36 +196,49 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 		}
 	}
 	live := h.live
-	session, index, retry, err := live.beginTurn(id, op, clientID, prompt, files)
+	turnCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	session, index, retry, err := live.beginTurn(id, op, clientID, prompt, files, cancel)
 	if errors.Is(err, errSessionReportPending) && h.retryPendingReport(ctx, id) == nil {
-		session, index, retry, err = live.beginTurn(id, op, clientID, prompt, files)
+		session, index, retry, err = live.beginTurn(id, op, clientID, prompt, files, cancel)
 	}
 	if err != nil {
 		return nil, err
 	}
 	turn := session.Turns[index]
+	currentGoalAtStart := session.Goal
 	register := index == 0 && retry
 	if !retry {
+		turn.ReportText = h.collectTurnText(turnCtx)
 		if index == 0 {
 			var auth authorization
-			auth, err = live.authorization(ctx)
+			auth, err = live.authorization(turnCtx)
 			if err == nil {
-				err = live.client.registerSession(ctx, auth, h.reportMachine(), id, turn.Started)
+				err = live.client.registerSession(turnCtx, auth, h.reportMachine(), id, turn.Model, turn.Started)
 			}
 			register = err != nil
 		}
 		if err == nil {
-			err = h.runACPModelTurn(ctx, ws, request, session, &turn, files)
+			err = h.runACPModelTurn(turnCtx, ws, request, session, &turn, files)
 		}
 		if len(turn.Answer) > 128<<10 {
 			turn.Answer = ""
 			err = errors.New("session_answer_too_large")
 		}
-		turn.Failed, turn.Ended = err != nil, time.Now().UTC()
+		turn.Interrupted = err != nil && turnCtx.Err() == context.Canceled && ctx.Err() == nil
+		turn.Failed, turn.Ended = err != nil && !turn.Interrupted, time.Now().UTC()
+		if turn.Failed {
+			slog.Warn("桌面对话执行失败", "session_id", id, "operation_id", op, "reason", safeDesktopTurnFailure(err))
+		}
 		if turn.Ended.Before(turn.Started) {
 			turn.Ended = turn.Started
 		}
 		live.mu.Lock()
+		delete(live.activeTurns, id)
+		current := live.sessions[id]
+		session.Mode, session.desktopSessionPresentation = current.Mode, current.desktopSessionPresentation
+		session.Goal, session.LastGoalRequest = current.Goal, current.LastGoalRequest
+		settleDesktopGoal(&session, currentGoalAtStart, turn)
 		session.Turns = slices.Clone(session.Turns)
 		session.Turns[index] = turn
 		writeErr := live.save(session)
@@ -216,6 +252,9 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 		turn.Acked = reportErr == nil
 		session.State, session.Updated = completedState(turn), turn.Ended
 		live.mu.Lock()
+		current := live.sessions[id]
+		session.Mode, session.desktopSessionPresentation = current.Mode, current.desktopSessionPresentation
+		session.Goal, session.LastGoalRequest = current.Goal, current.LastGoalRequest
 		session.Turns = slices.Clone(session.Turns)
 		session.Turns[index] = turn
 		writeErr := live.save(session)
@@ -226,6 +265,9 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 	}
 	if turn.Failed {
 		return nil, errors.New("session_turn_failed")
+	}
+	if turn.Interrupted {
+		return map[string]string{"stopReason": "cancelled"}, nil
 	}
 	if err := sendACPText(ctx, ws, id, "agent_message_chunk", turn.Answer); err != nil {
 		return nil, err
@@ -246,6 +288,12 @@ func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Co
 	approved := append([]string{h.approvedFile}, slices.Sorted(maps.Keys(attachments))...)
 	limit, allowWrite := 1, false
 	var connectors map[string]connectorTool
+	localMCP := map[string]*desktopMCP{}
+	defer func() {
+		for _, server := range localMCP {
+			server.close()
+		}
+	}()
 	var workspace *workspaceToolPolicy
 	var design json.RawMessage
 	if live.workspaces != nil {
@@ -253,25 +301,135 @@ func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Co
 		limit = maxACPToolCalls
 		allowWrite = h.acpScope(request.WithContext(ctx), "files:write") == nil
 		workspace = &workspaceToolPolicy{CanWrite: allowWrite}
-		if h.local != nil && h.designBridge != nil && h.acpScope(request.WithContext(ctx), "files:read") == nil {
-			if root, err := live.workspaces.sessionRoot(session); err == nil {
-				design = workspaceDesign(root, id)
-				root.Close()
-			}
-			workspace.HasDesign = design != nil
-		}
+		prefs := connectorPreferences{}.normalized()
 		if session.ConnectorPreferences != nil {
-			workspace.Preferences = session.ConnectorPreferences.builtinTools()
+			prefs = session.ConnectorPreferences.normalized()
+			prefs.Enabled = maps.Clone(prefs.Enabled)
 		}
-		if session.ConnectorPreferences != nil && session.ConnectorPreferences.hasEnabledConnector() &&
-			h.acpScope(request.WithContext(ctx), "resources:manage") == nil {
+		var expert desktopExpert
+		if session.ExpertID != "" && session.ExpertID != designExpertID {
+			expert, err = h.resolveDesktopExpert(ctx, session.ExpertID)
+			if err != nil {
+				return err
+			}
 			auth, err := live.authorization(ctx)
 			if err != nil {
 				return err
 			}
-			connectors, err = live.client.activeConnectorTools(ctx, auth, *session.ConnectorPreferences)
+			workspace.Instructions, err = live.client.expertInstructions(ctx, auth, expert)
 			if err != nil {
 				return err
+			}
+			for _, link := range expert.Connectors {
+				if validUUID(link.ID) && link.Required {
+					prefs.Enabled["mcp/server/"+link.ID] = true
+				}
+			}
+		}
+		imported := h.runtimeResources()
+		var importedExpert importedExpertRuntime
+		if imported != nil {
+			importedExpert = imported.Experts[session.ExpertID]
+		}
+		designExpertSelected := session.ExpertID == "" || session.ExpertID == designExpertID
+		if (designExpertSelected || len(importedExpert.DesignTools) != 0) && h.local != nil && h.designBridge != nil &&
+			h.acpScope(request.WithContext(ctx), "files:read") == nil {
+			if root, err := live.workspaces.sessionRoot(session); err == nil {
+				design = workspaceDesign(root, id)
+				root.Close()
+			}
+			if design == nil && len(importedExpert.DesignTools) != 0 && allowWrite {
+				if _, err := h.designBridge.ensureCanvas(ctx, session); err != nil {
+					return err
+				}
+				root, err := live.workspaces.sessionRoot(session)
+				if err != nil {
+					return err
+				}
+				design = workspaceDesign(root, id)
+				root.Close()
+				if design == nil {
+					return errors.New("design_canvas_unavailable")
+				}
+			}
+			if design != nil {
+				limit = 12
+				workspace.DesignTools, err = h.designBridge.tools(ctx, session, design)
+				if err != nil {
+					return err
+				}
+				if designExpertSelected {
+					workspace.Instructions = designExpertInstructions(design)
+				} else {
+					workspace.DesignTools = slices.DeleteFunc(workspace.DesignTools, func(tool desktopDesignTool) bool {
+						return !slices.Contains(importedExpert.DesignTools, tool.Name)
+					})
+				}
+			}
+		}
+		workspace.Preferences = prefs.builtinTools()
+		if prefs.hasEnabledConnector() && h.acpScope(request.WithContext(ctx), "resources:manage") == nil {
+			auth, err := live.authorization(ctx)
+			if err != nil {
+				return err
+			}
+			connectors, err = live.client.activeConnectorTools(ctx, auth, prefs)
+			if err != nil {
+				return err
+			}
+			for _, link := range expert.Connectors {
+				for alias, tool := range connectors {
+					if tool.ConnectorID == link.ID && !link.allows(tool.Name) {
+						delete(connectors, alias)
+					}
+				}
+			}
+		}
+		if h.local != nil && imported != nil {
+			profile := imported.Experts[session.ExpertID]
+			workspace.Preferences = workspace.Preferences.intersect(profile.Builtin)
+			for alias, tool := range connectors {
+				if !imported.Filters[tool.ConnectorID].allows(tool.Name) {
+					delete(connectors, alias)
+				}
+			}
+			if connectors == nil {
+				connectors = make(map[string]connectorTool)
+			}
+			for _, connectorID := range slices.Sorted(maps.Keys(imported.Local)) {
+				entry := imported.Local[connectorID]
+				enabled, set := prefs.Enabled["mcp/"+entry.Name]
+				selected := enabled || !set && (entry.Enabled == nil || *entry.Enabled)
+				if !selected && !slices.Contains(profile.LocalTools, connectorID) {
+					continue
+				}
+				executable, err := localMCPExecutable(entry.Command)
+				if err != nil {
+					return err
+				}
+				callID := turn.Operation + "-local-mcp-" + connectorID
+				permission, err := h.requestACPToolApproval(ctx, ws, request, id, callID, "启动本机连接器 "+entry.Name, entry.Name, "execute",
+					map[string]any{"command": executable, "arguments": entry.Args})
+				turn.Permissions.Asked += permission.Asked
+				turn.Permissions.Allowed += permission.Allowed
+				turn.Permissions.Denied += permission.Denied
+				status := "failed"
+				if err == nil {
+					server, startErr := openLocalMCP(ctx, entry, executable, session.CWD)
+					if startErr == nil {
+						localMCP[connectorID] = server
+						tools, listErr := server.tools(connectorID, entry, prefs.Tools[entry.Name])
+						if listErr == nil {
+							maps.Copy(connectors, tools)
+							status = "completed"
+						}
+					}
+				}
+				_ = sendACPToolUpdate(ctx, ws, id, map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": callID, "status": status})
+				if err != nil && permission.Denied == 0 {
+					// An explicit denial may still allow a text-only answer.
+					return err
+				}
 			}
 		}
 	}
@@ -279,8 +437,36 @@ func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Co
 	if live.store == nil {
 		budget = defaultModelInputBudget
 	}
-	turn.Answer, turn.Usage, turn.ToolRuns, err = live.client.completeWorkspaceToolTurn(ctx, live.protocol, live.key, id, approved, modelPrompt,
-		session.modelHistory(), false, allowWrite, limit, connectors, workspace, budget, func(message toolConversationMessage, args toolArguments, step int) (output string, toolErr error) {
+	selected, protocol := turn.Model, live.protocol
+	if selected == "" {
+		selected = modelID
+	}
+	var modelOptions map[string]any
+	if h.local != nil || selected != modelID {
+		auth, authErr := live.authorization(ctx)
+		if authErr != nil {
+			return authErr
+		}
+		config, modelErr := live.client.modelConfig(ctx, auth, selected)
+		if modelErr != nil {
+			return modelErr
+		}
+		protocol, budget = config.Protocol, config.inputBudget()
+		modelOptions = session.Thinking.requestFields(config)
+	}
+	var goalRun *desktopGoalRun
+	if goal := session.Goal; h.local != nil && workspace != nil && goal != nil && goal.Current && goal.Status == "active" {
+		goalRun = &desktopGoalRun{remaining: goal.Limits.Tokens - goal.Usage.Tokens, active: func() bool {
+			current, err := live.load(id)
+			return err == nil && current.Goal != nil && current.Goal.ID == goal.ID &&
+				current.Goal.Current && current.Goal.Status == "active"
+		}}
+		workspace.Goal = goalRun
+		workspace.Instructions += "\nThe user's current goal is: " + goal.Objective +
+			"\nWork toward this goal. End your answer with a separate line [GOAL_COMPLETE] only when it is achieved. Otherwise report progress and any blockers."
+	}
+	turn.Answer, turn.Usage, turn.ToolRuns, err = live.client.completeWorkspaceToolTurn(ctx, protocol, h.modelKey(), id, selected, approved, modelPrompt,
+		session.modelHistory(), false, allowWrite, limit, connectors, workspace, budget, modelOptions, func(message toolConversationMessage, args toolArguments, step int) (output string, toolErr error) {
 			call := message.ToolCalls[0]
 			call.ID = fmt.Sprintf("%s-tool-%d", turn.Operation, step+1)
 			defer func() {
@@ -295,10 +481,10 @@ func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Co
 			var permissionErr error
 			if tool := args.Connector; tool != nil {
 				title := tool.ConnectorName + " / " + tool.Name
-				permissions, permissionErr = requestACPToolApproval(ctx, ws, id, call.ID, title, tool.Name, "other",
+				permissions, permissionErr = h.requestACPToolApproval(ctx, ws, request, id, call.ID, title, tool.Name, "other",
 					map[string]any{"connector": tool.ConnectorName, "tool": tool.Name, "arguments": args.JSON})
 			} else if args.Design {
-				permissions, permissionErr = requestACPToolApproval(ctx, ws, id, call.ID, call.Function.Name, call.Function.Name, workspaceToolKind(call.Function.Name), args.JSON)
+				permissions, permissionErr = h.requestACPToolApproval(ctx, ws, request, id, call.ID, call.Function.Name, call.Function.Name, workspaceToolKind(call.Function.Name), args.JSON)
 			} else if args.Compat != nil {
 				if args.Compat.Patch != nil {
 					if h.acpScope(request.WithContext(ctx), "files:read") != nil ||
@@ -311,9 +497,9 @@ func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Co
 					}
 					args.Compat.PatchPlan = &plan
 				}
-				permissions, permissionErr = requestACPToolApproval(ctx, ws, id, call.ID, workspaceCompatTitle(call.Function.Name), call.Function.Name, workspaceToolKind(call.Function.Name), args.JSON)
+				permissions, permissionErr = h.requestACPToolApproval(ctx, ws, request, id, call.ID, workspaceCompatTitle(call.Function.Name), call.Function.Name, workspaceToolKind(call.Function.Name), args.JSON)
 			} else {
-				permissions, permissionErr = approveACPTool(ctx, ws, id, call, args.Workspace)
+				permissions, permissionErr = h.approveACPTool(ctx, ws, request, id, call, args.Workspace)
 			}
 			turn.Permissions.Asked += permissions.Asked
 			turn.Permissions.Allowed += permissions.Allowed
@@ -324,9 +510,30 @@ func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Co
 			if args.Design {
 				return h.designBridge.call(ctx, session, design, call.Function.Name, args.JSON)
 			}
+			if args.Connector != nil {
+				if client := localMCP[args.Connector.ConnectorID]; client != nil {
+					return client.invoke(*args.Connector, args.JSON)
+				}
+			}
 			return h.executeACPModelTool(ctx, request, session, turn.Operation, step, call.Function.Name, args, attachments)
 		})
+	if goalRun != nil {
+		turn.goalOutcome = goalRun.outcome
+	}
 	return err
+}
+
+func safeDesktopTurnFailure(err error) string {
+	message := err.Error()
+	if knowledgeErrorCode.MatchString(message) {
+		return message
+	}
+	for _, prefix := range []string{"POST /v1/chat/completions: HTTP ", "POST /v1/responses: HTTP "} {
+		if len(message) == len(prefix)+3 && message[:len(prefix)] == prefix {
+			return message
+		}
+	}
+	return "session_turn_failed"
 }
 
 func (h *relaySessionHost) executeACPModelTool(ctx context.Context, request *http.Request, session acpSession, operation string, step int, name string, args toolArguments, attachments map[string]string) (string, error) {
@@ -408,17 +615,25 @@ func sendACPToolUpdate(ctx context.Context, ws *websocket.Conn, id string, updat
 	}})
 }
 
-func approveACPTool(ctx context.Context, ws *websocket.Conn, sessionID string, call modelToolUse, args workspaceToolArguments) (reportedPermissions, error) {
+func (h *relaySessionHost) approveACPTool(ctx context.Context, ws *websocket.Conn, request *http.Request, sessionID string, call modelToolUse, args workspaceToolArguments) (reportedPermissions, error) {
 	title := "读取会话文件"
 	input := map[string]string{"path": args.Path}
 	if args.Content != nil {
 		title = "写入工作区文件"
 		input["content"] = *args.Content
 	}
-	return requestACPToolApproval(ctx, ws, sessionID, call.ID, title, call.Function.Name, workspaceToolKind(call.Function.Name), input)
+	return h.requestACPToolApproval(ctx, ws, request, sessionID, call.ID, title, call.Function.Name, workspaceToolKind(call.Function.Name), input)
 }
 
-func requestACPToolApproval(ctx context.Context, ws *websocket.Conn, sessionID, callID, title, name, kind string, input any) (reportedPermissions, error) {
+func (h *relaySessionHost) requestACPToolApproval(ctx context.Context, ws *websocket.Conn, request *http.Request, sessionID, callID, title, name, kind string, input any) (reportedPermissions, error) {
+	if h.local != nil && h.live != nil {
+		row, err := h.live.load(sessionID)
+		if err == nil && row.permissionMode() == "bypassPermissions" {
+			err := sendACPToolUpdate(ctx, ws, sessionID, map[string]any{"sessionUpdate": "tool_call", "toolCallId": callID,
+				"title": title, "name": name, "kind": kind, "status": "pending", "rawInput": input})
+			return reportedPermissions{}, err
+		}
+	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	permissionID := "permission-" + callID
@@ -446,6 +661,7 @@ func requestACPToolApproval(ctx context.Context, ws *websocket.Conn, sessionID, 
 			JSONRPC string `json:"jsonrpc"`
 			ID      json.RawMessage
 			Method  string
+			Params  json.RawMessage
 			Result  struct {
 				Outcome struct{ Outcome, OptionID string }
 			}
@@ -455,6 +671,22 @@ func requestACPToolApproval(ctx context.Context, ws *websocket.Conn, sessionID, 
 			return counts, errors.New("tool_approval_unavailable")
 		}
 		if reply.JSONRPC != "2.0" {
+			continue
+		}
+		if reply.Method == "session/set_mode" && len(reply.ID) != 0 && string(reply.ID) != "null" && h.local != nil {
+			result, err := h.setACPPermissionMode(request, reply.Params, sessionID)
+			response := map[string]any{"jsonrpc": "2.0", "id": reply.ID, "result": result}
+			if err != nil {
+				delete(response, "result")
+				response["error"] = map[string]any{"code": -32602, "message": err.Error()}
+			}
+			if wsjson.Write(ctx, ws, response) != nil {
+				return counts, errors.New("tool_approval_unavailable")
+			}
+			if err == nil && result["modeId"] == "bypassPermissions" {
+				counts.Allowed = 1
+				return counts, nil
+			}
 			continue
 		}
 		if reply.Method != "" && len(reply.ID) != 0 && string(reply.ID) != "null" {
@@ -573,8 +805,9 @@ func (session acpSession) historyWindow(query historyQuery, auth *relayAuthoriza
 	if model == "" {
 		model = modelID
 	}
-	return map[string]any{"session": map[string]any{"id": session.ID, "cwd": session.CWD, "title": "AIbertAI 会话", "status": session.State,
-		"createdAt": session.Created, "updatedAt": session.Updated, "model": model, "mode": "auto",
-		"isDefaultWorkspace": session.Workspace != "selected", "projectId": session.ProjectID}, "messages": messages,
+	metadata := session.workspaceMetadata()
+	metadata["id"], metadata["title"], metadata["model"] = session.ID, session.displayTitle(), model
+	metadata["createdAt"], metadata["updatedAt"] = session.Created, session.Updated
+	return map[string]any{"session": metadata, "messages": messages,
 		"toolCalls": calls, "eventSeq": count, "olderCursor": older, "newerCursor": newer}, nil
 }

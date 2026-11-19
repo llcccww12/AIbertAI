@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "AIbertAI 浏览器助手",
+  "version": "1.0.0",
+  "description": "将当前标签页分享给本机 AIbertAI 客户端。",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuCYSMx0v5hcyQFfgjgCIYdzT3i6cydXrKtw4BA1jt2zWdt9iFQujLhp6oZOhdZ7XOZtYSkITF+j7urVXalHhAip9hpxiF1mAM3KanTbu+KZu6V9u5voWYKRDBVBWsulxVM/UUGUUYfMAIlX8ITONdOjphQ+4dPde8bJM+K1SzfRaJp5Fn1GbNEGaHKcd1s0+uFse/Be6BW4wndkp8anmBMd84o9of/mJgQc7P72ifq1jo7Vdna473QxGvc52yAJIzfKpLTZbml69a/4t41gzZsrwnkbMJK0JrHVAg+n7nxUlA441yLI4YeyLbcT1Hq0q+CFe0wsmuJT5IYHJ1Bu/XwIDAQAB",
+  "permissions": [
+    "nativeMessaging",
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "background": {
+    "service_worker": "worker.js"
+  },
+  "icons": {
+    "128": "icon.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": "icon.png"
+  }
+}

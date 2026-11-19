@@ -173,6 +173,17 @@ func (q *Queries) HasChildren(ctx context.Context, parentID *string) (bool, erro
 	return exists, err
 }
 
+const hasGroupMemberships = `-- name: HasGroupMemberships :one
+SELECT EXISTS (SELECT 1 FROM group_users WHERE group_id = $1 AND removed_at IS NULL)
+`
+
+func (q *Queries) HasGroupMemberships(ctx context.Context, groupID string) (bool, error) {
+	row := q.db.QueryRow(ctx, hasGroupMemberships, groupID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const hasUserInActiveGroup = `-- name: HasUserInActiveGroup :one
 SELECT EXISTS (
     SELECT 1 FROM group_users gu JOIN groups g ON g.id = gu.group_id AND g.deleted_at IS NULL
@@ -429,7 +440,7 @@ func (q *Queries) RootDirectMemberIDs(ctx context.Context) ([]string, error) {
 }
 
 const rootName = `-- name: RootName :one
-SELECT COALESCE((SELECT NULLIF(value ->> 'workspace_name', '') FROM settings WHERE key = 'branding'), 'Monkey AI')::text
+SELECT COALESCE((SELECT NULLIF(value ->> 'workspace_name', '') FROM settings WHERE key = 'branding'), 'AIbertAI')::text
 `
 
 func (q *Queries) RootName(ctx context.Context) (string, error) {

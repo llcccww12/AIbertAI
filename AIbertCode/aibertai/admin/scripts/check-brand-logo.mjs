@@ -402,7 +402,7 @@ try {
       unavailable = true
       await page.reload()
       await page
-        .getByRole("heading", { name: "MonkeyAI", exact: true })
+        .getByRole("heading", { name: "AIbertAI", exact: true })
         .waitFor()
       assert.equal(
         await page.locator("img").first().getAttribute("src"),

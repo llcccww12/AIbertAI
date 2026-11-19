@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -29,25 +30,65 @@ type reportedPermissions struct {
 	Denied  int `json:"denied"`
 }
 
-func (c *client) registerSession(ctx context.Context, auth authorization, machine, session string, started time.Time) error {
+type reportedInput struct {
+	Kind          string `json:"kind"`
+	Text          string `json:"text,omitempty"`
+	TextTruncated bool   `json:"text_truncated,omitempty"`
+}
+
+func (h *relaySessionHost) collectTurnText(ctx context.Context) bool {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	auth, err := h.live.authorization(ctx)
+	if err != nil {
+		return false
+	}
+	var config struct {
+		Settings struct {
+			Reporting struct {
+				Enabled bool   `json:"enabled"`
+				Level   string `json:"level"`
+			} `json:"session_reporting"`
+		} `json:"settings"`
+	}
+	err = h.live.client.json(ctx, http.MethodGet, "/api/v1/settings", auth.Access, "", nil, &config)
+	return err == nil && config.Settings.Reporting.Enabled && config.Settings.Reporting.Level == "full"
+}
+
+func turnReportInput(prompt string) reportedInput {
+	const maxRunes = 8192
+	input := reportedInput{Kind: "prompt"}
+	runes := []rune(strings.ReplaceAll(prompt, "\x00", ""))
+	input.TextTruncated = len(runes) > maxRunes
+	input.Text = string(runes[:min(len(runes), maxRunes)])
+	return input
+}
+
+func (c *client) registerSession(ctx context.Context, auth authorization, machine, session, selected string, started time.Time) error {
+	if selected == "" {
+		selected = modelID
+	}
 	return c.json(ctx, "PUT", "/api/v1/sessions/"+session, auth.Access, machine, map[string]any{
-		"state_seq": 1, "session_type": "conversation", "started_at": started, "model_id": modelID,
+		"state_seq": 1, "session_type": "conversation", "started_at": started, "model_id": selected,
 		"client": map[string]string{"type": "desktop", "machine_id": machine, "version": version,
 			"engine_version": version, "runtime_version": version},
 	}, nil)
 }
 
 func (c *client) report(ctx context.Context, auth authorization, machine, session string, started, ended time.Time, stop string, usage modelUsage, tools ...reportedTool) error {
-	return c.reportTurn(ctx, auth, machine, session, 1, 0, started, ended, stop, usage, nil, tools...)
+	return c.reportTurn(ctx, auth, machine, session, modelID, 1, 0, started, ended, stop, usage, turnReportInput(""), nil, tools...)
 }
 
-func (c *client) reportTurn(ctx context.Context, auth authorization, machine, session string, index, after int, started, ended time.Time, stop string, usage modelUsage, permissions *reportedPermissions, tools ...reportedTool) error {
+func (c *client) reportTurn(ctx context.Context, auth authorization, machine, session, selected string, index, after int, started, ended time.Time, stop string, usage modelUsage, input reportedInput, permissions *reportedPermissions, tools ...reportedTool) error {
+	if selected == "" {
+		selected = modelID
+	}
 	snapshot := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("[]")))
 	turn := map[string]any{
 		"turn_index": index, "input_seq": index, "started_at": started, "ended_at": ended,
-		"stop_reason": stop, "model_id": modelID, "resources_snapshot_id": snapshot,
+		"stop_reason": stop, "model_id": selected, "resources_snapshot_id": snapshot,
 		"client_version": version, "engine_version": version,
-		"input": map[string]string{"kind": "prompt"},
+		"input": input,
 		"usage": map[string]*int64{"input_tokens": usage.Input, "output_tokens": usage.Output},
 	}
 	if len(tools) != 0 {

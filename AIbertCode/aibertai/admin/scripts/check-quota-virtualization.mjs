@@ -77,7 +77,7 @@ try {
           },
         })
       if (pathname.endsWith("/branding"))
-        return json({ product_name: "MonkeyAI" })
+        return json({ product_name: "AIbertAI" })
       if (pathname.endsWith("/license/status")) return json({ state: "valid" })
       if (pathname.endsWith("/billing/settings")) return json(settings)
       if (pathname.endsWith("/billing/quotas")) {

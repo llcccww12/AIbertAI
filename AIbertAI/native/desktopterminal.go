@@ -210,6 +210,17 @@ func (m *desktopTerminals) list() []terminalInfo {
 	return items
 }
 
+func (m *desktopTerminals) closeSession(id string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for slot, term := range m.slots {
+		if slot.Session == id {
+			delete(m.slots, slot)
+			go term.terminate()
+		}
+	}
+}
+
 func (m *desktopTerminals) shutdown() {
 	m.mu.Lock()
 	active := make([]*desktopTerminal, 0, maxDesktopTerminals)

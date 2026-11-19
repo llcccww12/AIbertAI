@@ -16,6 +16,7 @@ import { UserAvatar } from "@/components/user-avatar"
 import { DatePickerField } from "@/components/date-picker-field"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -80,7 +81,11 @@ const resourceKinds = [
 export function ResourceAnalysisPage() {
   const { i18n, t } = useTranslation()
   const { showToast } = useAppToast()
-  const [filters, setFilters] = useState<ReportWindow>(defaultWindow)
+  const [filters, setFilters] = useState<ReportWindow>(() => ({
+    ...defaultWindow(),
+    used_only: true,
+  }))
+  const [usedOnly, setUsedOnly] = useState(true)
   const [startDay, setStartDay] = useState<Date>()
   const [endDay, setEndDay] = useState<Date>()
   const [showDateRange, setShowDateRange] = useState(false)
@@ -210,6 +215,7 @@ export function ResourceAnalysisPage() {
       user: userQuery.trim(),
       kind,
       resource_id: selectedResourceID.trim(),
+      used_only: usedOnly,
     })
     setCursors([undefined])
     setActive(0)
@@ -387,6 +393,10 @@ export function ResourceAnalysisPage() {
                 </DropdownMenuGroup>
               </DropdownMenuOptionsContent>
             </DropdownMenu>
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox checked={usedOnly} onCheckedChange={setUsedOnly} />
+              {t(`${key}.resources.usedOnly`)}
+            </label>
             <Button type="submit" disabled={loading || searching}>
               <HugeiconsIcon
                 icon={searching ? Loading03Icon : Search02Icon}

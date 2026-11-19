@@ -106,7 +106,7 @@ try {
       page.setDefaultTimeout(15000)
       await page.clock.setFixedTime(new Date("2026-10-29T10:20:30+08:00"))
       await page.addInitScript((locale) => {
-        localStorage.setItem("monkeyai-admin-language", locale)
+        localStorage.setItem("aibertai-admin-language", locale)
         localStorage.setItem("theme", locale === "ar" ? "dark" : "light")
       }, locale)
       const errors = [],
@@ -140,7 +140,7 @@ try {
         os_version: i % 2 ? "Ubuntu 24.04" : "11 24H2",
         arch: "arm64",
         client_type: "desktop",
-        client_name: "MonkeyAI Desktop",
+        client_name: "AIbertAI Desktop",
         client_version: "1.2.0",
         runtime_version: "22.1.0",
         engine_version: "1.9.0",
@@ -533,7 +533,7 @@ try {
           "Windows",
           "11 24H2",
           "arm64",
-          "MonkeyAI Desktop",
+          "AIbertAI Desktop",
           "1.2.0",
           "22.1.0",
           "1.9.0",

@@ -10,7 +10,7 @@ import (
 )
 
 func TestBootstrapKeepsEnrollmentOutOfUnitArguments(t *testing.T) {
-	cmd, dir := bootstrapCommand(t, false, "0")
+	cmd, dir := bootstrapCommand(t, bootstrapMockBin(t), false, "0")
 	capture := filepath.Join(dir, "captured")
 	fixture := []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURE_ARGS\"\n")
 	if err := os.WriteFile(filepath.Join(dir, "installer"), fixture, 0700); err != nil {

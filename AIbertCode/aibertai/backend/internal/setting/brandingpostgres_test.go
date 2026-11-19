@@ -70,8 +70,12 @@ func TestPostgresBrandingUpdatesPreserveIndependentFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(first.Value), `"MonkeyAI"`) {
-		t.Fatalf("missing default names: %s", first.Value)
+	var defaults map[string]string
+	if err := json.Unmarshal(first.Value, &defaults); err != nil {
+		t.Fatal(err)
+	}
+	if defaults["workspace_name"] != "AIbertAI" || defaults["product_name"] != "AIbertAI" {
+		t.Fatalf("unexpected default branding: %s", first.Value)
 	}
 	// A stale complete settings write must retain the latest logo in the database.
 	stale := Record{Key: "branding", Value: json.RawMessage(`{"workspace_name":"Team","product_name":"Product","logo_s3_key":"branding/logos/stale.png"}`), SchemaVersion: 1, UpdatedByUserID: user}

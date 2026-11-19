@@ -69,13 +69,13 @@ func (s *Service) schedule(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, user
 		if json.Unmarshal(h.Report, &report) != nil || report.Protocol < 2 || report.Protocol > 3 || imageTag.MatchString(reference) && report.Protocol != 3 {
 			continue
 		}
-		if s.runtime != nil && s.runtimeCatalog != nil {
-			release, err := s.runtimeCatalog.Current(h.Architecture)
-			if err != nil || release.Validate(h.Architecture) != nil {
+		if s.runtime != nil && (s.runtimeCatalog != nil || s.sourceRuntime) {
+			release, err := s.runtimeForProvisioning(h.Architecture)
+			if err != nil {
 				lastErr = conflict("configuration_unavailable", "server runtime 发行资源尚未准备完成")
 				continue
 			}
-			if report.RuntimeProtocol < release.Protocol() || report.RuntimeProtocol > 2 {
+			if report.RuntimeProtocol < release.Protocol() || report.RuntimeProtocol > 3 {
 				continue
 			}
 		}

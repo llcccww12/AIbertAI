@@ -378,9 +378,9 @@ func rollback(ctx context.Context, tx pgx.Tx, operation, id string) {
 }
 
 func (c *CRUD) Save(ctx context.Context, actor, id, match string, in Object) (Object, error) {
-	return c.save(ctx, actor, id, match, in, false)
+	return c.save(ctx, actor, id, match, in, false, "")
 }
-func (c *CRUD) save(ctx context.Context, actor, id, match string, in Object, personal bool) (Object, error) {
+func (c *CRUD) save(ctx context.Context, actor, id, match string, in Object, personal bool, importID string) (Object, error) {
 	tx, err := c.Store.Pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -389,7 +389,18 @@ func (c *CRUD) save(ctx context.Context, actor, id, match string, in Object, per
 	old := Object{}
 	create := id == ""
 	if create {
-		id = ID()
+		id = importID
+		if id == "" {
+			id = ID()
+		} else {
+			saved, getErr := c.GetUser(ctx, tx, id, actor)
+			if getErr == nil {
+				return saved, tx.Commit(ctx)
+			}
+			if !errors.Is(getErr, NotFound) && !errors.Is(getErr, pgx.ErrNoRows) {
+				return nil, getErr
+			}
+		}
 	} else {
 		old, err = DecodeObject(c.Def.Repository(tx).LockResource(ctx, id))
 		if err != nil {

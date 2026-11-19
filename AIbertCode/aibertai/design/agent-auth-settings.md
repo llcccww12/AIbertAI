@@ -39,7 +39,7 @@ OAuth 元数据位于 `GET /.well-known/oauth-authorization-server`，客户端�
 空数据库首次启动时必须使用以下环境变量创建第一个管理员：
 
 ```bash
-export MONKEYAI_INITIAL_ADMIN_NAME='MonkeyAI Admin'
+export MONKEYAI_INITIAL_ADMIN_NAME='AIbertAI 管理员'
 export MONKEYAI_INITIAL_ADMIN_EMAIL='admin@example.com'
 export MONKEYAI_INITIAL_ADMIN_PASSWORD='至少十二个字符的初始密码'
 ```

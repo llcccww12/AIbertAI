@@ -17,8 +17,6 @@ import (
 
 //go:embed install.sh
 var installer []byte
-var legacyFiles = map[string]bool{"monkeyai-engine": true, "containerd": true, "runsc": true, "containerd-shim-runsc-v1": true, "bridge": true, "ptp": true, "host-local": true, "loopback": true, "checkpointgofer": true, "gvisor-proc-umounter": true, "gvisor-sentry-prewarmer": true, "gvisor_sentry": true, "runsc-fd-parking": true, "runsc-metric-server": true}
-var files = map[string]bool{"installer": true, "checkpointgofer": true, "containerd": true, "containerd-shim-runc-v2": true, "ctr": true, "docker": true, "docker-init": true, "docker-proxy": true, "dockerd": true, "gvisor-proc-umounter": true, "gvisor-sentry-prewarmer": true, "gvisor_sentry": true, "monkeyai-engine": true, "runc": true, "runsc": true, "runsc-fd-parking": true, "runsc-metric-server": true}
 
 type manifest struct {
 	Version      string            `json:"version"`
@@ -35,7 +33,7 @@ func (s *Service) manifest(version, arch string) (manifest, []byte, error) {
 	if err != nil {
 		return m, nil, err
 	}
-	if len(raw) > 16<<10 || json.Unmarshal(raw, &m) != nil || m.Version != version || m.Architecture != arch || !validReleaseFiles(m.Files) {
+	if len(raw) > 16<<10 || json.Unmarshal(raw, &m) != nil || m.Version != version || m.Architecture != arch || !preparedHostRelease(m.Files) {
 		return m, nil, errors.New("发行清单无效")
 	}
 	for name := range m.Files {
@@ -50,6 +48,9 @@ func (s *Service) manifest(version, arch string) (manifest, []byte, error) {
 	return m, raw, nil
 }
 func (s *Service) script(w http.ResponseWriter, r *http.Request) {
+	s.bootstrapScript(w, r, false)
+}
+func (s *Service) bootstrapScript(w http.ResponseWriter, r *http.Request, upgrade bool) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	if !validServer(s.server) {
@@ -64,6 +65,10 @@ func (s *Service) script(w http.ResponseWriter, r *http.Request) {
 	serverURL = strings.TrimRight(serverURL, "/")
 	secret := r.URL.Query().Get("token")
 	version := r.URL.Query().Get("version")
+	if upgrade && r.URL.Query().Has("token") {
+		fail(w, r, 400, "升级不接收设备接入凭据")
+		return
+	}
 	if secret != "" || r.URL.Query().Has("token") {
 		var err error
 		version, err = s.installationVersion(r.Context(), secret)
@@ -80,6 +85,11 @@ func (s *Service) script(w http.ResponseWriter, r *http.Request) {
 	}
 	var body strings.Builder
 	body.WriteString("#!/bin/bash\ninstall_engine() {\n")
+	if upgrade {
+		body.WriteString("bootstrap_mode=upgrade\n")
+	} else {
+		body.WriteString("bootstrap_mode=install\n")
+	}
 	fmt.Fprintf(&body, "server_url=%s\n", quote(serverURL))
 	body.WriteString("case \"$(uname -m)\" in\n")
 	for _, arch := range []string{"amd64", "arm64"} {
@@ -92,19 +102,7 @@ func (s *Service) script(w http.ResponseWriter, r *http.Request) {
 		if arch == "arm64" {
 			pattern = "aarch64|arm64"
 		}
-		binary := "installer"
-		if !hasInstaller(m.Files) {
-			if serverURL != "" {
-				fail(w, r, 503, "指定 server_url 需要使用包含新版 installer 的 engine 发行版本")
-				return
-			}
-			if secret == "" {
-				http.Error(w, web.Message(r.Context(), "", "服务器安装资源不完整"), 503)
-				return
-			}
-			binary = "monkeyai-engine"
-		}
-		args := []string{s.server, secret, version, arch, m.Files[binary], hash(raw), "", binary}
+		args := []string{s.server, secret, version, arch, m.Files["installer"], hash(raw), "", "installer"}
 		for i := range args {
 			args[i] = quote(args[i])
 		}
@@ -119,7 +117,7 @@ func (s *Service) script(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Service) artifact(w http.ResponseWriter, r *http.Request) {
 	version, arch, name := chi.URLParam(r, "version"), chi.URLParam(r, "arch"), chi.URLParam(r, "file")
-	if name != "manifest.json" && name != "resources.tgz" && !files[name] && !legacyFiles[name] {
+	if name != "manifest.json" && name != "installer" && name != "monkeyai-engine" {
 		web.NotFound(w, r)
 		return
 	}
@@ -131,36 +129,12 @@ func (s *Service) artifact(w http.ResponseWriter, r *http.Request) {
 		web.NotFound(w, r)
 		return
 	}
-	if name == "resources.tgz" {
-		info, err := os.Lstat(filepath.Join(s.releases, version, arch, name))
-		if err != nil || !info.Mode().IsRegular() || info.Size() == 0 || info.Size() > 2<<30 {
-			web.NotFound(w, r)
-			return
-		}
-	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Type", "application/octet-stream")
 	http.ServeFile(w, r, filepath.Join(s.releases, version, arch, name))
 }
 
-func validReleaseFiles(got map[string]string) bool {
-	for _, expected := range []map[string]bool{files, legacyFiles} {
-		if len(got) != len(expected) && !(expected["installer"] && !hasInstaller(got) && len(got) == len(expected)-1) {
-			continue
-		}
-		ok := true
-		for name := range got {
-			if !expected[name] {
-				ok = false
-				break
-			}
-		}
-		if ok {
-			return true
-		}
-	}
-	return false
+func preparedHostRelease(files map[string]string) bool {
+	return len(files) == 2 && files["installer"] != "" && files["installer"] == files["monkeyai-engine"]
 }
-
-func hasInstaller(files map[string]string) bool { return files["installer"] != "" }

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"aibertai.local/backend/internal/identity"
 	"aibertai.local/backend/internal/resource"
@@ -206,7 +207,9 @@ func validateSessionTimes(in sessionInput, row sessionRow) error {
 	started := row.StartedAt
 	if in.StartedAt != nil {
 		started = in.StartedAt.Time
-		if !row.Placeholder && started.Before(row.StartedAt) {
+		// PostgreSQL rounds the submitted timestamp to microseconds when saving
+		// it. A retry still carries the original nanoseconds and state hash.
+		if !row.Placeholder && row.StartedAt.Sub(started) > time.Microsecond/2 {
 			return sessionFailure(http.StatusBadRequest, "time_order", "started_at 不能早于已记录时间")
 		}
 	}

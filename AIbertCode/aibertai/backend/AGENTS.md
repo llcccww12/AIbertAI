@@ -1,4 +1,4 @@
-# MonkeyAI 后端 AI 并行开发约束
+# AIbertAI 后端 AI 并行开发约束
 
 ## 工作单元
 

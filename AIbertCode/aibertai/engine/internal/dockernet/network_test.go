@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/dockerapi"
+	"aibertai.local/engine/internal/dockerapi"
 )
 
 func TestNetworkRejectsForeignOwnership(t *testing.T) {

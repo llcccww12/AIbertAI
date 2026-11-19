@@ -1,5 +1,5 @@
 export const DEFAULT_LANGUAGE = "en-US"
-export const LANGUAGE_STORAGE_KEY = "monkeyai-admin-language"
+export const LANGUAGE_STORAGE_KEY = "aibertai-admin-language"
 
 export const LANGUAGE_OPTIONS = [
   { value: "en-US", label: "English" },

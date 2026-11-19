@@ -1,10 +1,10 @@
 package session
 
 import (
+	"aibertai.local/backend/logging"
 	"context"
 	"encoding/json"
 	"errors"
-	"aibertai.local/backend/logging"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -58,23 +58,29 @@ func (s *Service) WithReportingSettings(settings ReportingSettings) *Service {
 }
 
 func (s *Service) checkReporting(ctx context.Context) error {
+	_, err := s.reportingPolicy(ctx)
+	return err
+}
+
+func (s *Service) reportingPolicy(ctx context.Context) (bool, error) {
 	if s.settings == nil {
-		return nil
+		return false, nil
 	}
 	value, err := s.settings.GetValue(ctx, "session_reporting")
 	if err != nil {
-		return err
+		return false, err
 	}
 	var config struct {
-		Enabled bool `json:"enabled"`
+		Enabled bool   `json:"enabled"`
+		Level   string `json:"level"`
 	}
 	if err := json.Unmarshal(value, &config); err != nil {
-		return err
+		return false, err
 	}
 	if !config.Enabled {
-		return ErrReportingDisabled
+		return false, ErrReportingDisabled
 	}
-	return nil
+	return config.Level == "full", nil
 }
 
 func (s *Service) canPurge(ctx context.Context) bool {

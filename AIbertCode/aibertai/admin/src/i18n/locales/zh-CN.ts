@@ -1194,7 +1194,8 @@ export const zhCN = {
       },
       resources: {
         title: "资源使用",
-        note: "团队连接器使用网关 MCP 事实；本机工具使用轮次上报事实。",
+        note: "模型和团队连接器使用网关记录，本机工具使用会话上报记录。取消「仅实际使用」可查看已启用资源。",
+        usedOnly: "仅实际使用",
         invalidRange: "请选择完整的时间范围，结束日期不能早于开始日期。",
         kinds: {
           builtin: "内置工具",

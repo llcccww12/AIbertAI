@@ -174,8 +174,8 @@ func TestSessionReportingSwitchRequiresExplicitBoolean(t *testing.T) {
 		t.Fatal(err)
 	}
 	config, err := service.AgentConfig(t.Context())
-	if err != nil || string(config.Settings["session_reporting"]) != `{"enabled":true,"level":"stats"}` {
-		t.Fatalf("一期只能向客户端下发 stats: %s %v", config.Settings["session_reporting"], err)
+	if err != nil || string(config.Settings["session_reporting"]) != `{"enabled":true,"level":"full"}` {
+		t.Fatalf("应向客户端下发实际配置的采集级别: %s %v", config.Settings["session_reporting"], err)
 	}
 }
 

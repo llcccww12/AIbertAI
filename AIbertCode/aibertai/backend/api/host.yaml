@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: MonkeyAI Engine Host Protocol
+  title: AIbertAI Engine Host Protocol
   version: 1.0.0
 servers:
   - url: /

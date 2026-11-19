@@ -7445,7 +7445,7 @@ const ErrorCode = {
   // 复制后核对文件数或大小不一致
   dataLocationCancelled: "data_location_cancelled",
   dataLocationNotData: "data_location_not_data",
-  // 指回已有数据时，所选文件夹不是 MonkeyAI 数据目录
+  // 指回已有数据时，所选文件夹不是 AIbertAI 数据目录
   dataLocationBusy: "data_location_busy",
   // 所选位置的旧数据正在删除或删到一半，不能切过去，也不能往里复制
   dataLocationUnsupported: "data_location_unsupported",
@@ -8582,7 +8582,7 @@ const capabilityRegisterParams = described({ manifest: "object" }, "manifest 按
     throw error;
   }
 });
-const MONKEYAI_METHODS = {
+const AIBERTAI_METHODS = {
   // ---------- 账号知识库；不经过执行设备的远程通道 ----------
   knowledgeBasesList: request$2("_monkeyai/kb/list", "分页查询账号可访问的知识库", shape({ serverUrl: "string", userId: "string", owner: ["all", "team", "mine", "shared"], page: "number", page_size: "number", q: "string?", tag_ids: "string[]?" })),
   knowledgeBasesGet: request$2("_monkeyai/kb/get", "读取知识库详情和 ETag", shape({ serverUrl: "string", userId: "string", id: "string" })),
@@ -8712,7 +8712,6 @@ const MONKEYAI_METHODS = {
   configWorkspaceSet: request$2("_monkeyai/config/workspace/set", "保存额外工作目录；引擎只在启动时读取它，返回值的 requiresRestart 为 true 时需重启引擎才生效", shape({ additional_directories: "string[]?" })),
   configDisplaySet: request$2("_monkeyai/config/display/set", "保存摘要偏好；tool_summaries 为旧展示偏好，tool_use_summaries 仅控制当前和后续会话的执行中进度摘要生成，默认关闭；执行后批次小结不再生成", shape({ tool_summaries: "boolean?", tool_use_summaries: "boolean?" })),
   configGoalsSet: request$2("_monkeyai/config/goals/set", "保存新建持续目标的默认 Token 预算；正安全整数，null 恢复系统默认的 200000000 Token，不改变已有目标", shape({ default_token_budget: "number|null" })),
-  configExpertsSet: request$2("_monkeyai/config/experts/set", "保存本机专家", shape({ experts: "array?" })),
   configSkillsImport: request$2("_monkeyai/config/skills/import", "导入本机技能", shape({ path: "string" })),
   configSkillsRemove: request$2("_monkeyai/config/skills/remove", "移除本机技能", shape({ name: "string" })),
   groupsSearch: request$2("_monkeyai/groups/search", "搜索分组（共享对象）；q 为空时按名称列出前 limit 个", shape({ q: "string", limit: "number?" })),
@@ -8751,7 +8750,6 @@ const MONKEYAI_METHODS = {
   resourcesConnectorsAuthorization: request$2("_monkeyai/resources/connectors/authorization", "连接器授权状态", shape(byId)),
   // ---------- 设计资源 ----------
   // config 是唯一用固定路径拼的控制面请求；服务端默认返回的 base 即 {monkeyaiServer}/api/v1/design-resources
-  designResourcesConfig: request$2("_monkeyai/design/resources/config", "读取设计资源来源配置：respub base、本地 base 与当前快照；不含任何 secret", shape({})),
   designResourcesToken: request$2("_monkeyai/design/resources/token", "按目标申请短期设计资源 token：respub 用于 hub，monkeyai-media 仅用于本地媒体；machine_id 由 runtime 自行填充，token 只留在内存", shape({ target: ["respub", "monkeyai-media"], refresh: "boolean?" })),
   // ---------- 运行时 → 客户端 ----------
   skillPackagesChanged: notify("_monkeyai/resources/skills/packages/changed", "技能包状态增量"),
@@ -8873,22 +8871,22 @@ class CapabilityHost {
     const generation = ++this.generation;
     const target = runtimeAcpTarget(endpoint2);
     const stream = createWebSocketStream(target.url, { protocols: target.protocols, WebSocket: this.options.WebSocket });
-    const connection2 = client$1({ name: this.options.name }).onRequest(MONKEYAI_METHODS.capabilitySession.name, (p) => p, async ({ params }) => {
+    const connection2 = client$1({ name: this.options.name }).onRequest(AIBERTAI_METHODS.capabilitySession.name, (p) => p, async ({ params }) => {
       const provider = this.options.providers.find((item) => item.id === params.capability);
       if (!provider?.session) throw RequestError.resourceNotFound(params.capability);
       return await provider.session(params) ?? {};
-    }).onRequest(MONKEYAI_METHODS.capabilityReset.name, (p) => p, async ({ params }) => {
+    }).onRequest(AIBERTAI_METHODS.capabilityReset.name, (p) => p, async ({ params }) => {
       const provider = this.options.providers.find((item) => item.id === params.capability);
       if (!provider) throw RequestError.resourceNotFound(params.capability);
       await provider.reset?.();
       this.registered.delete(provider.id);
       await this.sync(connection2, provider.id);
       return {};
-    }).onNotification(MONKEYAI_METHODS.sessionDeleted.name, (p) => p, ({ params }) => {
+    }).onNotification(AIBERTAI_METHODS.sessionDeleted.name, (p) => p, ({ params }) => {
       if (typeof params.sessionId === "string") this.options.onSessionDeleted(params.sessionId);
-    }).onNotification(MONKEYAI_METHODS.deviceRemoteChanged.name, () => ({}), () => {
+    }).onNotification(AIBERTAI_METHODS.deviceRemoteChanged.name, () => ({}), () => {
       if (generation === this.generation) this.options.onDeviceRemoteChanged?.();
-    }).onNotification(MONKEYAI_METHODS.authChanged.name, () => ({}), () => {
+    }).onNotification(AIBERTAI_METHODS.authChanged.name, () => ({}), () => {
       if (generation === this.generation) this.options.onAuthChanged?.();
     }).connect(stream);
     this.connection = connection2;
@@ -8922,8 +8920,8 @@ class CapabilityHost {
       const manifest2 = provider.manifest();
       const text2 = manifest2 ? JSON.stringify(manifest2) : null;
       if ((this.registered.get(provider.id) ?? null) === text2) continue;
-      if (manifest2) await connection2.agent.request(MONKEYAI_METHODS.capabilitiesRegister.name, { manifest: manifest2 });
-      else if (this.registered.has(provider.id)) await connection2.agent.request(MONKEYAI_METHODS.capabilitiesUnregister.name, { id: provider.id });
+      if (manifest2) await connection2.agent.request(AIBERTAI_METHODS.capabilitiesRegister.name, { manifest: manifest2 });
+      else if (this.registered.has(provider.id)) await connection2.agent.request(AIBERTAI_METHODS.capabilitiesUnregister.name, { id: provider.id });
       if (text2) this.registered.set(provider.id, text2);
       else this.registered.delete(provider.id);
     }
@@ -20491,7 +20489,7 @@ async function initializeDesignTask(cwd, sessionId, selection, canvasStore = new
     agentToolAllowlist: DESIGN_AGENT_TOOL_ALLOWLIST,
     canvasToolAllowlist: DESIGN_CANVAS_TOOLS
   }, null, 2) + "\n");
-  atomicWrite(require$$1$1.join(target, "DESIGN_TASK.md"), `# MonkeyAI Design Task
+  atomicWrite(require$$1$1.join(target, "DESIGN_TASK.md"), `# AIbertAI Design Task
 
 - ${state.designType ? `The user explicitly selected design capability \`${state.designType}\` for the first turn${state.initialArtifactType ? ` and initial artifact \`${state.initialArtifactType}\`` : ""}.` : "The user selected the general design workspace without choosing a specific design type. Infer the requested artifact from the prompt and keep all work on the editable canvas."} ${state.initialArtifactType === "image" ? "The initial artifact is `image`: load `canvas-workflow`, choose `poster` for posters, `greeting-card` for greeting cards, and fallback `image` only when no built-in specialty matches; reuse `design-review`. If delivery mode is unspecified, ask once with AskUserQuestion: 这次生成可编辑图，还是整图生成？ Reuse an existing answer; never infer no editing from silence. Confirm an unknown or ambiguous subject before creation. When the user explicitly needs no editable layers, generate the flat image directly and still run the full review, without external skill search or adaptation; this is not a request to skip review. Only an explicit request to skip the design workflow or jury review uses the quick `image-generation` skill. Preserve a complete target image prompt unchanged when generating flat output." : ""} ${state.initialArtifactType === "video" ? "The initial artifact is `video`, so call `media_generate_video` with the mode matching the user request and supplied reference images, then pass its `source_path`, `duration_ms`, dimensions, and `generation_parameters` to `canvas_create_video`. Do not fall back to an HTML animation or claim completion before the asynchronous video task succeeds and the video node is on the canvas." : ""} On later turns, switch only when the user explicitly asks for a poster, logo, or another artifact. If it is \`logo\`, use the logo workflow: follow a user-specified style or requested reference image directly; otherwise use design_catalog_logo_batch to draw four unused templates at random from the Logo secondary category (20 free entries), passing every previously shown template ID as exclude_ids on reroll; do not use semantic search. If the category API fails, yields fewer than four full prompts, or has fewer than four unused entries, fall back automatically to six distinct brand-led directions; wait for selection or reroll. Never deliver a single generic image as a final vector logo. Treat first-turn text describing icons, illustration, or signage as logo concept input rather than changing the selected route. A provided reference image adds analysis within the logo workflow; without it, skip that step. If logo-critical brand details are missing, ask instead of generating an unrelated image.
 - For an initial \`logo\` task, before any media generation or vectorization, load the \`canvas-workflow\` skill with Skill, select its \`logo\` route with Workflow, and advance that route. Do not bypass it merely because the user pasted a complete image prompt or chose a homepage template. Within the logo route, if the user's complete prompt already specifies the desired target Logo and has no old brand to replace, and the entire current user message consists only of that prompt, call media_generate_user_prompt so the media service supplies the exact user message; do not write prompt yourself, paraphrase, translate, simplify, or add geometric/negative instructions. If the message includes instructions around a quoted prompt, do not send the entire message as the image prompt; clarify the prompt boundary or use the old-brand style-reference route when applicable. Only when the text describes an old-brand style reference should you preserve it as a quoted reference and add separate target-brand instructions; never invent a new subtitle or reuse old-industry metaphors as anatomy. First inspect the generated bitmap; only vectorize when its visual design is suitable.
@@ -20822,8 +20820,8 @@ class DesignCanvasService {
     this.selections.set(observer ? sessionId + "\0" + observer : sessionId, selection);
     return selection;
   }
-  async getSelection(sessionId) {
-    const input = await this.readInputSelection?.(sessionId);
+  async getSelection(sessionId, { readRuntimeInput = true } = {}) {
+    const input = readRuntimeInput ? await this.readInputSelection?.(sessionId) : void 0;
     const location = await this.location(sessionId);
     const document = this.wrap(() => this.migrateEmptyHtmlContainers(location, this.canvases.get(location)));
     const existing = new Set(document.nodes.map((node) => node.id));
@@ -21069,7 +21067,7 @@ class DesignCanvasService {
         return { slide_index: index + 1, artifact_path: artifactPath };
       });
       const manifestPath = require$$1$1.join(location.workspace, ".monkeyai/design", location.canvasId, "slide-manifest.json");
-      node_fs.writeFileSync(manifestPath, JSON.stringify({ workspace: location.workspace, slides: items }, null, 2));
+      atomicWrite(manifestPath, JSON.stringify({ workspace: location.workspace, slides: items }, null, 2));
       return { manifestPath, slideCount: slides.length };
     });
   }
@@ -25578,7 +25576,7 @@ function createDesignTransport(options) {
   const requestConfig = async () => {
     const started = generation;
     try {
-      const value = await options.request(MONKEYAI_METHODS.designResourcesConfig.name, {});
+      const value = await options.request(AIBERTAI_METHODS.designResourcesConfig.name, {});
       if (generation === started) cache2.config = value;
       return value;
     } catch (error) {
@@ -25596,7 +25594,7 @@ function createDesignTransport(options) {
     const started = Date.now();
     const startedGeneration = generation;
     try {
-      const value = await options.request(MONKEYAI_METHODS.designResourcesToken.name, { target, ...refresh ? { refresh: true } : {} });
+      const value = await options.request(AIBERTAI_METHODS.designResourcesToken.name, { target, ...refresh ? { refresh: true } : {} });
       const expiresAt = Date.parse(value.expires_at);
       if (generation === startedGeneration && Number.isFinite(expiresAt)) cache2.tokens.set(target, { token: value.token, expiresAt });
       note(`design resources token ${target} issued in ${Date.now() - started}ms, expires_at=${value.expires_at}`);
@@ -26629,7 +26627,7 @@ class DesignCapability {
   render = null;
   constructor(options) {
     this.options = options;
-    this.sessions = new DesignSessions((sessionId) => options.request(MONKEYAI_METHODS.sessionWorkspace.name, { sessionId }));
+    this.sessions = new DesignSessions((sessionId) => options.request(AIBERTAI_METHODS.sessionWorkspace.name, { sessionId }));
     this.debug = options.debug === void 0 ? this.readDebugConfig() : options.debug;
     if (this.debug) options.log(`design respub debug mode: ${this.debug.baseUrl}`);
     this.resources = options.resources ?? createDesignResourceClient({
@@ -26646,11 +26644,11 @@ class DesignCapability {
     const artifacts = new MediaArtifactStore(this.sessions);
     this.media = new MediaService({
       resolveModel: async (sessionId, modelId) => {
-        const model = await options.request(MONKEYAI_METHODS.gatewayImageModel.name, { sessionId: this.sessions.owner(sessionId), modelId });
+        const model = await options.request(AIBERTAI_METHODS.gatewayImageModel.name, { sessionId: this.sessions.owner(sessionId), modelId });
         return model ? { id: model.id, protocol: "monkeyai_image", baseUrl: model.baseUrl, apiKey: model.apiKey, model: model.model, config: model.imageConfig, headers: model.headers } : null;
       },
       resolveVideoModel: async (sessionId, modelId) => {
-        const model = await options.request(MONKEYAI_METHODS.gatewayVideoModel.name, { sessionId: this.sessions.owner(sessionId), modelId });
+        const model = await options.request(AIBERTAI_METHODS.gatewayVideoModel.name, { sessionId: this.sessions.owner(sessionId), modelId });
         return model ? { id: model.id, protocol: "monkeyai_video", baseUrl: model.baseUrl, apiKey: model.apiKey, model: model.model, config: model.videoConfig, headers: model.headers } : null;
       },
       readSource: (sessionId, sourcePath, options2) => artifacts.read(sessionId, sourcePath, options2),
@@ -26904,7 +26902,7 @@ class DesignCapability {
     const owner = this.sessions.owner(sessionId);
     const context = await this.sessions.context(owner);
     if (context.payload.initialArtifactType !== "logo") throw new Error("user_logo_prompt_unavailable");
-    const page = await this.options.request(MONKEYAI_METHODS.sessionMessages.name, { sessionId: owner, limit: 20 });
+    const page = await this.options.request(AIBERTAI_METHODS.sessionMessages.name, { sessionId: owner, limit: 20 });
     const message = page.messages.filter((item) => item.role === "user").at(-1);
     const part = message?.parts.length === 1 ? message.parts[0] : void 0;
     if (part?.type !== "text" || !part.text || part.text.length > 2e4) throw new Error("user_logo_prompt_unavailable");
@@ -26926,11 +26924,12 @@ class DesignCapability {
   }
   /** 设计目录要知道用户有没有接 OhMyInspire 的 MCP */
   async mcpServers() {
-    const view = await this.options.request(MONKEYAI_METHODS.configGet.name, {});
+    const view = await this.options.request(AIBERTAI_METHODS.configGet.name, {});
     return view.mcp ?? [];
   }
   /** 截图：经 runtime 的 /cap 调渲染能力 */
   async renderHtml(input) {
+    if (this.options.renderHtml) return this.options.renderHtml(input);
     const task2 = createPreviewTask(6e4, input.signal);
     const baseTrace = createPreviewTrace(input.requestId, "design-mcp", this.options.log);
     const trace = { ...baseTrace, step: (stage, run) => baseTrace.step(stage, () => task2.run(run)) };
@@ -52599,29 +52598,6 @@ ${captureLines}` : capture.stack;
   })(undici);
   return undici.exports;
 }
-var undiciExports = requireUndici();
-function createServerFetch(ca, serverURL) {
-  const authority = new require$$2.X509Certificate(ca);
-  if (!authority.ca) throw new Error("Invalid CA certificate");
-  const server = serverURL ? new URL(serverURL) : void 0;
-  const origin = server?.protocol === "https:" && !server.username && !server.password ? server.origin : void 0;
-  const connect2 = {
-    ca: [...require$$4.getCACertificates("default"), ca],
-    rejectUnauthorized: true,
-    checkServerIdentity: ((hostname2, certificate) => {
-      const error = require$$4.checkServerIdentity(hostname2, certificate);
-      if (!error) return void 0;
-      const leaf = new require$$2.X509Certificate(certificate.raw);
-      return leaf.checkIssued(authority) && leaf.verify(authority.publicKey) ? void 0 : error;
-    })
-  };
-  const dispatcher2 = new undiciExports.Agent({ factory: (target, options) => new undiciExports.Pool(target, target === origin ? { ...options, connect: connect2 } : options) });
-  return {
-    // Node 内置的 undici-types 与独立包版本不同；运行时使用相同的 Dispatcher 接口。
-    fetch: ((input, init2) => globalThis.fetch(input, { ...init2, dispatcher: dispatcher2 })),
-    close: () => dispatcher2.destroy()
-  };
-}
 const log = (line) => process.stderr.write(`[design] ${line}
 `);
 const parentPort = process.parentPort;
@@ -52629,60 +52605,59 @@ if (!parentPort) {
   log("no host: the design provider runs inside the desktop app");
   process.exit(2);
 }
-let endpoint = null;
-let capability = null;
-let host = null;
-let network = null;
-let serverUrl;
-let certificates;
-let preflightTimer;
 let finishPreflight;
 let privateCatalog;
 imageProcessing.configure(new Promise((resolve2) => {
   finishPreflight = resolve2;
 }), log);
 function acceptPreflight(result) {
-  clearTimeout(preflightTimer);
   finishPreflight?.(result);
   finishPreflight = void 0;
 }
-function validEndpoint(value) {
-  const candidate = value;
-  if (typeof candidate?.httpBase !== "string" || typeof candidate.token !== "string" || !candidate.token) return null;
-  try {
-    if (new URL(candidate.httpBase).hostname !== "127.0.0.1") return null;
-  } catch {
-    return null;
-  }
-  return { httpBase: candidate.httpBase, token: candidate.token };
+const privateDesignRenders = new Map();
+const privateMediaModels = new Map();
+function requestPrivateMediaModel(method, input) {
+  const kind = method === AIBERTAI_METHODS.gatewayImageModel.name ? "image"
+    : method === AIBERTAI_METHODS.gatewayVideoModel.name ? "video" : null;
+  if (method === "_monkeyai/session/generate-title") return Promise.resolve(null);
+  const operationId = canvasCommandContext.getStore()?.operationId;
+  if (!kind || !operationId || privateMediaModels.size >= 32) throw new Error("design_runtime_method_unavailable");
+  const requestId = require$$2.randomUUID();
+  return new Promise((resolve, reject) => {
+    const finish = (error, result) => {
+      clearTimeout(deadline);
+      privateMediaModels.delete(requestId);
+      if (error) reject(new Error(error));
+      else resolve(result);
+    };
+    const deadline = setTimeout(() => finish("design_media_model_timeout"), 15e3);
+    privateMediaModels.set(requestId, finish);
+    try {
+      parentPort.postMessage({ type: "private-design-media-model", operationId, requestId, sessionId: input.sessionId, kind, modelId: input.modelId });
+    } catch {
+      finish("design_media_model_unavailable");
+    }
+  });
 }
-async function init(version2, expertDir, debugAllowed, ca) {
-  if (finishPreflight) preflightTimer = setTimeout(() => acceptPreflight({ state: "failed", reason: "probe_failed" }), 1e4);
-  certificates = ca;
-  network = createServerFetch(ca, serverUrl);
-  const runtime = host = new CapabilityHost({
-    WebSocket,
-    name: "monkeyai-design",
-    providers: [],
-    onSessionDeleted: (sessionId) => capability?.sessions.forget(sessionId),
-    // 换账号后旧身份签发的 respub token 与目录缓存全部作废，下次取源重新申请
-    onAuthChanged: () => capability?.credentialsChanged(),
-    log
+function requestPrivateDesignRender({ signal, ...input }) {
+  const operationId = canvasCommandContext.getStore()?.operationId;
+  if (!operationId || privateDesignRenders.has(operationId) || signal?.aborted) throw new Error("design_canvas_preview_unavailable");
+  return new Promise((resolve, reject) => {
+    const finish = (error, result) => {
+      signal?.removeEventListener("abort", cancel);
+      privateDesignRenders.delete(operationId);
+      if (error) reject(new Error(error));
+      else resolve(result);
+    };
+    const cancel = () => finish("design_canvas_preview_cancelled");
+    privateDesignRenders.set(operationId, finish);
+    signal?.addEventListener("abort", cancel, { once: true });
+    try {
+      parentPort.postMessage({ type: "private-design-render", operationId, input });
+    } catch {
+      finish("design_canvas_preview_unavailable");
+    }
   });
-  capability = new DesignCapability({
-    version: version2,
-    expertDir,
-    request: (method2, params) => runtime.request(method2, params),
-    endpoint: () => endpoint,
-    log,
-    fetch: (input, init2) => network.fetch(input, init2),
-    // development 与 debug 同源：未打包构建才允许读取调试 secret，也才输出设计资源失败与慢请求日志。
-    ...debugAllowed ? { development: true } : { debug: null }
-  });
-  await capability.start();
-  runtime.addProvider(capability);
-  if (endpoint) runtime.connect(endpoint);
-  log(`ready version=${version2}`);
 }
 function createPrivateCatalog(origin) {
   const backend = new URL(origin);
@@ -52712,10 +52687,16 @@ function createPrivateCatalog(origin) {
     resources,
     preferredSource: (_kind, ref) => ref && ASSET_SNAPSHOT.test(ref.version) ? PUBLIC_DESIGN_CACHE : "bundled",
     endpoint: () => null,
-    request: async () => { throw new Error("design_runtime_method_unavailable"); },
-    fetch: (url, options) => globalThis.fetch(trustedUrl(url, cache), {
-      ...options, credentials: "omit", redirect: "error"
-    })
+    renderHtml: requestPrivateDesignRender,
+    request: requestPrivateMediaModel,
+    fetch: (url, options) => {
+      const target = new URL(trustedOrigin(url, origin));
+      const media = canvasCommandContext.getStore()?.operationId &&
+        /^\/v1\/(?:images|videos)\//.test(target.pathname);
+      return globalThis.fetch(media ? target.href : trustedUrl(target, cache), {
+        ...options, credentials: "omit", redirect: "error"
+      });
+    }
   });
   const creating = new Map();
   const resourceTarget = async (ref) => {
@@ -52746,6 +52727,8 @@ function createPrivateCatalog(origin) {
   };
   return async (tool, args) => {
     switch (tool) {
+      case "design_features":
+        return { features: { imageProcessing: await imageProcessing.check() } };
       case "design_catalog":
         return loadDesignCatalog(catalog, [], args);
       case "design_catalog_detail":
@@ -52762,31 +52745,66 @@ function createPrivateCatalog(origin) {
         }
         return creating.get(key);
       }
+      case "design_tool_catalog": {
+        const saved = existingDesignWorkspace(args.cwd, args.sessionId, args.design);
+        if (!saved) throw new Error("not_a_design_session");
+        return canvasToolsForDesignType(saved.designType);
+      }
       case "design_model_tool": {
         const { cwd, design, sessionId, name, args: input } = args;
-        if (!["canvas_get_document", "canvas_create_text", "canvas_create_html", "canvas_commit_html"].includes(name)) throw new Error("invalid_design_model_tool");
+        if (!CANVAS_TOOLS.some((definition) => definition.name === name)) throw new Error("invalid_design_model_tool");
         const saved = existingDesignWorkspace(cwd, sessionId, design);
         if (!saved) throw new Error("not_a_design_session");
         workspace.sessions.created(sessionId, cwd, saved);
-        let params = input;
-        if (name === "canvas_create_text") {
-          const current = await workspace.canvas.get(sessionId);
-          const bottom = current.document.nodes.reduce((y, node) => Math.max(y, node.y + node.height), 0);
-          params = { title: input.title, content: input.content, x: 32, y: bottom + 32 };
-        }
-        const result = await workspace.canvasTools.call(sessionId, name, params);
-        const { id, revision, nodes } = result.document;
         const summary = (node) => ({
           id: node.id, type: node.type, title: node.title?.slice(0, 160),
           x: node.x, y: node.y, width: node.width, height: node.height,
-          ...(node.type === "html" ? { entry: node.entry, draft: Boolean(node.draft) } : {})
+          ...(node.type === "text" ? { content: node.content?.slice(0, 1600), textRole: node.textRole } : {}),
+          ...(node.type === "html" ? {
+            entry: node.entry, draft: Boolean(node.draft), empty: Boolean(node.empty), slideIndex: node.slideIndex,
+            artifact_path: `${saved.localDesignPath}/${node.entry}`
+          } : {})
         });
-        if (result.node) {
-          const artifactPath = name === "canvas_create_html" ? `${saved.localDesignPath}/${result.node.entry}` : void 0;
-          return { node: summary(result.node), revision, ...(artifactPath ? { artifact_path: artifactPath } : {}) };
+        if (name === "canvas_get_selection") {
+          const selection = await workspace.canvas.getSelection(sessionId, { readRuntimeInput: false });
+          return { nodes: selection.nodes.slice(0, 20).map(summary), totalNodes: selection.nodes.length };
         }
-        if (name === "canvas_commit_html") return { node_id: result.node_id, revision };
-        return { document: { id, revision, nodes: nodes.slice(0, 100).map(summary), totalNodes: nodes.length } };
+        if (name === "canvas_prepare_pptx") {
+          const { manifestPath, slideCount } = await workspace.canvas.preparePptxExport(sessionId);
+          return { manifest_path: manifestPath, slide_count: slideCount };
+        }
+        let params = input;
+        if (name === "canvas_create_text" && input.x === void 0 && input.y === void 0 && !input.source_node_id && !input.placement_node_id) {
+          const current = await workspace.canvas.get(sessionId);
+          const bottom = current.document.nodes.reduce((y, node) => Math.max(y, node.y + node.height), 0);
+          params = { ...input, x: 32, y: bottom + 32 };
+        }
+        const context = { signal: AbortSignal.timeout(110e3), progress: () => {} };
+        const { document, node, ...result } = await canvasCommandContext.run(
+          { operationId: args.operationId, sessionId },
+          () => workspace.canvasTools.call(sessionId, name, params, context)
+        );
+        if (node) result.node = summary(node);
+        if (document) {
+          const { id, revision, nodes } = document;
+          result.revision = revision;
+          if (name === "canvas_get_document" || name === "canvas_update_node" || name === "canvas_delete_node") {
+            result.document = { id, revision, nodes: nodes.slice(0, 25).map(summary), totalNodes: nodes.length };
+          }
+        }
+        if (name === "canvas_create_html" && result.node) result.artifact_path = result.node.artifact_path;
+        if (name === "canvas_capture_preview") {
+          for (const field of ["preview_path", "output_path"]) {
+            const path = result[field];
+            if (typeof path !== "string" || !require$$1$1.isAbsolute(path)) continue;
+            const relative = require$$1$1.relative(cwd, path);
+            if (!relative || relative === ".." || relative.startsWith(".." + require$$1$1.sep) || require$$1$1.isAbsolute(relative)) {
+              throw new Error("invalid_design_preview_path");
+            }
+            result[field] = relative.split(require$$1$1.sep).join("/");
+          }
+        }
+        return result;
       }
       case "design_state":
       case "design_style_decision":
@@ -52794,10 +52812,17 @@ function createPrivateCatalog(origin) {
       case "canvas_get":
       case "canvas_apply":
       case "canvas_select":
+      case "canvas_create_image":
+      case "canvas_create_video":
+      case "canvas_generate_media":
+      case "canvas_resume_media":
+      case "canvas_media":
+      case "canvas_html_image_media":
       case "canvas_create_text":
       case "canvas_create_html":
       case "canvas_update_html":
       case "canvas_prepare_pptx":
+      case "canvas_production":
       case "canvas_create_media_project":
       case "canvas_duplicate":
       case "canvas_export_upload":
@@ -52814,14 +52839,19 @@ function createPrivateCatalog(origin) {
         const design = existingDesignWorkspace(cwd, params.sessionId, payload);
         if (!design) throw new Error("not_a_design_session");
         workspace.sessions.created(sessionId, cwd, design);
-        const result = await canvasCommandContext.run({ operationId: "", sessionId, observer }, async () => {
+        const result = await canvasCommandContext.run({ operationId: args.operationId, sessionId, observer }, async () => {
           if (tool === "canvas_upload_append") {
             return structuredResult(await workspace.canvas.appendUploadBytes(sessionId, params.uploadId, params.offset, Buffer.from(params.bytes)));
           }
-          return workspace.callUi(tool, params, { headers: { "x-monkeyai-observer": observer } });
+          return workspace.callUi(tool, params, {
+            headers: { "x-monkeyai-observer": observer },
+            progress: async () => {}
+          });
         });
         if (result.isError) throw new Error(result.content?.[0]?.text ?? "design_operation_failed");
-        return result.structuredContent?.result;
+        const value = result.structuredContent?.result;
+        if (tool === "canvas_select" && value?.selection) await workspace.canvas.setInputSelection(sessionId, value.selection);
+        return value;
       }
       default:
         throw new Error("invalid_design_catalog_tool");
@@ -52834,51 +52864,29 @@ parentPort.on("message", ({ data }) => {
     acceptPreflight(message.result);
     return;
   }
-  if (message.type === "init-private-catalog" && !capability) {
+  if (message.type === "init-private-catalog") {
     privateCatalog = createPrivateCatalog(message.origin);
     return;
   }
   if (privateCatalog) {
+    if (message.type === "private-design-media-model-result") {
+      privateMediaModels.get(message.requestId)?.(message.error, message.data);
+    }
+    if (message.type === "private-design-render-result") {
+      privateDesignRenders.get(message.operationId)?.(message.error, message.data);
+    }
     if (message.type === "private-catalog") {
       const { id, tool, args } = message;
-      void privateCatalog(tool, args).then(
+      void privateCatalog(tool, { ...args, operationId: id }).then(
         (data) => parentPort.postMessage({ type: "private-catalog-result", id, data }),
         (error) => parentPort.postMessage({ type: "private-catalog-result", id, error: reasonOf(error) })
       );
     }
     return;
   }
-  if (message.type === "init" && !capability && typeof message.version === "string" && typeof message.expertDir === "string" && typeof message.ca === "string") {
-    void init(message.version, message.expertDir, message.debug === true, message.ca).catch((error) => {
-      log(`start failed: ${error.message}`);
-      process.exit(1);
-    });
-  } else if (message.type === "runtime") {
-    const next = validEndpoint(message.endpoint);
-    if (runtimeIdentityChanged(endpoint, next)) capability?.credentialsChanged();
-    endpoint = next;
-    const nextServer = endpoint && typeof message.serverUrl === "string" ? message.serverUrl : void 0;
-    if (serverUrl !== nextServer) {
-      serverUrl = nextServer;
-      const previous = network;
-      network = certificates ? createServerFetch(certificates, serverUrl) : null;
-      void previous?.close().catch(() => {
-      });
-    }
-    if (endpoint) host?.connect(endpoint);
-    else host?.disconnect();
-  }
 });
-async function shutdown() {
-  host?.disconnect();
-  await capability?.close().catch(() => {
-  });
-  await network?.close().catch(() => {
-  });
-  process.exit(0);
-}
-process.on("SIGTERM", () => void shutdown());
-process.on("SIGINT", () => void shutdown());
+process.on("SIGTERM", () => process.exit(0));
+process.on("SIGINT", () => process.exit(0));
 process.on("uncaughtException", (error) => {
   log(`uncaught exception: ${error.stack ?? error.message}`);
   process.exit(1);

@@ -1,4 +1,6 @@
-# MonkeyAI 服务端设计资源导入与分发实施计划
+# 设计资源导入与分发实施记录
+
+> 本文保留早期实施背景和验证记录。当前导入和部署配置以[设计资源导入与离线分发](design-resource-import.md)为准。
 
 > **状态：本地实现与验证已完成，跨项目联合验收待完成。** M1–M7 的本地链路已落地：v30 包校验、PostgreSQL/S3 快照、分区导入、控制面与资源 API、管理台和操作文档。M0 的本地契约/夹具已提交，respub 生产端互验及新增 source_skill_path 的 Desktop 消费仍待外部项目；M8 不标记完成。复合检查项仅在所有子项有证据时勾选。
 
@@ -133,7 +135,7 @@ type ImportSections struct {
 
 ## M4. JWT 签发、设备归属与资源源配置
 
-**文件：** 新增 `backend/internal/designcatalog/{tokens,tokens_test,configuration}.go`；修改 `backend/internal/config/{config,config_test}.go`、`backend/internal/endpoint/{service,postgres}.go`、`query.sql`；新增 `backend/internal/app/design.go` 和 `design_test.go`；修改项目 `.env.example`、`docker-compose.yml`，依赖只由集成任务加到 backend/go.mod/go.sum。
+**文件：** 新增 `backend/internal/designcatalog/{tokens,tokens_test,configuration}.go`；修改 `backend/internal/config/{config,config_test}.go`、`backend/internal/endpoint/{service,postgres}.go`、`query.sql`；新增 `backend/internal/app/design.go` 和 `design_test.go`；修改项目环境变量示例，依赖只由集成任务加到 backend/go.mod/go.sum。
 
 > **2026-10-21 新决策：** 控制面固定为 `GET /api/v1/design-resources/config` 与 `POST /api/v1/design-resources/token`。旧计划的 `/api/v1/design/resources` 和 `/api/v1/design/resources/token` 不再使用。控制面前缀属于 MonkeyAI，不属于 respub；respub hub 公开前缀仍为 `/api/design`。
 
@@ -221,7 +223,7 @@ export type DesignImportSummary = {
 
 ## M7. 配置、编译期注入、文档和后端完整检查
 
-**文件：** 新增 `design/design-resource-import.md`，修改项目 `README.md`、`.env.example`、`docker-compose.yml` 和 backend API 文档。
+**文件：** 新增 `design/design-resource-import.md`，修改项目 README、环境变量示例和后端 API 文档。
 
 - [x] 写管理员操作说明：实例身份由Pro入口复用持久化统计ID，无需手工配置；Hub完整base固定内置。配置预期publisher_id、respub签发密钥与独立本地媒体密钥；断网部署仍可使用本地资源。
 - [x] 在 README 和 `design/design-resource-import.md` 写清发布者和密钥的配置优先级：运行环境变量 > 编译期 `-X` 默认值 > 源码默认值。使用 LookupEnv 的存在性判断，显式空值也覆盖默认值。仅 `MONKEYAI_DESIGN_PUBLISHER_ID`、`MONKEYAI_DESIGN_RESPUB_JWT_SECRET`、`MONKEYAI_DESIGN_MEDIA_JWT_SECRET` 支持运行环境或 `-X` 默认值；实例ID和HubURL不参与此配置机制。
@@ -229,7 +231,7 @@ export type DesignImportSummary = {
 - [x] 示例构建命令仅说明形式，占位符由实现任务替换；不得在文档写入真实 secret：
 
 ```bash
-go build -trimpath -o monkeyai-server \
+go build -trimpath -o aibertai-server \
   -ldflags "-X '<module>/internal/config.defaultDesignPublisherID=<publisher-id>' \
             -X '<module>/internal/config.defaultDesignRespubJWTSecret=<secret-from-secure-input>'" \
   ./cmd/server

@@ -178,7 +178,7 @@ func RunUpgrade(ctx context.Context, id string, out io.Writer) (result error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 24*time.Minute)
 	defer cancel()
-	dir, err := os.MkdirTemp("/opt/monkeyai-engine", ".upgrade-")
+	dir, err := os.MkdirTemp("/opt/aibertai-engine", ".upgrade-")
 	if err != nil {
 		return err
 	}

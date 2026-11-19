@@ -274,9 +274,17 @@ func (s *Service) Delete(ctx context.Context, actor, id string) error {
 	if _, err = sqlc.New(tx).DeleteGroup(ctx, id); err != nil {
 		return err
 	}
-	err = s.members.RemoveAllMembers(ctx, tx, id)
-	if err != nil {
-		return err
+	if err := s.members.RemoveAllMembers(ctx, tx, id); err != nil {
+		if !errors.Is(err, member.ErrWriterUnavailable) {
+			return err
+		}
+		hasMembers, checkErr := sqlc.New(tx).HasGroupMemberships(ctx, id)
+		if checkErr != nil {
+			return checkErr
+		}
+		if hasMembers {
+			return err
+		}
 	}
 	if err = touchShared(ctx, tx, id); err != nil {
 		return err

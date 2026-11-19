@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: MonkeyAI Admin API
+  title: AIbertAI Admin API
   version: 1.0.0
 servers:
   - url: /
@@ -350,6 +350,7 @@ paths:
         - {name: user, in: query, description: 用户名、邮箱或用户 ID，首尾空白会被移除，最多 200 个 Unicode 字符。, schema: {type: string, maxLength: 200}}
         - {name: user_id, in: query, description: 精确匹配会话所属用户 ID。, schema: {type: string, format: uuid}}
         - {name: kind, in: query, description: 原始资源类别，首尾空白会被移除，最多 128 字节；兼容客户端自定义类别。, schema: {type: string, maxLength: 128}}
+        - {name: used_only, in: query, description: 仅返回存在实际调用或技能事件的用户资源行。, schema: {type: boolean, default: false}}
         - {name: resource_id, in: query, schema: {type: string}}
         - {name: resource_version, in: query, schema: {type: string}}
         - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 500, default: 50}}
@@ -1064,7 +1065,7 @@ paths:
           description: 尚未配置黑名单
     put:
       summary: 保存 MCP IP 段黑名单
-      description: 完整替换 blocked_cidrs，空数组表示清空黑名单。仅接受 IPv4/IPv6 CIDR，单个地址使用 /32 或 /128。黑名单优先于默认放行及 MONKEYAI_MCP_ALLOWED_CIDRS；保存后对新的 MCP 请求、OAuth 发现、注册及令牌交换生效，包括直连和代理请求，无需重启。配置读取失败时拒绝访问。
+      description: 完整替换 blocked_cidrs，空数组表示清空黑名单。仅接受 IPv4/IPv6 CIDR，单个地址使用 /32 或 /128。黑名单优先于默认放行及 AIBERTAI_MCP_ALLOWED_CIDRS；保存后对新的 MCP 请求、OAuth 发现、注册及令牌交换生效，包括直连和代理请求，无需重启。配置读取失败时拒绝访问。
       requestBody:
         required: true
         content:
@@ -8831,7 +8832,7 @@ components:
         id:
           type: string
           format: uuid
-          description: MonkeyAI 内部模型 ID，也是 Agent 调用时使用的 model 值。
+          description: AIbertAI 内部模型 ID，也是 Agent 调用时使用的 model 值。
         ownership_type:
           type: string
           enum: [system, user]
@@ -8893,7 +8894,7 @@ components:
     ModelProtocol:
       type: string
       enum: [openai_chat_completions, openai_responses, anthropic, image_generation, video_generation, openai_embeddings]
-      description: MonkeyAI 与上游服务通信时使用的协议。
+      description: AIbertAI 与上游服务通信时使用的协议。
     ModelKind:
       type: string
       enum: [text, image, video, embedding]
@@ -10001,7 +10002,7 @@ components:
         callback_url:
           type: string
           readOnly: true
-          description: OAuth MCP 的专属完整回调地址，格式为 {MONKEYAI_PUBLIC_URL}/oauth/connectors/{id}/callback；非 OAuth 连接为空字符串。
+          description: OAuth MCP 的专属完整回调地址，格式为 {AIBERTAI_PUBLIC_URL}/oauth/connectors/{id}/callback；非 OAuth 连接为空字符串。
         config_revision:
           type: integer
         credential_configured:

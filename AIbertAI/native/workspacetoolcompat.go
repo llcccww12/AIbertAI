@@ -23,11 +23,15 @@ const (
 )
 
 type builtinToolPreferences struct {
-	Whitelist []string `json:"whitelist,omitempty"`
-	Blacklist []string `json:"blacklist,omitempty"`
+	Whitelist  []string `json:"whitelist,omitempty"`
+	Blacklist  []string `json:"blacklist,omitempty"`
+	additional *builtinToolPreferences
 }
 
 func (p builtinToolPreferences) allows(name string) bool {
+	if p.additional != nil && !p.additional.allows(name) {
+		return false
+	}
 	alias := name
 	switch name {
 	case workspaceReadTool:
@@ -39,10 +43,17 @@ func (p builtinToolPreferences) allows(name string) bool {
 		(len(p.Whitelist) == 0 || slices.Contains(p.Whitelist, name) || slices.Contains(p.Whitelist, alias))
 }
 
+func (p builtinToolPreferences) intersect(other builtinToolPreferences) builtinToolPreferences {
+	p.additional = &other
+	return p
+}
+
 type workspaceToolPolicy struct {
-	Preferences builtinToolPreferences
-	CanWrite    bool
-	HasDesign   bool
+	Preferences  builtinToolPreferences
+	CanWrite     bool
+	DesignTools  []desktopDesignTool
+	Instructions string
+	Goal         *desktopGoalRun
 }
 
 func (p *workspaceToolPolicy) extraDefinitions() []map[string]any {
@@ -73,17 +84,13 @@ func (p *workspaceToolPolicy) extraDefinitions() []map[string]any {
 			"literal": boolean, "case_sensitive": boolean, "context_lines": integer, "limit": integer}, "pattern")
 	add(directoryTool, "List one directory in the workspace. Use . to list the workspace root.",
 		map[string]any{"path": str(), "offset": integer}, "path")
-	if p.HasDesign {
-		add(designReadTool, "Read the current design canvas and its visible nodes.", map[string]any{})
-		if p.CanWrite {
-			add(designTextTool, "Create an editable Markdown text node on the current design canvas after user approval.",
-				map[string]any{"title": str(), "content": str()}, "content")
-			dimension := map[string]any{"type": "integer", "minimum": 1, "maximum": 16384}
-			add(designCreateHTMLTool, "Create a draft HTML page or slide on this canvas. Write the complete HTML to the returned artifact_path with Write, then call canvas_commit_html with the returned node ID. For an editable PowerPoint chart, set data-ppt-chart-spec on the sized preview element to JSON with type, categories, and series (each with name and values). Supported types are column, bar, line, area, pie, and doughnut.",
-				map[string]any{"title": str(), "width": dimension, "height": dimension, "slide_index": map[string]any{"type": "integer", "minimum": 1, "maximum": 512}})
-			add(designCommitHTMLTool, "Validate the HTML file already written to the editable draft node and commit that node on the canvas.",
-				map[string]any{"node_id": str()}, "node_id")
+	for _, tool := range p.DesignTools {
+		var schema struct{ Type string }
+		if !designTool(tool.Name) || designWriteTool(tool.Name) && !p.CanWrite ||
+			json.Unmarshal(tool.Schema, &schema) != nil || schema.Type != "object" {
+			continue
 		}
+		tools = append(tools, map[string]any{"name": tool.Name, "description": tool.Description, "parameters": tool.Schema})
 	}
 	if p.CanWrite {
 		add(legacyWriteTool, "Write complete UTF-8 text to a workspace file.", map[string]any{"file_path": str(), "content": str()}, "file_path", "content")

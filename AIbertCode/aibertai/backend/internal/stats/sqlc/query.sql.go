@@ -794,12 +794,14 @@ cohort AS NOT MATERIALIZED (
     -- Usage sources are disjoint by kind: skill and connector tool summaries
     -- must not duplicate skill events or gateway calls.
     UNION ALL
-    SELECT t.user_id,v.session_id,v.category,v.resource_id,v.resource_version,
+    SELECT t.user_id,v.session_id,v.category,
+        coalesce(v.resource_id,CASE WHEN v.category = 'builtin' THEN nullif(btrim(v.name),'') END),v.resource_version,
         false,false,true,v.calls::bigint,v.failed::bigint
     FROM session_turn_tools v JOIN turns t ON t.session_id = v.session_id AND t.turn_index = v.turn_index CROSS JOIN opts p
-    WHERE v.resource_id IS NOT NULL AND v.category NOT IN ('connector','skill')
+    WHERE (v.resource_id IS NOT NULL OR v.category = 'builtin' AND nullif(btrim(v.name),'') IS NOT NULL)
+        AND v.category NOT IN ('connector','skill')
         AND (p.f->>'kind' IS NULL OR v.category = p.f->>'kind')
-        AND (p.f->>'resource_id' IS NULL OR v.resource_id = p.f->>'resource_id')
+        AND (p.f->>'resource_id' IS NULL OR coalesce(v.resource_id,CASE WHEN v.category = 'builtin' THEN nullif(btrim(v.name),'') END) = p.f->>'resource_id')
         AND (p.f->>'resource_version' IS NULL OR v.resource_version = p.f->>'resource_version')
     UNION ALL
     SELECT t.user_id,e.session_id,'skill',e.skill_id,e.version,
@@ -833,7 +835,8 @@ cohort AS NOT MATERIALIZED (
         AND (p.f->>'resource_id' IS NULL OR c.connector_id::text = p.f->>'resource_id')
         AND p.f->>'resource_version' IS NULL
 ), resource_keys AS (
-    SELECT DISTINCT user_id,kind,resource_id,version FROM facts
+    SELECT DISTINCT user_id,kind,resource_id,version FROM facts CROSS JOIN opts p
+    WHERE is_used OR NOT coalesce((p.f->>'used_only')::boolean,false)
 ), ordered AS (
     SELECT k.user_id, k.kind, k.resource_id, k.version,jsonb_build_array(k.kind,k.resource_id,k.version,k.user_id)::text AS sort_key
     FROM resource_keys k

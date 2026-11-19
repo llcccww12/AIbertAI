@@ -58,7 +58,7 @@ func TestDesktopDesignWorkspaceSurvivesRestart(t *testing.T) {
 	})
 	host := relaySessionHost{profile: profile, live: live}
 	params, _ := json.Marshal(historyQuery{SessionID: id, Limit: 20})
-	workspace, err := host.workspaceQuery("_monkeyai/session/workspace", params)
+	workspace, err := host.workspaceQuery(t.Context(), "_monkeyai/session/workspace", params)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestDesktopDesignWorkspaceSurvivesRestart(t *testing.T) {
 	if err := os.WriteFile(contextPath, []byte(fmt.Sprintf(`{"designSessionId":%q,"canvasId":%q}`, operation, canvas)), 0600); err != nil {
 		t.Fatal(err)
 	}
-	workspace, err = host.workspaceQuery("_monkeyai/session/workspace", params)
+	workspace, err = host.workspaceQuery(t.Context(), "_monkeyai/session/workspace", params)
 	if err != nil || workspace.(map[string]any)["capabilities"] != nil {
 		t.Fatalf("a canvas from another session was accepted: %v", err)
 	}

@@ -100,7 +100,7 @@ try {
       if (pathname.endsWith("/session"))
         return json({ authenticated: true, user: users[0] })
       if (pathname.endsWith("/branding"))
-        return json({ product_name: "MonkeyAI" })
+        return json({ product_name: "AIbertAI" })
       if (pathname.endsWith("/license/status")) return json({ state: "valid" })
       if (pathname.endsWith("/users")) return json({ users })
       if (pathname.endsWith("/groups")) return json({ groups })

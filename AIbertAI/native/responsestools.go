@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-func (c *client) responsesToolRound(ctx context.Context, key, session string, messages []toolConversationMessage, tools []map[string]any, choice string) (modelUsage, toolConversationMessage, string, error) {
+func (c *client) responsesToolRound(ctx context.Context, key, session, selected string, messages []toolConversationMessage, tools []map[string]any, choice string, modelOptions map[string]any) (modelUsage, toolConversationMessage, string, error) {
 	input := make([]any, 0, len(messages))
 	for _, message := range messages {
 		if len(message.ResponseItems) != 0 {
@@ -31,8 +31,9 @@ func (c *client) responsesToolRound(ctx context.Context, key, session string, me
 				"name": call.Function.Name, "arguments": call.Function.Arguments})
 		}
 	}
-	request := map[string]any{"model": modelID, "input": input, "stream": false, "store": false,
+	request := map[string]any{"model": selected, "input": input, "stream": false, "store": false,
 		"include": []string{"reasoning.encrypted_content"}}
+	maps.Copy(request, modelOptions)
 	if choice != "" {
 		declared := make([]map[string]any, 0, len(tools))
 		for _, tool := range tools {

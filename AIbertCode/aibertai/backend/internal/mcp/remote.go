@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -21,6 +22,7 @@ type remoteClient struct {
 	http                     *http.Client
 	target, session, version string
 	headers                  map[string]string
+	legacy                   *legacySSE
 }
 type remoteStatus int
 
@@ -34,7 +36,11 @@ type rpcError struct {
 
 func (e *rpcError) Error() string { return fmt.Sprintf("MCP 调用错误 %d", e.Code) }
 func (c *remoteClient) request(ctx context.Context, method string, body []byte) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, method, c.target, bytes.NewReader(body))
+	target := c.target
+	if c.legacy != nil {
+		target = c.legacy.postURL
+	}
+	req, err := http.NewRequestWithContext(ctx, method, target, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -52,6 +58,10 @@ func (c *remoteClient) request(ctx context.Context, method string, body []byte) 
 
 func (c *remoteClient) close() {
 	defer c.http.CloseIdleConnections()
+	if c.legacy != nil {
+		_ = c.legacy.body.Close()
+		return
+	}
 	if c.session == "" {
 		return
 	}
@@ -83,6 +93,14 @@ func (c *remoteClient) call(ctx context.Context, id int, method string, params a
 	}()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return nil, remoteStatus(response.StatusCode)
+	}
+	if c.legacy != nil {
+		_ = response.Body.Close()
+		data, err := c.legacy.response(id)
+		if err != nil {
+			return nil, err
+		}
+		return decodeRemoteResponse(ctx, data, id)
 	}
 	if method == "initialize" {
 		c.session = response.Header.Get("Mcp-Session-Id")
@@ -134,13 +152,17 @@ func (c *remoteClient) call(ctx context.Context, id int, method string, params a
 	default:
 		return nil, failure("mcp_protocol_invalid", nil)
 	}
+	return decodeRemoteResponse(ctx, data, id)
+}
+
+func decodeRemoteResponse(ctx context.Context, data []byte, id int) (json.RawMessage, error) {
 	var reply struct {
 		Version string          `json:"jsonrpc"`
 		ID      int             `json:"id"`
 		Result  json.RawMessage `json:"result"`
 		Error   json.RawMessage `json:"error"`
 	}
-	if err = json.Unmarshal(data, &reply); err != nil || reply.ID != id || reply.Version != "2.0" || (len(reply.Result) == 0) == (len(reply.Error) == 0) {
+	if err := json.Unmarshal(data, &reply); err != nil || reply.ID != id || reply.Version != "2.0" || (len(reply.Result) == 0) == (len(reply.Error) == 0) {
 		if err != nil {
 			slog.WarnContext(ctx, "操作失败", "module", "mcp", "operation", "call", "error", err)
 		}
@@ -179,7 +201,18 @@ func openRemoteWithClient(ctx context.Context, target string, headers map[string
 			c.close()
 		}
 	}()
-	result, err := c.call(ctx, 1, "initialize", map[string]any{"protocolVersion": c.version, "capabilities": map[string]any{}, "clientInfo": map[string]string{"name": "MonkeyAI", "version": "1"}})
+	init := func() (json.RawMessage, error) {
+		return c.call(ctx, 1, "initialize", map[string]any{"protocolVersion": c.version, "capabilities": map[string]any{}, "clientInfo": map[string]string{"name": "AIbertAI", "version": "1"}})
+	}
+	result, err := init()
+	var status remoteStatus
+	if errors.As(err, &status) && (status == http.StatusNotFound || status == http.StatusMethodNotAllowed || status == http.StatusUnsupportedMediaType) {
+		c.legacy, err = c.openLegacySSE(ctx)
+		if err == nil {
+			c.version = "2024-11-05"
+			result, err = init()
+		}
+	}
 	if err != nil {
 		return nil, err
 	}

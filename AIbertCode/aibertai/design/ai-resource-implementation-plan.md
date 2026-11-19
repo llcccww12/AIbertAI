@@ -2,7 +2,9 @@
 
 > 2026-09-11 迁移收敛：按本轮重新部署要求，原 1–13 版已折叠到 `000001` 完整初始化结构，仅支持全新数据库。下文旧增量迁移及验收记录保留为实施历史，当前部署以 [数据库迁移说明](../backend/migrations/README.md) 为准。
 
-> 本轮迁移收敛验收已完成：316 项 Go 测试全部通过，失败与跳过均为 0；`go vet ./...`、`make sqlc-check`、OpenAPI 重复字段与本地引用检查通过。PostgreSQL 18.6 验证 `version=1, dirty=false`、重复 up 无变化及带业务数据的 down/up；迁移镜像构建通过且只含一对 `000001` SQL。旧 13 版与新初始化的字段、索引、函数和触发器一致，余额约束从空库直接验证，钱包地址的非空约束使用最终字段名。代码已完成，现有部署数据库未操作。
+> 以下为原实施阶段的验收记录。当前部署以[平台 README](../README.md)为准。
+
+> 当时的迁移收敛验收已完成：316 项 Go 测试全部通过，失败与跳过均为 0；`go vet ./...`、`make sqlc-check`、OpenAPI 重复字段与本地引用检查通过。PostgreSQL 18.6 验证 `version=1, dirty=false`、重复 up 无变化及带业务数据的 down/up；迁移镜像构建通过且只含一对 `000001` SQL。旧 13 版与新初始化的字段、索引、函数和触发器一致，余额约束从空库直接验证，钱包地址的非空约束使用最终字段名。代码已完成，现有部署数据库未操作。
 
 > 2026-09-11 实施更新：Connector 简化与多凭证认证已实施，完整方案见 [连接与多凭证认证设计](connector-auth-design.md)。本文保留早期实现历史，当前 Connector 契约以新方案和 OpenAPI 为准。
 
@@ -44,7 +46,7 @@
 | 专家 | Prompt、资源关联、复制、启停 | 动态资源选项、关系约束、依赖检查、资源清单 |
 | 后端业务包 | `skill`、`rule`、`mcp`、`expert`、`resource` 主要只有 `doc.go` | 完整业务服务、数据访问、Admin/Agent DTO 和路由 |
 | 下发 | 按资源类型提供独立接口、SHA-256 版本与 ETag/304 | 保证授权过滤、内容变更与删除均影响对应资源版本 |
-| 文件与部署 | PostgreSQL 与迁移容器，后端只读文件系统和临时目录 | RustFS 容器与持久化、Bucket 初始化、S3 适配、上传限制与受控下载 |
+| 文件与部署 | PostgreSQL 与数据库迁移，后端临时目录 | RustFS 持久化、Bucket 初始化、S3 适配、上传限制与受控下载 |
 
 需要特别处理的现状：
 
@@ -178,7 +180,7 @@ Provider 关系保存 `required`、工具白名单和黑名单。专家不绑定
 
 后端使用 AWS SDK for Go v2 的 S3 客户端，配置自定义 Endpoint、Region、静态访问凭据和 path-style 寻址；所需依赖由集成任务统一加入。`resource` 包提供当前用例需要的上传、读取、检查、删除等能力，业务包继续负责资源权限和格式校验。
 
-客户端上传的文件先经过后端鉴权和大小/格式检查，再写 RustFS；下载经过后端鉴权和流式转发。浏览器与 Agent 不需要 RustFS 登录态、S3 凭据、Bucket 公共权限或跨域配置。后续启用预签名直传时，再配置客户端可达的对象存储地址；Docker 内部的 `rustfs` 主机名不能直接下发给客户端。
+客户端上传的文件先经过后端鉴权和大小/格式检查，再写 RustFS；下载经过后端鉴权和流式转发。浏览器与 Agent 不需要 RustFS 登录态、S3 凭据、Bucket 公共权限或跨域配置。后续启用预签名直传时，再配置客户端可达的对象存储地址。
 
 ## 6. API 草案
 
@@ -283,51 +285,23 @@ Connector 的下发 DTO 不包含上游 Token、Secret 或敏感 Header；工具
 5. 技能直接采用包文件权威模型；专家直接采用规则/技能关系和 Provider 依赖；授权、标签、调用事实直接引用目标资源结构。
 6. 一次性定义名称唯一、外键、认证组合和关系约束；移除旧 `mcp_servers`、`mcp_server_credentials`、`expert_mcp_tools` 及 `skills.instructions` 的初始化定义。
 
-合并时整理为最终 DDL，去掉重复的创建后修改语句和旧结构过渡 SQL。删除 `000002`、`000003`、`000004` 的 up/down 文件，迁移镜像中也只包含版本 `000001`。首次管理员仍由后端按部署环境变量创建；RustFS Bucket 由后端启动流程检查并按需创建。
+合并时整理为最终 DDL，去掉重复的创建后修改语句和旧结构过渡 SQL。删除 `000002`、`000003`、`000004` 的 up/down 文件。首次管理员仍由后端按部署环境变量创建；RustFS Bucket 由后端启动流程检查并按需创建。
 
-本次重新部署连接全新的 PostgreSQL 数据库或数据目录，再执行 `migrate up`；仅重建容器并挂载旧数据库目录不构成全新初始化。部署说明需要明确这一前提，本轮方案更新不操作用户现有数据。
+本阶段的基础迁移收敛在隔离数据库验证。现行环境保留原有数据库，升级按[数据库迁移说明](../backend/migrations/README.md)执行。
 
 同步更新 `migrations/README.md`、部署 README 和测试约定，注明本次单版重置是用户指定的重部署安排。本次功能整合期间共同维护该初始化版本，后续正式发布后的 schema 变更再正常追加迁移。
 
 验收要求：空库 `up` 成功且版本为 `1`、`dirty=false`；再次 `up` 返回无变化；可丢弃测试库执行 `down → up` 成功；初始化后管理员登录、客户端 OAuth、调用密钥、模型管理和四类资源功能全部通过验证。
 
-### 8.2 Docker Compose 引入 RustFS
+### 8.2 RustFS 与持久化
 
-`monkeyai/docker-compose.yml` 使用单节点 `rustfs` 服务，后端通过 Compose 网络连接 `http://rustfs:9000`。镜像固定为 `chaitin-registry.cn-hangzhou.cr.aliyuncs.com/basic/rustfs:v1.0.0-rc.5`。
-
-- RustFS 的 S3 API 使用容器内 `9000` 端口，默认供后端内网访问。
-- 管理控制台使用 `9001`，本机调试绑定 `127.0.0.1`，与 MonkeyAI 管理后台分开。
-- 数据持久化到 `./data/rustfs` 并挂载到容器 `/data`；日志单独挂载到 `./data/rustfs-logs`。数据目录随常规容器重建保留。
-- RustFS 容器以非 root 用户 `10001:10001` 运行，部署前准备数据和日志挂载目录及其内容的读写权限，不配置独立目录权限初始化服务。
-- RustFS 健康检查验证 S3 服务的 `/health`；Bucket 是否存在、运行凭据能否访问由后端启动初始化和就绪检查验证。
-
-后端在启动流程中经 S3 API 检查并按需创建私有 Bucket，成功后开始提供 HTTP 服务。Bucket 已存在且可访问时视为成功，权限错误与网络错误不能当成“Bucket 不存在”。初始化限时 1 分钟，失败时后端退出，由 Compose 重启重试。多次启动不清空 Bucket，也不改变已有对象。Compose 默认复用 RustFS 凭据，独立应用凭据可通过 `MONKEYAI_S3_ACCESS_KEY` / `MONKEYAI_S3_SECRET_KEY` 覆盖；首次创建 Bucket 需要 `s3:CreateBucket` 权限。
-
-启动依赖为 `rustfs 健康` 和 `PostgreSQL 健康 → migrate 成功` 两条链路；两者完成后启动后端并初始化 Bucket，再启动管理后台。`/readyz` 保留有超时和短时缓存的资源 Bucket 检查，`/healthz` 继续只表达进程存活。
-
-配置约定如下：
-
-| 配置 | 用途 / 默认值 |
-| --- | --- |
-| `RUSTFS_ACCESS_KEY`、`RUSTFS_SECRET_KEY` | RustFS 服务初始化的管理员凭据，通过部署环境提供 |
-| `RUSTFS_VOLUMES` | 容器内的数据路径，单节点配置使用 `/data` |
-| `MONKEYAI_S3_ENDPOINT` | 后端连接地址，Compose 默认 `http://rustfs:9000` |
-| `MONKEYAI_S3_REGION` | 签名 Region，默认 `us-east-1`，与 RustFS 配置一致 |
-| `MONKEYAI_S3_BUCKET` | 默认 `monkeyai-resources` |
-| `MONKEYAI_S3_ACCESS_KEY`、`MONKEYAI_S3_SECRET_KEY` | 后端初始化及读写资源的凭据，Compose 默认复用 RustFS 凭据 |
-| `MONKEYAI_S3_FORCE_PATH_STYLE` | 默认 `true` |
-
-同步修改 `.env.example`、后端配置加载、Compose、启动初始化与部署 README，并调整管理反向代理的上传体积、超时和流式下载设置。后端配置 API 不返回上述访问密钥。
-
-RustFS 对象与 PostgreSQL 元数据共同构成可恢复资源。备份应记录数据库快照及其引用的对象集合，旧对象清理不得早于有效备份和回滚窗口；验收时用数据库备份和 RustFS 对象恢复一次完整技能下载。
-
-配置依据：[RustFS 官方容器启动说明](https://github.com/rustfs/rustfs/blob/c9c6bb7a24eb9fa8f158c350efde789b50dbf514/README_ZH.md)、[官方 Compose 示例](https://github.com/rustfs/rustfs/blob/c9c6bb7a24eb9fa8f158c350efde789b50dbf514/docker-compose-simple.yml)。引用用于确认接口、端口与权限；部署拓扑和镜像版本以实施阶段固定并通过测试的配置为准。
+现行服务和配置见[本机开发](../README.md#本机开发)。后端通过 S3 API 访问 RustFS，启动时检查 Bucket 并按需创建。PostgreSQL 元数据与 RustFS 对象共同构成可恢复资源，备份和恢复时应成对保留。
 
 ## 9. 实施顺序与验收
 
 | 阶段 | 工作内容 | 验收结果 |
 | --- | --- | --- |
-| A：契约与基础 | 固定 DTO/错误码；真实授权对象；标签与授权事务；RustFS 与 Bucket 初始化；单版 schema 与审计基础 | 空库以版本 1 初始化，Compose 可启动完整依赖，资源文件在容器重建后仍可读取 |
+| A：契约与基础 | 固定 DTO/错误码；真实授权对象；标签与授权事务；RustFS 与 Bucket 初始化；单版 schema 与审计基础 | 空库可初始化，重启服务后仍可读取资源文件 |
 | B：规则闭环 | Rule CRUD、可用/强制范围、后台接入、Agent rules 下发 | 保存刷新不丢失；普通规则可选；强制规则正确覆盖目标用户 |
 | C：技能闭环 | 真实导入、包解析与重建、标签、启停、授权、下载 | 多来源批量导入可重试；编辑后包与元数据一致；无权下载被拒绝 |
 | D：工具闭环 | Provider/Connector、Header/OAuth、测试、隔离工具目录、后台与 Agent 描述 | 真实 MCP 测试成功；按用户得到不同目录；凭证不下发；价格配置持久化 |

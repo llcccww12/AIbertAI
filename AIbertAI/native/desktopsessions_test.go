@@ -103,7 +103,7 @@ func TestDesktopRetriesDisconnectedReportBeforeAcceptingNextTurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	row, index, _, err := live.beginTurn(id, first, first, "First turn", nil)
+	row, index, _, err := live.beginTurn(id, first, first, "First turn", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestDesktopRetriesDisconnectedReportBeforeAcceptingNextTurn(t *testing.T) {
 	if err := live.save(row); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := live.beginTurn(id, next, "", "After reconnect", nil); err != errSessionReportPending {
+	if _, _, _, err := live.beginTurn(id, next, "", "After reconnect", nil, nil); err != errSessionReportPending {
 		t.Fatalf("expected the previous report to be pending, got %v", err)
 	}
 	allowReport := false
@@ -169,7 +169,7 @@ func TestDesktopRetriesDisconnectedReportBeforeAcceptingNextTurn(t *testing.T) {
 	if err != nil || !stored.Turns[0].Acked {
 		t.Fatalf("report acknowledgment was not saved to the journal: %v", err)
 	}
-	if _, index, replay, err := live.beginTurn(id, next, "", "After reconnect", nil); err != nil || replay || index != 1 {
+	if _, index, replay, err := live.beginTurn(id, next, "", "After reconnect", nil, nil); err != nil || replay || index != 1 {
 		t.Fatalf("expected second turn after retry, got index %d, replay %t, error %v", index, replay, err)
 	}
 }
@@ -189,7 +189,7 @@ func TestDesktopSessionRecoversInterruptedTurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := live.beginTurn(id, prompt, "", "test prompt", nil); err != nil {
+	if _, _, _, err := live.beginTurn(id, prompt, "", "test prompt", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := live.store.Close(); err != nil {
@@ -204,7 +204,7 @@ func TestDesktopSessionRecoversInterruptedTurn(t *testing.T) {
 	if err != nil || restoredID != id {
 		t.Fatalf("creation replay gave %q, %v", restoredID, err)
 	}
-	session, index, replay, err := restored.beginTurn(id, prompt, "", "test prompt", nil)
+	session, index, replay, err := restored.beginTurn(id, prompt, "", "test prompt", nil, nil)
 	if err != nil || !replay || index != 0 || len(session.Turns) != 1 {
 		t.Fatalf("interrupted turn was not replay-safe: index=%d replay=%t err=%v", index, replay, err)
 	}

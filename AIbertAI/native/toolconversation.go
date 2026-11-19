@@ -8,6 +8,7 @@ import (
 	"io"
 	"maps"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -63,7 +64,7 @@ type workspaceToolRun struct {
 }
 
 func (c *client) completeToolTurn(ctx context.Context, protocol, key, session string, approved []string, prompt string, history []toolConversationMessage, requireTool, allowWrite bool, call func(modelToolUse, workspaceToolArguments, []json.RawMessage) (string, error)) (string, modelUsage, *reportedTool, error) {
-	answer, usage, runs, err := c.completeWorkspaceToolTurn(ctx, protocol, key, session, approved, prompt, history, requireTool, allowWrite, 1, nil, nil, defaultModelInputBudget,
+	answer, usage, runs, err := c.completeWorkspaceToolTurn(ctx, protocol, key, session, modelID, approved, prompt, history, requireTool, allowWrite, 1, nil, nil, defaultModelInputBudget, nil,
 		func(message toolConversationMessage, args toolArguments, _ int) (string, error) {
 			return call(message.ToolCalls[0], args.Workspace, message.ResponseItems)
 		})
@@ -73,15 +74,19 @@ func (c *client) completeToolTurn(ctx context.Context, protocol, key, session st
 	return answer, usage, &runs[0].Report, err
 }
 
-func (c *client) completeWorkspaceToolTurn(ctx context.Context, protocol, key, session string, approved []string, prompt string, history []toolConversationMessage, requireTool, allowWrite bool, maxCalls int, connectors map[string]connectorTool, workspace *workspaceToolPolicy, inputBudget int, call func(toolConversationMessage, toolArguments, int) (string, error)) (string, modelUsage, []workspaceToolRun, error) {
+func (c *client) completeWorkspaceToolTurn(ctx context.Context, protocol, key, session, selected string, approved []string, prompt string, history []toolConversationMessage, requireTool, allowWrite bool, maxCalls int, connectors map[string]connectorTool, workspace *workspaceToolPolicy, inputBudget int, modelOptions map[string]any, call func(toolConversationMessage, toolArguments, int) (string, error)) (string, modelUsage, []workspaceToolRun, error) {
 	talk := append(slices.Clone(history), toolConversationMessage{Role: "user", Content: &prompt})
 	fileParameter := map[string]any{"type": "string", "description": "A workspace-relative path or the exact name of a file attached to this turn"}
 	if len(approved) != 0 {
 		fileParameter["enum"] = approved
 	}
 	var preferences builtinToolPreferences
+	var instructions string
+	var goal *desktopGoalRun
 	if workspace != nil {
 		preferences = workspace.Preferences
+		instructions = workspace.Instructions
+		goal = workspace.Goal
 	}
 	tools := workspace.extraDefinitions()
 	if preferences.allows(workspaceReadTool) {
@@ -126,11 +131,18 @@ func (c *client) completeWorkspaceToolTurn(ctx context.Context, protocol, key, s
 		if choice != "" {
 			budget -= len(schemas)
 		}
-		messages = fitModelHistory(messages, len(history), budget)
-		if protocol == "openai_responses" {
-			return c.responsesToolRound(ctx, key, session, messages, tools, choice)
+		if instructions != "" {
+			system := toolConversationMessage{Role: "system", Content: &instructions}
+			messages = fitModelHistory(messages, len(history), budget-modelMessageSize(system))
+			messages = append([]toolConversationMessage{system}, messages...)
+		} else {
+			messages = fitModelHistory(messages, len(history), budget)
 		}
-		request := map[string]any{"model": modelID, "messages": messages, "stream": false}
+		if protocol == "openai_responses" {
+			return c.responsesToolRound(ctx, key, session, selected, messages, tools, choice, modelOptions)
+		}
+		request := map[string]any{"model": selected, "messages": messages, "stream": false}
+		maps.Copy(request, modelOptions)
 		if choice != "" {
 			declared := make([]map[string]any, 0, len(tools))
 			for _, tool := range tools {
@@ -147,9 +159,15 @@ func (c *client) completeWorkspaceToolTurn(ctx context.Context, protocol, key, s
 	var usage modelUsage
 	var runs []workspaceToolRun
 	seen := make(map[string]bool, maxCalls)
-	for {
+	checkpoints := 0
+	lastProgress := "目标已暂停。"
+	for roundIndex := 0; ; roundIndex++ {
+		if goal != nil && !goal.active() {
+			goal.outcome = "user_paused"
+			return lastProgress, usage, runs, nil
+		}
 		nextUsage, answer, finish, err := round(talk, choice)
-		if len(runs) == 0 {
+		if roundIndex == 0 {
 			usage = nextUsage
 		} else {
 			usage = addToolUsage(usage, nextUsage)
@@ -158,7 +176,35 @@ func (c *client) completeWorkspaceToolTurn(ctx context.Context, protocol, key, s
 			return "", usage, runs, err
 		}
 		if choice != "required" && finish == "stop" && len(answer.ToolCalls) == 0 && answer.Content != nil && *answer.Content != "" {
-			return *answer.Content, usage, runs, nil
+			progress := strings.TrimSpace(*answer.Content)
+			if goal == nil {
+				return *answer.Content, usage, runs, nil
+			}
+			const complete = "\n[GOAL_COMPLETE]"
+			if !goal.active() {
+				goal.outcome = "user_paused"
+				return strings.TrimSuffix(progress, complete), usage, runs, nil
+			}
+			if strings.HasSuffix(progress, complete) {
+				goal.outcome = "completed"
+				return strings.TrimSuffix(progress, complete), usage, runs, nil
+			}
+			lastProgress = progress
+			if goal.stop(usage) {
+				return lastProgress, usage, runs, nil
+			}
+			checkpoints++
+			if checkpoints >= 3 {
+				goal.outcome = "auto_turn_budget"
+				return lastProgress, usage, runs, nil
+			}
+			next := "Continue the current goal from your progress. Take the next useful step and keep the same completion rule."
+			answer.Role = "assistant"
+			talk = append(talk, answer, toolConversationMessage{Role: "user", Content: &next})
+			continue
+		}
+		if goal != nil && goal.stop(usage) {
+			return lastProgress, usage, runs, nil
 		}
 		if len(runs) == maxCalls {
 			return "", usage, runs, errors.New("model_tool_continuation_incomplete")
@@ -179,12 +225,18 @@ func (c *client) completeWorkspaceToolTurn(ctx context.Context, protocol, key, s
 			Calls: 1, DurationMS: time.Since(started).Milliseconds()}
 		if args.Connector != nil {
 			fact.Category, fact.Name, fact.ResourceID = "connector", args.Connector.Name, args.Connector.ConnectorID
+			if args.Connector.Local {
+				fact.Category, fact.Name = "local_mcp", args.Connector.ConnectorName
+			}
 		}
 		if err != nil {
 			fact.Failed = 1
+			if !requireTool && ctx.Err() == nil && err.Error() != "tool_permission_cancelled" && err.Error() != "tool_approval_unavailable" {
+				value = "Tool failed (" + safeDesktopTurnFailure(err) + "). Use the observed result to correct the request, choose another suitable action, or explain the failure."
+			}
 		}
 		runs = append(runs, workspaceToolRun{Call: &invocation, Report: fact, Output: value, ResponseItems: answer.ResponseItems})
-		if err != nil {
+		if err != nil && (requireTool || ctx.Err() != nil || err.Error() == "tool_permission_cancelled" || err.Error() == "tool_approval_unavailable") {
 			return "", usage, runs, err
 		}
 		talk = append(talk, answer, toolConversationMessage{Role: "tool", Content: &value, ToolCallID: invocation.ID})
@@ -243,7 +295,7 @@ func parseModelToolArguments(invocation modelToolUse, approved []string, allowWr
 	if !builtins[invocation.Function.Name] {
 		return toolArguments{}, invalid
 	}
-	if invocation.Function.Name == designReadTool || designWriteTool(invocation.Function.Name) {
+	if designTool(invocation.Function.Name) {
 		raw := json.RawMessage(invocation.Function.Arguments)
 		if !validDesignToolArguments(invocation.Function.Name, raw) || designWriteTool(invocation.Function.Name) && !allowWrite {
 			return toolArguments{}, invalid

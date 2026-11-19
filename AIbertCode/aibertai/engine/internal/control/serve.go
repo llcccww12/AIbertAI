@@ -9,12 +9,13 @@ import (
 	"os"
 	"time"
 
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/preflight"
+	"aibertai.local/engine/internal/preflight"
 )
 
 const ConfigPath = "/etc/monkeyai-engine/config.json"
 const KeyPath = "/var/lib/monkeyai-engine/control/identity.key"
 const UpgradePath = "/var/lib/monkeyai-engine/control/upgrade.json"
+const SourceUpgradePath = "/var/lib/monkeyai-engine/control/source-upgrade.json"
 const HealthPath = "/var/lib/monkeyai-engine/control/health.json"
 
 type Health struct {
@@ -80,7 +81,7 @@ func ServeVersion(ctx context.Context, log io.Writer, commands CommandLoop, vers
 				if commands != nil {
 					report.NetworkPolicies = commands.NetworkPolicies(ctx)
 					report.RuntimeProtocol = 1
-					report.RuntimeUpdateProtocol = 2
+					report.RuntimeUpdateProtocol = 3
 				}
 				upgrade, upgradeErr := remoteUpgradePath.report(ctx)
 				if upgradeErr != nil {
@@ -114,8 +115,12 @@ func ServeVersion(ctx context.Context, log io.Writer, commands CommandLoop, vers
 		if pending != nil && !errors.Is(pending, os.ErrNotExist) {
 			return pending
 		}
+		_, sourcePending := os.Lstat(SourceUpgradePath)
+		if sourcePending != nil && !errors.Is(sourcePending, os.ErrNotExist) {
+			return sourcePending
+		}
 		// 升级器确认新进程心跳后才放行任务，失败回滚不会让新版改写环境状态。
-		if commands != nil && errors.Is(pending, os.ErrNotExist) {
+		if commands != nil && errors.Is(pending, os.ErrNotExist) && errors.Is(sourcePending, os.ErrNotExist) {
 			if err := commands.Tick(ctx, c, cfg); errors.Is(err, ErrUnauthorized) {
 				return err
 			} else if err != nil {

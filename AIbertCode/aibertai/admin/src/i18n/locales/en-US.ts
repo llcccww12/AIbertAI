@@ -1274,7 +1274,8 @@ export const enUS = {
       },
       resources: {
         title: "Resource usage",
-        note: "Team connectors use gateway MCP facts; local tools use reported turn facts.",
+        note: "Models and team connectors use gateway records. Local tools use session reports. Clear Used resources only to include enabled resources.",
+        usedOnly: "Used resources only",
         invalidRange:
           "Select both dates. The end date cannot be earlier than the start date.",
         kinds: {

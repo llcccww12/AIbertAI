@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -39,7 +40,7 @@ func (p connectorPreferences) normalized() connectorPreferences {
 	if p.Bindings == nil {
 		p.Bindings = map[string]string{}
 	}
-	if p.Builtin == nil {
+	if len(p.Builtin) == 0 || bytes.Equal(bytes.TrimSpace(p.Builtin), []byte("null")) {
 		p.Builtin = json.RawMessage("{}")
 	}
 	return p
@@ -141,14 +142,13 @@ func (h *relaySessionHost) sessionConnectorResources(raw json.RawMessage, write 
 		change := request.Change
 		switch change.Kind {
 		case "resource":
-			id, ok := strings.CutPrefix(change.ID, "mcp/server/")
-			if !ok || !validUUID(id) || change.Enabled == nil {
+			name, ok := strings.CutPrefix(change.ID, "mcp/")
+			if !ok || !h.validConnectorPreference(name) || change.Enabled == nil {
 				return nil, errors.New("invalid_session_resources")
 			}
 			prefs.Enabled[change.ID] = *change.Enabled
 		case "mcp_tool":
-			id, ok := strings.CutPrefix(change.Server, "server/")
-			if !ok || !validUUID(id) || change.Enabled == nil || change.Name == "" || len(change.Name) > 256 {
+			if !h.validConnectorPreference(change.Server) || change.Enabled == nil || change.Name == "" || len(change.Name) > 256 {
 				return nil, errors.New("invalid_session_resources")
 			}
 			states := maps.Clone(prefs.Tools[change.Server])
@@ -194,7 +194,23 @@ func (h *relaySessionHost) sessionConnectorResources(raw json.RawMessage, write 
 	for _, name := range legacyWorkspaceToolNames {
 		items = append(items, map[string]any{"kind": "tool", "id": "builtin-tool/" + name, "name": name, "available": true, "enabled": builtin.allows(name)})
 	}
-	return map[string]any{"sessionId": session.ID, "instance": 1, "preferences": prefs.normalized(),
+	var expert any
+	if session.ExpertID != "" {
+		expert = map[string]any{"id": session.ExpertID, "name": session.ExpertName, "skills": []any{}}
+	}
+	return map[string]any{"sessionId": session.ID, "instance": 1, "preferences": prefs.normalized(), "expert": expert,
 		"preferencesRevision": session.ResourceRevision, "configurationRevision": session.ResourceRevision,
 		"snapshot": map[string]any{"revision": session.ResourceRevision, "state_version": session.ResourceRevision, "items": items}}, nil
+}
+
+func (h *relaySessionHost) validConnectorPreference(name string) bool {
+	if id, server := strings.CutPrefix(name, "server/"); server {
+		return validUUID(id)
+	}
+	imported := h.runtimeResources()
+	if h.local == nil || imported == nil {
+		return false
+	}
+	_, exists := imported.Local[localMCPToolID(name)]
+	return exists
 }

@@ -59,7 +59,7 @@ try {
             ? { id: "admin", name: "管理员", role: "admin", status: "active" }
             : null,
         }
-      else if (p.endsWith("/branding")) body = { product_name: "MonkeyAI" }
+      else if (p.endsWith("/branding")) body = { product_name: "AIbertAI" }
       else if (p.endsWith("/license/status")) body = { state: "valid" }
       else if (p.endsWith("/settings"))
         body = { settings: [{ key: "authentication", value: authentication }] }

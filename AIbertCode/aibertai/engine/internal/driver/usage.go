@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/lifecycle"
+	"aibertai.local/engine/internal/lifecycle"
 )
 
 type cpuStats struct {

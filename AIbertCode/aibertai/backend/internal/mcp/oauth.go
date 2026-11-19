@@ -366,7 +366,7 @@ func (s *Service) Callback(w http.ResponseWriter, r *http.Request) {
 		message = web.Notice(ctx, "oauth_succeeded_test_failed")
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if _, err := fmt.Fprintf(w, "<!doctype html><html lang=\"%s\"><meta charset=\"utf-8\"><title>MonkeyAI OAuth</title><p>%s</p></html>", web.Locale(ctx), html.EscapeString(message)); err != nil {
+	if _, err := fmt.Fprintf(w, "<!doctype html><html lang=\"%s\"><meta charset=\"utf-8\"><title>AIbertAI OAuth</title><p>%s</p></html>", web.Locale(ctx), html.EscapeString(message)); err != nil {
 		logging.Event(ctx, slog.Default(), slog.LevelWarn, "mcp.operation.warn", "写入 OAuth 授权结果失败", "module", "mcp", "operation", "Callback", "connector_id", id, "credential_id", credential, "failure_reason", "response_write_failed", "error_type", fmt.Sprintf("%T", err), "error", err)
 	}
 }

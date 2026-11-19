@@ -194,7 +194,7 @@ backend/internal/identity/      受限设备请求自动批准与执行授权
 backend/internal/endpoint/      托管执行端登记
 backend/internal/relay/         复用中转及新增实例校验
 engine/                        新增的独立 Go 模块与宿主管理程序
-  cmd/monkeyai-engine/
+  cmd/aibertai-engine/
   internal/control/            认证与后台协议
   internal/reconcile/          本地状态核对
   internal/driver/             驱动接口与 gVisor 实现

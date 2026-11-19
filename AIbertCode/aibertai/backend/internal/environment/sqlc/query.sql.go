@@ -1330,7 +1330,8 @@ func (q *Queries) OpenBillingPeriod(ctx context.Context, arg OpenBillingPeriodPa
 
 const openPrepaidBillingHour = `-- name: OpenPrepaidBillingHour :one
 INSERT INTO environment_billing_periods(environment_id,user_id,generation,pricing,cpu_millis,memory_bytes,started_at,confirmed_until,prepaid_until)
-VALUES($1,$2,$3,$4,$5,$6,$7,$7,$7+interval '1 hour') RETURNING id, environment_id, user_id, generation, pricing, cpu_millis, memory_bytes, started_at, confirmed_until, closed_at, settled_seconds, settled_amount, prepaid_until
+VALUES($1,$2,$3,$4,$5,$6,$7::timestamptz,$7::timestamptz,
+ $7::timestamptz+interval '1 hour') RETURNING id, environment_id, user_id, generation, pricing, cpu_millis, memory_bytes, started_at, confirmed_until, closed_at, settled_seconds, settled_amount, prepaid_until
 `
 
 type OpenPrepaidBillingHourParams struct {
@@ -1503,6 +1504,7 @@ SELECT NOT EXISTS(SELECT 1 FROM environment_runtimes WHERE machine_id=$1::uuid) 
  SELECT 1 FROM environments e JOIN environment_runtimes r ON r.environment_id=e.id JOIN users u ON u.id=e.user_id JOIN hosts h ON h.id=e.host_id
  WHERE r.machine_id=$1::uuid AND e.user_id=$2::uuid AND e.desired='running' AND e.phase<>'failed'
  AND e.generation=r.generation AND e.instance_id=r.instance_id AND u.status='active' AND u.deleted_at IS NULL AND h.status='active'
+ AND (NOT $3::boolean OR (e.spec->'runtime_package'->'files') ? 'aibertai-native')
  AND (
   NOT EXISTS(SELECT 1 FROM settings c WHERE c.key='billing'
    AND ((SELECT value->'environment' FROM settings WHERE key='billing')->>'enabled')::boolean
@@ -1514,12 +1516,13 @@ SELECT NOT EXISTS(SELECT 1 FROM environment_runtimes WHERE machine_id=$1::uuid) 
 `
 
 type RuntimeAccessParams struct {
-	MachineID string `json:"machine_id"`
-	UserID    string `json:"user_id"`
+	MachineID  string `json:"machine_id"`
+	UserID     string `json:"user_id"`
+	SourceOnly bool   `json:"source_only"`
 }
 
 func (q *Queries) RuntimeAccess(ctx context.Context, arg RuntimeAccessParams) (*bool, error) {
-	row := q.db.QueryRow(ctx, runtimeAccess, arg.MachineID, arg.UserID)
+	row := q.db.QueryRow(ctx, runtimeAccess, arg.MachineID, arg.UserID, arg.SourceOnly)
 	var allowed *bool
 	err := row.Scan(&allowed)
 	return allowed, err

@@ -15,16 +15,16 @@ func (s *Service) upgradeCommand(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, arch := range []string{"amd64", "arm64"} {
 		m, _, err := s.manifest(s.version, arch)
-		if err != nil || m.Files["dockerd"] == "" || m.Files["installer"] == "" {
-			fail(w, r, 503, "服务器缺少完整的 Docker engine 升级资源")
+		if err != nil || !preparedHostRelease(m.Files) {
+			fail(w, r, 503, "服务器缺少 AIbertAI 宿主升级资源")
 			return
 		}
 	}
-	address := s.server + "/api/host/v1/install.sh?version=" + url.QueryEscape(s.version)
+	address := s.server + "/api/host/v1/upgrade.sh?version=" + url.QueryEscape(s.version)
 	command := "sudo bash -c \"$(curl -kfsSL " + quote(address) + " || echo 'exit 1')\""
 	w.Header().Set("Cache-Control", "no-store")
 	resource.JSON(r.Context(), w, 200, map[string]string{"version": s.version, "command": command})
 }
 func (s *Service) upgradeScript(w http.ResponseWriter, r *http.Request) {
-	s.script(w, r)
+	s.bootstrapScript(w, r, true)
 }

@@ -9,8 +9,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/control"
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/lifecycle"
+	"aibertai.local/engine/internal/control"
+	"aibertai.local/engine/internal/lifecycle"
 )
 
 type Mount struct{ Source, Target string }

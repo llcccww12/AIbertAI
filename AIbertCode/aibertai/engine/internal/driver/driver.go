@@ -16,12 +16,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/control"
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/dockerapi"
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/dockernet"
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/lifecycle"
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/standalone"
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/storage"
+	"aibertai.local/engine/internal/control"
+	"aibertai.local/engine/internal/dockerapi"
+	"aibertai.local/engine/internal/dockernet"
+	"aibertai.local/engine/internal/lifecycle"
+	"aibertai.local/engine/internal/standalone"
+	"aibertai.local/engine/internal/storage"
 )
 
 const ownerLabel = dockerapi.Owner
@@ -496,15 +496,12 @@ func (d *Driver) Start(ctx context.Context, s lifecycle.Spec, ref string) error 
 	if err = d.guard(ctx, s, strings.TrimPrefix(c.Name, "/")); err != nil {
 		return err
 	}
-	if c.State.Running {
-		return nil
-	}
-	if s.RuntimePackage != nil {
+	if s.Runtime != nil || s.RuntimePackage != nil {
 		files, err := d.runtimeFiles(ctx, s)
 		if err != nil {
 			return err
 		}
-		if (files.Version != s.RuntimePackage.Version || files.Binary == standalone.Binary) && c.State.Status == "created" && d.runtimeUpdater != nil {
+		if !runtimeInstalled(s, files) && c.State.Status == "created" && d.runtimeUpdater != nil {
 			if err := d.runtimeUpdater(ctx, s); err != nil {
 				return err
 			}
@@ -513,9 +510,12 @@ func (d *Driver) Start(ctx context.Context, s lifecycle.Spec, ref string) error 
 				return err
 			}
 		}
-		if files.Version != s.RuntimePackage.Version || files.Binary == standalone.Binary {
+		if !runtimeInstalled(s, files) {
 			return errors.New("目标 runtime 版本尚未安装")
 		}
+	}
+	if c.State.Running {
+		return nil
 	}
 	if c.State.Status != "created" && !(s.PersistentContainer && c.State.Status == "exited") {
 		return errors.New("实例状态不允许显式启动")

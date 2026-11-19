@@ -25,13 +25,19 @@ type acpLive struct {
 	key            string
 	protocol       string
 	dir, cwd       string
+	cloudWorkspace string
 	store          *desktopSessionStore
 	modelBudget    int
+	modelLocked    bool
 	workspaces     *desktopWorkspaces
 	connectorPrefs connectorPreferences
+	settings       desktopSettings
 	mu             sync.Mutex
 	operations     map[string]string
 	sessions       map[string]acpSession
+	activeTurns    map[string]context.CancelFunc
+	compacting     map[string]bool
+	restarting     bool
 }
 
 func (l *acpLive) authorization(ctx context.Context) (authorization, error) {
@@ -42,18 +48,28 @@ func (l *acpLive) authorization(ctx context.Context) (authorization, error) {
 }
 
 type acpSession struct {
-	ID                   string                `json:"sessionId"`
-	CWD                  string                `json:"cwd"`
-	Workspace            string                `json:"workspace,omitempty"`
-	ProjectID            string                `json:"projectId,omitempty"`
-	Model                string                `json:"model,omitempty"`
-	Created              time.Time             `json:"createdAt"`
-	Updated              time.Time             `json:"updatedAt"`
-	State                string                `json:"state"`
-	Operation            string                `json:"operationId,omitempty"`
-	Turns                []acpTurn             `json:"turns,omitempty"`
-	ConnectorPreferences *connectorPreferences `json:"connectorPreferences,omitempty"`
-	ResourceRevision     int                   `json:"resourceRevision,omitempty"`
+	desktopSessionPresentation
+	ContextSummary       *desktopContextSummary `json:"contextSummary,omitempty"`
+	Goal                 *desktopGoal           `json:"goal,omitempty"`
+	LastGoalRequest      string                 `json:"lastGoalRequest,omitempty"`
+	ID                   string                 `json:"sessionId"`
+	CWD                  string                 `json:"cwd"`
+	Workspace            string                 `json:"workspace,omitempty"`
+	ProjectID            string                 `json:"projectId,omitempty"`
+	ExpertID             string                 `json:"expertId,omitempty"`
+	ExpertName           string                 `json:"expertName,omitempty"`
+	Model                string                 `json:"model,omitempty"`
+	Mode                 string                 `json:"mode,omitempty"`
+	MediaImageModelID    string                 `json:"mediaImageModelId,omitempty"`
+	MediaVideoModelID    string                 `json:"mediaVideoModelId,omitempty"`
+	Thinking             *modelThinking         `json:"thinking,omitempty"`
+	Created              time.Time              `json:"createdAt"`
+	Updated              time.Time              `json:"updatedAt"`
+	State                string                 `json:"state"`
+	Operation            string                 `json:"operationId,omitempty"`
+	Turns                []acpTurn              `json:"turns,omitempty"`
+	ConnectorPreferences *connectorPreferences  `json:"connectorPreferences,omitempty"`
+	ResourceRevision     int                    `json:"resourceRevision,omitempty"`
 	archivedTurns        int
 }
 
@@ -87,16 +103,19 @@ func (l *acpLive) save(session acpSession) error {
 }
 
 func (l *acpLive) create(operation, cwd string) (string, error) {
-	return l.createInWorkspace(operation, cwd, "")
+	return l.createInWorkspace(operation, cwd, "", modelID, expertSelection{}, nil, "", desktopMediaModels{})
 }
 
-func (l *acpLive) createInWorkspace(operation, cwd, projectID string) (string, error) {
+func (l *acpLive) createInWorkspace(operation, cwd, projectID, selected string, expert expertSelection, preference *modelThinking, mode string, media desktopMediaModels) (string, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if !validUUID(operation) {
 		return "", errors.New("invalid_session_parameters")
 	}
 	kind := ""
+	if l.cloudWorkspace != "" && cwd == "" && projectID == "" {
+		cwd = l.cloudWorkspace
+	}
 	if l.workspaces == nil {
 		if cwd != "" && cwd != l.cwd || projectID != "" {
 			return "", errors.New("invalid_session_parameters")
@@ -135,8 +154,13 @@ func (l *acpLive) createInWorkspace(operation, cwd, projectID string) (string, e
 	}
 	now := time.Now().UTC()
 	prefs := l.connectorPrefs
+	if preference == nil {
+		if fallback, ok := l.settings.ModelThinking[selected]; ok {
+			preference = &fallback
+		}
+	}
 	if err := l.save(acpSession{ID: id, CWD: cwd, Workspace: kind, ProjectID: projectID,
-		Model: modelID, Created: now, Updated: now, State: "idle", Operation: operation, ConnectorPreferences: &prefs}); err != nil {
+		Model: selected, Thinking: preference, Mode: mode, MediaImageModelID: media.Image, MediaVideoModelID: media.Video, ExpertID: expert.ID, ExpertName: expert.Name, Created: now, Updated: now, State: "idle", Operation: operation, ConnectorPreferences: &prefs}); err != nil {
 		return "", err
 	}
 	l.operations[operation] = id
@@ -189,7 +213,7 @@ func (h *relaySessionHost) currentSessions(cwd string) []map[string]any {
 		defer h.live.mu.Unlock()
 		for _, row := range h.live.sessions {
 			if cwd == "" || cwd == row.CWD {
-				items = append(items, map[string]any{"sessionId": row.ID, "cwd": row.CWD, "title": "AIbertAI 会话", "updatedAt": row.Updated,
+				items = append(items, map[string]any{"sessionId": row.ID, "cwd": row.CWD, "title": row.displayTitle(), "updatedAt": row.Updated,
 					"_meta": row.workspaceMetadata()})
 			}
 		}
@@ -225,7 +249,7 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 		if wsjson.Read(ctx, ws, &in) != nil {
 			return
 		}
-		if in.Version != "2.0" || len(in.ID) == 0 || string(in.ID) == "null" {
+		if in.Version != "2.0" || in.Method == "" || len(in.ID) == 0 || string(in.ID) == "null" {
 			continue
 		}
 		if h.trace && len(in.Method) <= 128 {
@@ -240,9 +264,15 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 				fault = errors.New("initialize_required")
 			} else {
 				initialized = true
-				meta := map[string]any{"sessionReads": map[string]any{"version": 1, "maxBytes": 5 << 20, "queue": true}}
+				meta := map[string]any{"sessionReads": map[string]any{"version": 1, "maxBytes": 5 << 20, "queue": true, "state": 1}}
+				if h.local != nil && h.live != nil && h.acpScope(r, "session:control") == nil {
+					meta["goalMode"] = map[string]int{"version": 1}
+				}
 				if h.terminals != nil && h.acpScope(r, "session:control") == nil {
 					meta["terminal"] = h.terminals.capability()
+				}
+				if h.local == nil && h.live != nil && h.acpScope(r, "session:control") == nil {
+					meta["sessionCancel"] = 1
 				}
 				if h.uploads != nil {
 					meta["uploads"] = map[string]int{"version": 1, "maxFileBytes": relayMaxUpload, "maxChunkBytes": relayUploadChunk, "slotTtlSeconds": int(relayUploadTTL / time.Second)}
@@ -260,7 +290,11 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 				MCPServers             []json.RawMessage
 				AdditionalDirectories  []string
 				Prompt                 []struct{ Type, Text string }
-				Meta                   struct{ OperationID, ProjectID string } `json:"_meta"`
+				Meta                   struct {
+					OperationID, ProjectID, Model, Profile, Mode string
+					MediaModels                                  desktopMediaModels
+					Thinking                                     *modelThinking
+				} `json:"_meta"`
 			}
 			if len(in.Params) != 0 && json.Unmarshal(in.Params, &p) != nil {
 				fault = errors.New("invalid_session_parameters")
@@ -284,8 +318,63 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 					}
 				case "session/load":
 					result, fault = h.loadACP(ctx, ws, p.SessionID, p.CWD)
+				case "session/delete", "_monkeyai/sessions/delete":
+					if h.local == nil || h.live == nil || h.live.store == nil || h.acpScope(r, "session:control") != nil {
+						code, fault = -32001, errRelayAccess
+					} else {
+						result, fault = h.deleteDesktopSessions(ctx, ws, in.Method, in.Params)
+					}
 				case "_monkeyai/session/queue":
 					result, fault = h.handleQueue(ctx, ws, r, in.Params)
+				case "_aibertai/runtime/prepare-restart":
+					if h.local == nil || h.live == nil || len(r.Header.Values("Origin")) != 0 {
+						code, fault = -32001, errRelayAccess
+					} else {
+						result, fault = h.live.prepareDesktopRestart()
+					}
+				case "_monkeyai/session/outline", "_monkeyai/session/compact":
+					scope := "session:read"
+					if in.Method != "_monkeyai/session/outline" {
+						scope = "session:control"
+					}
+					cloud := h.live != nil && h.live.cloudWorkspace != ""
+					if h.live == nil || h.local == nil && !cloud || h.acpScope(r, scope) != nil {
+						code, fault = -32001, errRelayAccess
+					} else {
+						switch in.Method {
+						case "_monkeyai/session/outline":
+							result, fault = h.desktopOutline(p.SessionID)
+						case "_monkeyai/session/compact":
+							result, fault = h.compactDesktopSession(ctx, p.SessionID)
+						}
+					}
+				case "_aibertai/connectors/local/test", "_aibertai/connectors/local/save":
+					if h.local == nil || h.acpScope(r, "resources:manage") != nil {
+						code, fault = -32001, errRelayAccess
+					} else if in.Method == "_aibertai/connectors/local/save" {
+						result, fault = h.saveLocalConnector(ctx, in.Params)
+					} else {
+						result, fault = h.testSavedLocalConnector(ctx, in.Params)
+					}
+				case "session/cancel":
+					if h.live == nil || h.acpScope(r, "session:control") != nil {
+						code, fault = -32001, errRelayAccess
+					} else if !validUUID(p.SessionID) {
+						fault = errors.New("invalid_session_parameters")
+					} else {
+						result = map[string]bool{"stopped": h.live.cancelTurn(p.SessionID)}
+					}
+				case "_monkeyai/session/state/get", "_monkeyai/session/subscribe", "_monkeyai/session/generate-title",
+					"_monkeyai/session/task", "_monkeyai/session/interaction/get", "_monkeyai/session/interaction/answer":
+					scope := "session:read"
+					if in.Method == "_monkeyai/session/interaction/answer" {
+						scope = "session:control"
+					}
+					if h.live == nil || h.acpScope(r, scope) != nil {
+						code, fault = -32001, errRelayAccess
+					} else {
+						result, fault = h.sessionDetail(r, in.Method, in.Params)
+					}
 				case "_aibertai/workspace/authorize":
 					if h.local == nil || h.live == nil || h.live.workspaces == nil || len(r.Header.Values("Origin")) != 0 {
 						code, fault = -32601, errors.New("method_not_found")
@@ -298,6 +387,12 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 					} else {
 						result, fault = h.savedDesktopAttachment(in.Params)
 					}
+				case "_aibertai/design/media-model":
+					if h.local == nil || h.live == nil || len(r.Header.Values("Origin")) != 0 || h.acpScope(r, "session:control") != nil {
+						fault = errRelayAccess
+					} else {
+						result, fault = h.desktopMediaGateway(ctx, in.Params)
+					}
 				case "_monkeyai/devices/list", "_monkeyai/devices/connect",
 					"_monkeyai/device/remote/status", "_monkeyai/device/remote/set", "_monkeyai/device/remote/power":
 					if h.local == nil || len(r.Header.Values("Origin")) != 0 {
@@ -305,12 +400,64 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 					} else {
 						result, fault = h.localQuery(ctx, in.Method, in.Params)
 					}
-				case "_monkeyai/config/get", "_monkeyai/config/sync", "_monkeyai/resources/preferences/set", "_monkeyai/session/messages",
-					"_monkeyai/session/tool_output", "_monkeyai/runtime/status":
+				case "_monkeyai/config/models/get", "_monkeyai/config/models/save", "_monkeyai/config/models/delete", "_monkeyai/config/models/create-many", "_monkeyai/config/models/test", "_monkeyai/config/models/discover",
+					"_monkeyai/resources/get", "_monkeyai/resources/save", "_monkeyai/resources/delete",
+					"_monkeyai/resources/experts/details", "_monkeyai/resources/experts/tags", "_monkeyai/resources/connectors/tags", "_monkeyai/resources/skills/tags",
+					"_monkeyai/resources/connectors/test", "_monkeyai/resources/connectors/authorize",
+					"_monkeyai/resources/connectors/authorization", "_monkeyai/resources/connectors/credentials",
+					"_monkeyai/resources/connectors/credentials/get", "_monkeyai/resources/connectors/credentials/create",
+					"_monkeyai/resources/connectors/credentials/update", "_monkeyai/resources/connectors/credentials/revoke":
 					if h.local == nil {
 						code, fault = -32601, errors.New("method_not_found")
 					} else {
 						result, fault = h.localQuery(ctx, in.Method, in.Params)
+					}
+				case "_monkeyai/config/get", "_monkeyai/config/sync", "_monkeyai/resources/preferences/set", "_monkeyai/session/messages",
+					"_monkeyai/session/tool_output", "_monkeyai/runtime/status",
+					"_monkeyai/preferences/model-thinking/set", "_monkeyai/resources/recipients", "_monkeyai/resources/share", "_monkeyai/users/search", "_monkeyai/groups/search",
+					"_monkeyai/drafts", "_monkeyai/draft/set",
+					"_monkeyai/environments/list", "_monkeyai/environments/get", "_monkeyai/environments/operations", "_monkeyai/environments/change",
+					"_monkeyai/config/goals/set", "_monkeyai/config/display/set", "_monkeyai/billing/account", "_monkeyai/billing/entries":
+					if h.local == nil {
+						code, fault = -32601, errors.New("method_not_found")
+					} else {
+						result, fault = h.localQuery(ctx, in.Method, in.Params)
+					}
+				case "_monkeyai/session/expert/set":
+					if h.live == nil || h.live.store == nil {
+						code, fault = -32601, errors.New("method_not_found")
+					} else if err := h.acpScope(r, "session:control"); err != nil {
+						code, fault = -32001, errRelayAccess
+					} else {
+						result, fault = h.setDesktopSessionExpert(ctx, in.Params)
+					}
+				case "session/set_mode":
+					result, fault = h.setACPPermissionMode(r, in.Params, "")
+				case "_monkeyai/session/goal":
+					if h.local == nil || h.live == nil || h.acpScope(r, "session:control") != nil {
+						fault = errRelayAccess
+					} else {
+						result, fault = h.live.desktopGoalAction(in.Params)
+					}
+				case "_monkeyai/session/rename", "_monkeyai/session/flags":
+					if h.local == nil || h.live == nil || h.acpScope(r, "session:control") != nil {
+						fault = errRelayAccess
+					} else {
+						result, fault = h.updateDesktopSessionPresentation(in.Method, in.Params)
+					}
+				case "_monkeyai/session/media-models/set":
+					if h.local == nil || h.acpScope(r, "session:control") != nil {
+						code, fault = -32001, errRelayAccess
+					} else {
+						result, fault = h.setDesktopSessionMedia(ctx, in.Params)
+					}
+				case "_monkeyai/session/model/set", "_monkeyai/session/thinking/set":
+					if h.live == nil || h.local == nil && h.live.cloudWorkspace == "" {
+						code, fault = -32601, errors.New("method_not_found")
+					} else if err := h.acpScope(r, "session:control"); err != nil {
+						code, fault = -32001, errRelayAccess
+					} else {
+						result, fault = h.setDesktopSessionModel(ctx, in.Method, in.Params)
 					}
 				case "_monkeyai/session/resources", "_monkeyai/session/resources/set":
 					if h.live == nil || h.live.workspaces == nil {
@@ -329,17 +476,23 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 							result, fault = h.live.workspaces.projects(in.Method, in.Params)
 						}
 					}
-				case "_monkeyai/workspace/list", "_monkeyai/workspace/read", "_monkeyai/workspace/stat", "_monkeyai/workspace/resolve", "_monkeyai/session/workspace":
+				case "_monkeyai/workspace/list", "_monkeyai/workspace/read", "_monkeyai/workspace/stat", "_monkeyai/workspace/resolve", "_monkeyai/workspace/changes", "_monkeyai/workspace/diff", "_monkeyai/session/workspace":
 					if h.live == nil || h.live.workspaces == nil {
 						code, fault = -32601, errors.New("method_not_found")
 					} else if err := h.acpScope(r, "files:read"); err != nil {
 						code, fault = -32001, errRelayAccess
 					} else {
-						result, fault = h.workspaceQuery(in.Method, in.Params)
+						result, fault = h.workspaceQuery(ctx, in.Method, in.Params)
+					}
+				case "_monkeyai/session/files/preview":
+					if h.live == nil || h.live.workspaces == nil || h.acpScope(r, "files:read") != nil {
+						code, fault = -32001, errRelayAccess
+					} else {
+						result, fault = h.sessionFilePreview(ctx, in.Params)
 					}
 				case "_monkeyai/workspace/link":
 					if h.local != nil && h.live != nil && h.live.workspaces != nil {
-						result, fault = h.workspaceQuery(in.Method, in.Params)
+						result, fault = h.workspaceQuery(ctx, in.Method, in.Params)
 					} else if h.uploads != nil {
 						result, fault = h.acpFile(r, in.Method, in.Params)
 					} else {
@@ -361,16 +514,38 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 						code, fault = -32001, errRelayAccess
 					} else if in.Method == "session/new" {
 						var id string
-						if h.local != nil && p.Meta.OperationID == "" {
+						if h.local != nil {
+							if p.Meta.Mode != "" && !validACPMode(p.Meta.Mode) {
+								fault = errors.New("invalid_session_mode")
+							} else {
+								fault = h.validateDesktopMedia(ctx, p.Meta.MediaModels)
+							}
+						}
+						if p.Meta.Thinking != nil && !p.Meta.Thinking.valid() {
+							fault = errors.New("invalid_model_thinking")
+						}
+						if fault == nil && h.local != nil && p.Meta.OperationID == "" {
 							p.Meta.OperationID, fault = newUUID()
 						}
 						if fault == nil {
-							id, fault = h.live.createInWorkspace(p.Meta.OperationID, p.CWD, p.Meta.ProjectID)
+							selected := modelID
+							if (h.local != nil || h.live.cloudWorkspace != "") && p.Meta.Model != "" {
+								selected, fault = h.desktopSelectedModel(ctx, p.Meta.Model)
+							}
+							if fault == nil {
+								var expert desktopExpert
+								if p.Meta.Profile != "" {
+									expert, fault = h.resolveDesktopExpert(ctx, p.Meta.Profile)
+								}
+								if fault == nil {
+									id, fault = h.live.createInWorkspace(p.Meta.OperationID, p.CWD, p.Meta.ProjectID, selected, expert.expertSelection, p.Meta.Thinking, p.Meta.Mode, p.Meta.MediaModels)
+								}
+							}
 						}
 						if fault == nil {
 							var row acpSession
 							row, fault = h.live.load(id)
-							result = map[string]any{"sessionId": id, "_meta": row.workspaceMetadata()}
+							result = map[string]any{"sessionId": id, "_meta": row.workspaceMetadata(), "modes": map[string]string{"currentModeId": row.permissionMode()}}
 						}
 					} else if len(p.Prompt) != 1 || p.Prompt[0].Type != "text" || strings.TrimSpace(p.Prompt[0].Text) == "" || len(p.Prompt[0].Text) > 16<<10 {
 						fault = errors.New("invalid_prompt")
@@ -411,7 +586,8 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 }
 
 func (row acpSession) workspaceMetadata() map[string]any {
-	return map[string]any{"cwd": row.CWD, "model": row.Model, "isDefaultWorkspace": row.Workspace != "selected", "projectId": row.ProjectID, "status": row.State}
+	return map[string]any{"cwd": row.CWD, "model": row.Model, "thinking": row.Thinking, "mode": row.permissionMode(), "mediaImageModelId": row.MediaImageModelID, "mediaVideoModelId": row.MediaVideoModelID, "expertId": row.ExpertID, "configurationRevision": row.ResourceRevision, "isDefaultWorkspace": row.Workspace != "selected", "projectId": row.ProjectID, "status": row.State, "goalModeAvailable": row.Workspace != "", "goal": row.Goal,
+		"titleSource": row.titleSource(), "pinned": row.Pinned, "archivedAt": row.ArchivedAt, "readAt": row.ReadAt}
 }
 
 func (h *relaySessionHost) acpFile(r *http.Request, method string, raw json.RawMessage) (any, error) {

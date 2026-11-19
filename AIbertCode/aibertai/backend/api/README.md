@@ -207,18 +207,18 @@ API Key 通过全局 `POST /api/v1/api-keys` 创建，负责认证调用用户�
 
 ```json
 {
-  "url": "https://monkeyai.example/mcp/connectors/<connector_id>/credentials/<credential_id>",
+  "url": "https://office.example.com/mcp/connectors/<connector_id>/credentials/<credential_id>",
   "transport": "streamable_http",
   "authentication": "api_key",
   "required_scope": "mcp:invoke"
 }
 ```
 
-创建调用密钥使用登录后的 MonkeyAI OAuth access token，无需传入连接、凭证或工具绑定：
+创建调用密钥使用登录后的 AIbertAI OAuth access token，无需传入连接、凭证或工具绑定：
 
 ```http
 POST /api/v1/api-keys
-Authorization: Bearer <MonkeyAI access_token>
+Authorization: Bearer <AIbertAI access_token>
 Content-Type: application/json
 
 {
@@ -230,7 +230,7 @@ Content-Type: application/json
 
 返回 201，`api_key` 原文仅本次返回。同一个 Key 可以访问当前用户有权使用的多个凭证地址，更换凭证只需切换地址。`GET /api/v1/api-keys` 返回元数据；`POST /api/v1/api-keys/{keyID}/rotate` 返回同名、同 scope 的新密钥并撤销旧密钥。需要同时调用模型时，scopes 增加 `model:invoke`。
 
-每次请求校验密钥、用户状态、连接使用权、地址对应凭证的归属及有效性。撤销资源分享、凭证或密钥会阻止后续请求。凭证撤销后，即使同一连接创建了新凭证，旧地址仍失效；不会自动切换凭证。更新或重新授权保留同一个凭证 ID，更新后需同步工具目录。上游地址、Header 和 OAuth Token 留在服务端，进入 MonkeyAI 的 API Key 不转发给上游。
+每次请求校验密钥、用户状态、连接使用权、地址对应凭证的归属及有效性。撤销资源分享、凭证或密钥会阻止后续请求。凭证撤销后，即使同一连接创建了新凭证，旧地址仍失效；不会自动切换凭证。更新或重新授权保留同一个凭证 ID，更新后需同步工具目录。上游地址、Header 和 OAuth Token 留在服务端，进入 AIbertAI 的 API Key 不转发给上游。
 
 客户端按返回的网关地址注册 Streamable HTTP MCP Server，可为多个地址复用同一个 Key。握手示例：
 
@@ -249,7 +249,7 @@ Accept: application/json, text/event-stream
 
 专家清单、资源 resolve、REST 工具接口及所有认证模式的 MCP `tools/list` 均实时发现远端工具，不回退旧目录。各认证模式保留历史工具 ID 和启停配置，独立认证的单价固定为零；无认证／集中认证叠加本地单价，没有配置记录时默认开启、单价为零。查询和连接测试均不创建工具记录。`PATCH /api/admin/v1/connectors/{id}/tools/{toolID}` 兼容省略 `name` 的旧请求：已有配置按 ID 更新，无认证／集中认证的新工具实时反查名称后创建配置；独立认证仅允许修改已有配置的开关，不新增配置。数据库历史目录记录不清理，但描述和 Schema 不再用于回包。连接器详情不再返回基于旧目录计算的 `tool_count`、`enabled_tool_count`。
 
-入口为无状态 Streamable HTTP：POST 返回 JSON，通知返回空的 202，GET/DELETE 返回 405；不产生下游 `Mcp-Session-Id`，不提供主动推送、resources、prompts 或 sampling/elicitation。上游支持 HTTP POST 的 JSON/SSE 响应，每次调用独立握手并在结束后发送 DELETE 清理上游会话；不支持旧版 GET SSE 传输、跨调用上游会话状态或本地 stdio 进程。非空 Origin 必须与 `MONKEYAI_PUBLIC_URL` 同源。
+入口为无状态 Streamable HTTP：POST 返回 JSON，通知返回空的 202，GET/DELETE 返回 405；不产生下游 `Mcp-Session-Id`，不提供主动推送、resources、prompts 或 sampling/elicitation。上游支持 HTTP POST 的 JSON/SSE 响应，每次调用独立握手并在结束后发送 DELETE 清理上游会话；不支持旧版 GET SSE 传输、跨调用上游会话状态或本地 stdio 进程。非空 Origin 必须与 `AIBERTAI_PUBLIC_URL` 同源。
 
 工具调用可携带 `X-Session-ID` 关联本人工作会话，或 `Idempotency-Key` 避免重复执行；重复请求返回 409 和原 `X-Billing-Transaction-ID`。集中认证仅成功调用收费，独立认证和免认证只记录调用。JSON-RPC 错误或 `isError=true` 释放预留；超时、断流、无效结果保持未知状态供核查，不自动重放。上游 JSON/SSE 响应限制为 4 MiB，请求体限制为 1 MiB。
 
@@ -257,9 +257,9 @@ Accept: application/json, text/event-stream
 
 ## MCP OAuth 回调
 
-OAuth MCP 创建、详情和管理列表响应提供 `callback_url`，格式为 `{MONKEYAI_PUBLIC_URL}/oauth/connectors/{id}/callback`，其中 `id` 为 Connector 实例 ID。非 OAuth 连接返回空字符串。创建后将此完整地址登记到第三方 OAuth 应用；每个 Connector 使用自己的地址。
+OAuth MCP 创建、详情和管理列表响应提供 `callback_url`，格式为 `{AIBERTAI_PUBLIC_URL}/oauth/connectors/{id}/callback`，其中 `id` 为 Connector 实例 ID。非 OAuth 连接返回空字符串。创建后将此完整地址登记到第三方 OAuth 应用；每个 Connector 使用自己的地址。
 
-`POST /api/admin/v1/connectors/{id}/oauth/authorizations`（集中认证）或 `POST /api/v1/connectors/{id}/oauth/authorizations`（独立认证）请求体为 `{"name":"凭证名称"}`，生成带 state 和 PKCE 的授权 URL，`redirect_uri` 与 `callback_url` 一致。浏览器回调无需登录凭据，服务端核验路径 id、state、事务有效期、发起人权限和配置版本，单次消费后交换 Token，并按集中或独立认证上下文保存。保存凭证后服务端自动测试 MCP 连接与工具发现，不保存工具目录，完成测试尝试后授权状态才变为 `succeeded`。成功页面提示返回 MonkeyAI，发起端通过授权事务状态接口查询结果；连接测试失败不撤销已保存的认证，凭证的 `connection_status` 和 `last_error` 记录测试结果。
+`POST /api/admin/v1/connectors/{id}/oauth/authorizations`（集中认证）或 `POST /api/v1/connectors/{id}/oauth/authorizations`（独立认证）请求体为 `{"name":"凭证名称"}`，生成带 state 和 PKCE 的授权 URL，`redirect_uri` 与 `callback_url` 一致。浏览器回调无需登录凭据，服务端核验路径 id、state、事务有效期、发起人权限和配置版本，单次消费后交换 Token，并按集中或独立认证上下文保存。保存凭证后服务端自动测试 MCP 连接与工具发现，不保存工具目录，完成测试尝试后授权状态才变为 `succeeded`。成功页面提示返回 AIbertAI，发起端通过授权事务状态接口查询结果；连接测试失败不撤销已保存的认证，凭证的 `connection_status` 和 `last_error` 记录测试结果。
 
 原有 OAuth 应用需将统一的 `/oauth/connectors/callback` 更新为各 MCP 的专属地址，再重新发起授权。
 

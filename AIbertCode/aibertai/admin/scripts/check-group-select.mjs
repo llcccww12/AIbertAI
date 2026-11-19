@@ -87,7 +87,7 @@ try {
       avatarRequests = new Set()
     page.on("pageerror", (error) => errors.push(error.message))
     await page.addInitScript(({ language, dark }) => {
-      localStorage.setItem("monkeyai-admin-language", language)
+      localStorage.setItem("aibertai-admin-language", language)
       localStorage.setItem("theme", dark ? "dark" : "light")
     }, config)
     const groups = [
@@ -144,7 +144,7 @@ try {
             },
           })
         if (pathname.endsWith("/branding"))
-          return json({ product_name: "MonkeyAI" })
+          return json({ product_name: "AIbertAI" })
         if (pathname.endsWith("/license/status"))
           return json({ state: "valid" })
         if (

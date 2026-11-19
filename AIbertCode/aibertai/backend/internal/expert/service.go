@@ -81,12 +81,13 @@ func (s *Service) validate(ctx context.Context, tx pgx.Tx, in, old resource.Obje
 		key, kind string
 		lock      func(context.Context, string) ([]byte, error)
 	}{{"rule_ids", "rule", queries.LockRule}, {"skill_ids", "skill", queries.LockSkill}, {"connectors", "connector", queries.LockConnector}} {
-		ids := resource.Strings(in[link.key])
+		var ids []string
 		if link.kind == "connector" {
-			ids = nil
 			for _, p := range connectorLinks(in[link.key]) {
 				ids = append(ids, p.String("connector_id"))
 			}
+		} else {
+			ids = resource.Strings(in[link.key])
 		}
 		seen := map[string]bool{}
 		for _, id := range ids {

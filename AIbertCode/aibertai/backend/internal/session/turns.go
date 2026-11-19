@@ -59,7 +59,8 @@ func (s *Service) postTurns(w http.ResponseWriter, r *http.Request) {
 		resource.Fail(r.Context(), w, err)
 		return
 	}
-	if err := s.checkReporting(r.Context()); err != nil {
+	reportText, err := s.reportingPolicy(r.Context())
+	if err != nil {
 		resource.Fail(r.Context(), w, err)
 		return
 	}
@@ -90,6 +91,13 @@ func (s *Service) postTurns(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		resource.Fail(r.Context(), w, err)
 		return
+	}
+	if !reportText {
+		// Keep the submitted hash so retries still match after a policy change.
+		for i := range preparedTurns {
+			preparedTurns[i].input.Input.Text = nil
+			preparedTurns[i].input.Input.TextTruncated = nil
+		}
 	}
 
 	tx, err := s.begin(r.Context())

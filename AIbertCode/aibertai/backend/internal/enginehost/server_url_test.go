@@ -12,35 +12,44 @@ import (
 )
 
 func TestServerURLScriptAndBootstrap(t *testing.T) {
+	bin := bootstrapMockBin(t)
+	program := []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$INSTALL_ARGS\"\n")
+	releases := fixture(t)
+	for _, arch := range []string{"amd64", "arm64"} {
+		path := filepath.Join(releases, "v1", arch, "manifest.json")
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m manifest
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatal(err)
+		}
+		m.Files["installer"] = hash(program)
+		m.Files["monkeyai-engine"] = hash(program)
+		if err := os.WriteFile(filepath.Join(releases, "v1", arch, "monkeyai-engine"), program, 0700); err != nil {
+			t.Fatal(err)
+		}
+		raw, err = json.Marshal(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	service := NewService(nil).WithInstallation("https://control.example", releases, "v1")
+	router := chi.NewRouter()
+	service.Register(router)
+
 	for _, address := range []string{"", "http://work.chaitin.net", "http://127.0.0.1:8080/"} {
 		t.Run(address, func(t *testing.T) {
-			cmd, dir := bootstrapCommand(t, false, "0")
+			cmd, dir := bootstrapCommand(t, bin, false, "0")
 			argsPath := filepath.Join(dir, "installer-args")
 			source := filepath.Join(dir, "installer")
-			program := []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$INSTALL_ARGS\"\n")
 			if err := os.WriteFile(source, program, 0700); err != nil {
 				t.Fatal(err)
 			}
-			releases := fixture(t)
-			for _, arch := range []string{"amd64", "arm64"} {
-				path := filepath.Join(releases, "v1", arch, "manifest.json")
-				raw, err := os.ReadFile(path)
-				if err != nil {
-					t.Fatal(err)
-				}
-				var m manifest
-				if err := json.Unmarshal(raw, &m); err != nil {
-					t.Fatal(err)
-				}
-				m.Files["installer"] = hash(program)
-				raw, _ = json.Marshal(m)
-				if err := os.WriteFile(path, raw, 0600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			service := NewService(nil).WithInstallation("https://control.example", releases, "v1")
-			router := chi.NewRouter()
-			service.Register(router)
 			query := url.Values{"version": {"v1"}}
 			if address != "" {
 				query.Set("server_url", address)
@@ -55,17 +64,6 @@ func TestServerURLScriptAndBootstrap(t *testing.T) {
 			}
 			cmd.Args = cmd.Args[:2]
 			cmd.Env = append(cmd.Env, "INSTALL_ARGS="+argsPath)
-			curlPath := filepath.Join(dir, "bin", "curl")
-			mock, err := os.ReadFile(curlPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			mock = append([]byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CURL_ARGS\"\n"), mock...)
-			if err := os.WriteFile(curlPath, mock, 0700); err != nil {
-				t.Fatal(err)
-			}
-			curlArgs := filepath.Join(dir, "curl-args")
-			cmd.Env = append(cmd.Env, "CURL_ARGS="+curlArgs)
 			if output, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("安装脚本失败：%v %s", err, output)
 			}
@@ -84,7 +82,7 @@ func TestServerURLScriptAndBootstrap(t *testing.T) {
 			} else if !strings.Contains(string(args), "--server-url\n"+strings.TrimRight(address, "/")+"\n") {
 				t.Fatal("内网地址未传入独立安装任务", string(args))
 			}
-			request, err := os.ReadFile(curlArgs)
+			request, err := os.ReadFile(filepath.Join(dir, "work.args"))
 			if err != nil || !strings.Contains(string(request), strings.TrimRight(address, "/")+"/api/host/v1/releases/v1/arm64/installer\n") {
 				t.Fatal("未从指定地址下载安装器", string(request), err)
 			}

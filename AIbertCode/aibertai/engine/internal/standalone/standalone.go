@@ -6,13 +6,11 @@ import (
 	"errors"
 	"regexp"
 
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/lifecycle"
+	"aibertai.local/engine/internal/lifecycle"
 )
 
-type Files struct{ Binary, Engine, Version string }
+type Files struct{ Binary, Version string }
 
-const Binary = "/opt/monkeyai/monkeyai-runtime"
-const Engine = "/opt/monkeyai/ohmyagent"
 const StateDir = "/var/lib/monkeyai/state"
 
 var machineID = regexp.MustCompile(`^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$`)

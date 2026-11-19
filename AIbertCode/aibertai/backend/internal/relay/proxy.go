@@ -36,7 +36,7 @@ func routeScope(method, p string) (string, bool, bool) {
 		return "session:read", true, method == http.MethodPost
 	case p == "/read/config":
 		return "resources:manage", true, method == http.MethodPost
-	case p == "/read/interaction":
+	case p == "/read/interaction" || p == "/write/session/cancel":
 		return "session:control", true, method == http.MethodPost
 	case p == "/write/resource":
 		return "resources:manage", true, method == http.MethodPost

@@ -32,6 +32,16 @@ func TestEnvironmentClientAPI(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if _, err := db.Exec(ctx, "INSERT INTO users(id,name,email,role) VALUES(gen_random_uuid(),'计费管理员','cloud-admin@example.com','admin')"); err != nil {
+		t.Fatal(err)
+	}
+	credits := billing.NewService(db)
+	if err := credits.Initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE settings SET value=jsonb_set(value,'{environment}','{"enabled":true,"cpu_credits_per_core_hour":"1","memory_credits_per_gib_hour":"0"}'::jsonb) WHERE key='billing'`); err != nil {
+		t.Fatal(err)
+	}
 	token := func(user string, scopes []string) string {
 		t.Helper()
 		var grant string
@@ -51,7 +61,7 @@ func TestEnvironmentClientAPI(t *testing.T) {
 	other := token(users[1], []string{"environment:read", "environment:manage"})
 	legacy := token(users[0], []string{"device:connect"})
 	identities := identity.NewService(db, nil, "https://ai.example.com")
-	s := environment.NewService(db).WithBilling(billing.NewService(db)).WithImages(clientEnvironmentImages{}).WithRuntime("https://ai.example.com", resource.ID(), identities)
+	s := environment.NewService(db).WithBilling(credits).WithImages(clientEnvironmentImages{}).WithRuntime("https://ai.example.com", resource.ID(), identities)
 	router := chi.NewRouter()
 	router.Route("/api/v1", func(r chi.Router) { r.Use(identities.RequireAgent); s.RegisterAgent(r) })
 	call := func(method, path, credential, body string, want int) *httptest.ResponseRecorder {
@@ -90,7 +100,7 @@ func TestEnvironmentClientAPI(t *testing.T) {
 		Resource: environment.Resources{CPUMillis: 1000, MemoryBytes: 512 << 20, HostTasks: 512, TemporaryBytes: 64 << 20},
 		Storage:  environment.Storage{WorkspaceBytes: 1 << 30, HomeBytes: 1 << 30, RuntimeBytes: 1 << 30, Inodes: 10000}}
 	raw, _ := json.Marshal(p.Resource)
-	if _, err := db.Exec(ctx, `INSERT INTO host_environment_configs(host_id,resource,billing) VALUES($2,$1,'{"enabled":true,"cpu_credits_per_core_hour":"1","memory_credits_per_gib_hour":"0"}')`, raw, host); err != nil {
+	if _, err := db.Exec(ctx, `INSERT INTO host_environment_configs(host_id,resource) VALUES($2,$1)`, raw, host); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(ctx, `INSERT INTO resource_access_grants(resource_type,resource_id,user_id,all_users,access_level,granted_by_user_id) VALUES('host',$1,$2,false,'read_only',$2)`, host, users[0]); err != nil {
@@ -122,7 +132,7 @@ func TestEnvironmentClientAPI(t *testing.T) {
 	call("POST", "/environments", manage, strings.Replace(input, "项目 A", "项目 B", 1), 409)
 	id := created.Environment.ID
 	var billed environment.View
-	if err := json.Unmarshal(call("GET", "/environments/"+id, read, "", 200).Body.Bytes(), &billed); err != nil || billed.Billing == nil || !billed.Billing.Enabled || billed.Billing.Budget == nil || billed.Billing.Budget.Balance.String() != "10000" || billed.Billing.HourlyCredits.String() != "1" {
+	if err := json.Unmarshal(call("GET", "/environments/"+id, read, "", 200).Body.Bytes(), &billed); err != nil || billed.Billing == nil || !billed.Billing.Enabled || billed.Billing.Budget == nil || billed.Billing.Budget.Balance.String() != "9999" || billed.Billing.HourlyCredits.String() != "1" {
 		t.Fatalf("所属用户未收到真实计费预算：%v %+v", err, billed.Billing)
 	}
 	for _, path := range []string{"/environments/" + id, "/environments/" + id + "/operations"} {

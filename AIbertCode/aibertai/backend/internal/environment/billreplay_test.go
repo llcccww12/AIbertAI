@@ -29,19 +29,13 @@ func TestRepeatedExchangeCannotAdvanceUsageBillingOrReopenPrices(t *testing.T) {
 		t.Fatal("重复报告被接受")
 	}
 	settle(t, s, false)
-	cost(t, s, user, "30", 1)
-	cfg := hostSetup(t, s, host)
-	price := BillingConfig{Enabled: true, CPU: 7200_000000}
-	if _, err := s.saveSetup(t.Context(), host, Setup{Resource: *cfg.Resource, MaxEnvironments: cfg.MaxEnvironments, UserMaxEnvironments: cfg.UserMaxEnvironments, Billing: &price}); err != nil {
-		t.Fatal(err)
-	}
+	cost(t, s, user, "3600", 1)
+	setComputePrice(t, s, BillingConfig{Enabled: true, CPU: 720_000000})
+	*at = at.Add(time.Hour)
 	if _, err := s.ExchangeAt(t.Context(), host, raw, stamp); err == nil {
 		t.Fatal("旧报告可开启新价格时段")
 	}
-	var periods int
-	if err := s.pool.QueryRow(t.Context(), "SELECT count(*) FROM environment_billing_periods WHERE closed_at IS NULL AND environment_id=$1", e.Environment.ID).Scan(&periods); err != nil || periods != 0 {
-		t.Fatal("重复报告重开收费", err, periods)
-	}
+	cost(t, s, user, "3600", 1)
 	current, err := sqlc.New(s.pool).GetEnvironment(t.Context(), sqlc.GetEnvironmentParams{ID: e.Environment.ID})
 	if err != nil || current.Desired != "running" {
 		t.Fatal("拒绝重放改变环境目标", err)

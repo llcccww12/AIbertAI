@@ -2,8 +2,11 @@ package environment
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -13,9 +16,10 @@ import (
 )
 
 type RuntimeUpdate struct {
-	Generation int64  `json:"generation"`
-	RequestKey string `json:"request_key"`
-	Version    string `json:"version,omitempty"`
+	Generation    int64  `json:"generation"`
+	RequestKey    string `json:"request_key"`
+	Version       string `json:"version,omitempty"`
+	IdentityProof string `json:"identity_proof,omitempty"`
 }
 type RuntimeInfo struct {
 	CurrentVersion  string     `json:"current_version"`
@@ -93,8 +97,10 @@ func (s *Service) runtimeInfo(w http.ResponseWriter, r *http.Request) {
 		info.Reason = "请先确认容器已停止"
 	case host.Status != "active" || host.LastSeenAt == nil || time.Since(*host.LastSeenAt) > 90*time.Second:
 		info.Reason = "宿主离线"
-	case report.Protocol < latest.Protocol() || report.Protocol > 2:
+	case report.Protocol < latest.Protocol() || report.Protocol > 3:
 		info.Reason = "请先升级宿主引擎"
+	case runtime.MachineID != nil && changesRuntimeIdentityFormat(spec, latest):
+		info.Reason = "该云电脑的设备身份需要先迁移"
 	default:
 		info.CanUpdate = true
 	}
@@ -117,8 +123,16 @@ func (s *Service) UpdateRuntime(ctx context.Context, user, id string, in Runtime
 	if !uuid.MatchString(user) || !uuid.MatchString(id) || in.Generation < 1 || !key.MatchString(in.RequestKey) || in.Version != "" && !runtimeVersion.MatchString(in.Version) {
 		return result, bad("runtime 更新参数无效")
 	}
+	var proof []byte
+	if in.IdentityProof != "" {
+		var err error
+		proof, err = base64.RawURLEncoding.Strict().DecodeString(in.IdentityProof)
+		if len(in.IdentityProof) != 86 || err != nil || len(proof) != ed25519.SignatureSize || in.Version == "" {
+			return result, bad("云电脑身份迁移签名格式无效")
+		}
+	}
 	requestHash := hash(in)
-	err := s.transaction(ctx, func(q *sqlc.Queries) error {
+	err := s.transactionWithTx(ctx, func(q *sqlc.Queries, tx pgx.Tx) error {
 		env, err := q.GetEnvironment(ctx, sqlc.GetEnvironmentParams{ID: id, UserID: &user})
 		if err != nil {
 			return err
@@ -181,7 +195,7 @@ func (s *Service) UpdateRuntime(ctx context.Context, user, id string, in Runtime
 		if host.Status != "active" || host.LastSeenAt == nil || time.Since(*host.LastSeenAt) > 90*time.Second {
 			return conflict("host_unavailable", "宿主离线")
 		}
-		if report.Protocol < 1 || report.Protocol > 2 {
+		if report.Protocol < 1 || report.Protocol > 3 {
 			return conflict("runtime_update_unsupported", "请先升级宿主引擎")
 		}
 		var release RuntimePackage
@@ -193,11 +207,32 @@ func (s *Service) UpdateRuntime(ctx context.Context, user, id string, in Runtime
 		if err != nil {
 			return conflict("runtime_update_unavailable", "server 没有对应 runtime 发行资源")
 		}
+		if s.sourceRuntime && !release.SourceRuntime() {
+			return conflict("runtime_update_unavailable", "云电脑需要 AIbertAI 源码运行时")
+		}
 		if report.Protocol < release.Protocol() {
 			return conflict("runtime_update_unsupported", "请先升级宿主引擎")
 		}
 		if err := release.Validate(host.Architecture); err != nil {
 			return err
+		}
+		if runtime.MachineID != nil && changesRuntimeIdentityFormat(spec, release) {
+			if !release.SourceRuntime() || len(proof) == 0 {
+				return conflict("runtime_identity_migration_required", "该云电脑的设备身份需要先迁移")
+			}
+			payload := fmt.Sprintf("aibertai.cloud-runtime-migration.v1\n%s\n%d\n%s\n%s\n%s\n%s",
+				env.ID, env.Generation, release.Version, spec.Runtime.ServerID, env.UserID, *runtime.MachineID)
+			if len(runtime.PublicKey) != ed25519.PublicKeySize || !ed25519.Verify(runtime.PublicKey, []byte(payload), proof) {
+				return conflict("runtime_identity_proof_invalid", "迁移签名与原设备、环境代次或目标版本不符")
+			}
+			if s.runtime == nil || s.runtime.auth == nil || s.runtime.serverID != spec.Runtime.ServerID || s.runtime.server != spec.Runtime.Server {
+				return conflict("runtime_update_unavailable", "该云电脑绑定的后台当前不可用")
+			}
+			if err := s.runtime.auth.CheckRuntime(ctx, tx, env.UserID, *runtime.MachineID, runtime.PublicKey); err != nil {
+				return err
+			}
+		} else if len(proof) != 0 {
+			return bad("当前更新无需身份迁移签名")
 		}
 		if in.Version == "" && runtime.RuntimeVersion != "" && !newerRuntime(release.Version, runtime.RuntimeVersion) && release.Version != runtime.RuntimeVersion {
 			return conflict("runtime_downgrade_requires_version", "回退 runtime 需要显式指定 server 已有版本")
@@ -223,4 +258,8 @@ func (s *Service) UpdateRuntime(ctx context.Context, user, id string, in Runtime
 		return nil
 	})
 	return result, err
+}
+
+func changesRuntimeIdentityFormat(spec Spec, release RuntimePackage) bool {
+	return (spec.RuntimePackage != nil && spec.RuntimePackage.SourceRuntime()) != release.SourceRuntime()
 }

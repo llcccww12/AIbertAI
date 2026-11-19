@@ -13,10 +13,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/control"
-	network "github.com/chaitin/MonkeyCode/monkeyai/engine/internal/dockernet"
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/lifecycle"
-	"github.com/chaitin/MonkeyCode/monkeyai/engine/internal/standalone"
+	"aibertai.local/engine/internal/control"
+	network "aibertai.local/engine/internal/dockernet"
+	"aibertai.local/engine/internal/lifecycle"
+	"aibertai.local/engine/internal/standalone"
 )
 
 type Executor interface {
@@ -305,7 +305,7 @@ func (w *Worker) Tick(ctx context.Context, client *control.Client, cfg control.C
 	}
 	w.cursor = out.Cursor
 	w.usage = out.UsageProtocol == 1
-	w.runtimeUpdates = out.RuntimeUpdateProtocol >= 1 && out.RuntimeUpdateProtocol <= 2
+	w.runtimeUpdates = out.RuntimeUpdateProtocol >= 1 && out.RuntimeUpdateProtocol <= 3
 	w.start(ctx)
 	return nil
 }
@@ -384,7 +384,7 @@ func (w *Worker) execute(ctx context.Context, e entry, usage bool) {
 			result.Reason = "runtime_failed"
 		}
 	}
-	if result.Phase == "stopped" && s.RuntimePackage != nil {
+	if result.Phase == "stopped" && s.RuntimePackage != nil && s.RuntimePackage.SourceRuntime() {
 		executor, ok := w.executor.(RuntimeUpdater)
 		if !ok || executor.UpdateRuntime(ctx, s) != nil {
 			result.Phase, result.Reason = "failed", "runtime_upgrade_failed"
@@ -395,7 +395,7 @@ func (w *Worker) execute(ctx context.Context, e entry, usage bool) {
 			result.RuntimeVersion, _ = executor.RuntimeVersion(ctx, s)
 		}
 	}
-	if result.Phase == "stopped" && s.RuntimePackage != nil && result.RuntimeVersion != s.RuntimePackage.Version {
+	if result.Phase == "stopped" && s.RuntimePackage != nil && s.RuntimePackage.SourceRuntime() && result.RuntimeVersion != s.RuntimePackage.Version {
 		result.Phase, result.Reason = "failed", "runtime_upgrade_failed"
 	}
 	if result.Phase == "running" && usage {

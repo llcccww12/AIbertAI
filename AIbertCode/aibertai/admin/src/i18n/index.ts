@@ -35,7 +35,7 @@ export {
 
 function readStoredLanguage(): SupportedLanguage | null {
   try {
-    const storedLanguage = localStorage.getItem(LANGUAGE_STORAGE_KEY)
+    const storedLanguage = localStorage.getItem(LANGUAGE_STORAGE_KEY) ?? localStorage.getItem("monkeyai-admin-language")
     return isSupportedLanguage(storedLanguage) ? storedLanguage : null
   } catch {
     return null

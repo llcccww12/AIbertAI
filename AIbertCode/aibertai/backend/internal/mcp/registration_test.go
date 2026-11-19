@@ -50,7 +50,7 @@ func TestRegisterOAuthClient(t *testing.T) {
 					Method    string   `json:"token_endpoint_auth_method"`
 					Scope     string   `json:"scope"`
 				}
-				if r.Method != "POST" || r.Header.Get("Content-Type") != "application/json" || json.NewDecoder(r.Body).Decode(&body) != nil || body.Name != "MonkeyAI" || len(body.Redirects) != 1 || body.Redirects[0] != redirect || strings.Join(body.Grants, ",") != "authorization_code,refresh_token" || strings.Join(body.Responses, ",") != "code" || body.Method != "none" || body.Scope != "read offline_access" {
+				if r.Method != "POST" || r.Header.Get("Content-Type") != "application/json" || json.NewDecoder(r.Body).Decode(&body) != nil || body.Name != "AIbertAI" || len(body.Redirects) != 1 || body.Redirects[0] != redirect || strings.Join(body.Grants, ",") != "authorization_code,refresh_token" || strings.Join(body.Responses, ",") != "code" || body.Method != "none" || body.Scope != "read offline_access" {
 					t.Error("动态注册请求参数错误")
 				}
 				w.WriteHeader(tc.status)

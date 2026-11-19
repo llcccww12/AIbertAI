@@ -27,10 +27,14 @@ type client struct {
 }
 
 func newClient(raw string) (*client, error) {
+	return newBackendClient(raw, false)
+}
+
+func newBackendClient(raw string, configuredHTTP bool) (*client, error) {
 	origin, err := url.Parse(raw)
 	if err != nil || origin.Hostname() == "" || origin.User != nil ||
 		origin.Path != "" || origin.RawQuery != "" || origin.ForceQuery || origin.Fragment != "" ||
-		(origin.Scheme != "https" && !(origin.Scheme == "http" && origin.Hostname() == "127.0.0.1")) {
+		(origin.Scheme != "https" && !(origin.Scheme == "http" && (configuredHTTP || origin.Hostname() == "127.0.0.1"))) {
 		return nil, errors.New("后端必须是无路径的 HTTPS 地址，本机验收可用 127.0.0.1 HTTP")
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()

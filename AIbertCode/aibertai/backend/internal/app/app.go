@@ -393,7 +393,8 @@ func newApplicationHandlerWithMembers(ctx context.Context, logger *slog.Logger, 
 			return nil, fmt.Errorf("初始化远程执行中转: %w", err)
 		}
 		identities.WithDeviceAuthorization(runtimeRelay.Metadata()["server_id"].(string), runtimeRelay.DeviceAuthorizationKey(), executions).WithRuntimeAccess(environments)
-		environments.WithRuntime(cfg.PublicURL, runtimeRelay.Metadata()["server_id"].(string), identities).WithDisconnect(runtimeRelay.DisconnectRuntime).WithReadiness(runtimeRelay)
+		environments.WithRuntime(cfg.PublicURL, runtimeRelay.Metadata()["server_id"].(string), identities).
+			WithDisconnect(runtimeRelay.DisconnectRuntime).WithReadiness(runtimeRelay).WithSourceRuntimeProvisioning()
 		runtimeRelay.Register(router)
 		sessions.WithRuntimeStatus(runtimeRelay)
 		identities.WithRuntimeFeatures(func(ctx context.Context) (map[string]bool, error) {

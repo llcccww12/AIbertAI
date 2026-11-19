@@ -79,8 +79,8 @@ func fixture(t *testing.T) string {
 			t.Fatal(err)
 		}
 		m := manifest{Version: "v1", Architecture: arch, Files: map[string]string{}}
-		for name := range files {
-			raw := []byte("fixture-" + name)
+		for _, name := range []string{"installer", "monkeyai-engine"} {
+			raw := []byte("fixture-source-engine")
 			m.Files[name] = hash(raw)
 			if err := os.WriteFile(filepath.Join(target, name), raw, 0700); err != nil {
 				t.Fatal(err)
@@ -217,7 +217,7 @@ func TestExpiredEnrollmentAndMissingRelease(t *testing.T) {
 	if w := call(router, "POST", "/api/host/v1/enroll", body); w.Code != 401 {
 		t.Fatal("接受过期凭证", w.Code)
 	}
-	if err := os.Remove(filepath.Join(s.releases, "v1", "arm64", "runsc")); err != nil {
+	if err := os.Remove(filepath.Join(s.releases, "v1", "arm64", "installer")); err != nil {
 		t.Fatal(err)
 	}
 	if w := call(router, "POST", "/engine-host-enrollments", map[string]any{}); w.Code != 503 {

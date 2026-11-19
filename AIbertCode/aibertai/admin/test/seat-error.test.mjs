@@ -69,7 +69,7 @@ async function renderLoginPage(page, search, language) {
             useBranding: () => ({
               branding: {
                 workspace_name: "Monkey AI",
-                product_name: "MonkeyAI",
+                product_name: "AIbertAI",
                 logo_url: "",
               },
             }),
