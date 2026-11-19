@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"aibertai.local/engine/internal/cache"
@@ -49,10 +51,18 @@ func open() (*driver.Driver, error) {
 	if err != nil {
 		return nil, err
 	}
+	var gateway netip.AddrPort
+	if raw := os.Getenv("AIBERTAI_CLOUD_BACKEND_GATEWAY"); raw != "" {
+		gateway, err = netip.ParseAddrPort(raw)
+		if err != nil || !gateway.Addr().Is4() || !gateway.Addr().IsPrivate() || gateway.Port() == 0 {
+			return nil, errors.New("云电脑网关必须是指定的私有 IPv4 地址和端口")
+		}
+	}
 	d, err := driver.New("/var/run/docker.sock", filepath.Join(root, "instances"), volumes)
 	if err != nil {
 		return nil, err
 	}
+	d.WithCloudGateway(gateway)
 	manager := func(ctx context.Context, spec lifecycle.Spec) (*runtimeupdate.Manager, error) {
 		mounts, err := volumes.Ensure(ctx, spec)
 		if err != nil {
@@ -79,7 +89,13 @@ func open() (*driver.Driver, error) {
 		}
 		return current.Update(ctx, *spec.RuntimePackage)
 	})
-	return d.WithRegistry(func(reference string) (string, error) { return client.RegistryAuth(cfg.HostID, reference) }), nil
+	registry := os.Getenv("AIBERTAI_CLOUD_IMAGE_REGISTRY")
+	return d.WithRegistry(func(reference string) (string, error) {
+		if registry != "" && strings.HasPrefix(reference, registry+"/") {
+			return client.RegistryAuthForLoopback(cfg.HostID, reference, registry)
+		}
+		return client.RegistryAuth(cfg.HostID, reference)
+	}), nil
 }
 func Apply(ctx context.Context, s lifecycle.Spec) (lifecycle.State, error) {
 	if err := s.Validate(); err != nil {

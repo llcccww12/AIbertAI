@@ -100,6 +100,9 @@ func (d *Driver) execCreate(ctx context.Context, c container, spec lifecycle.Spe
 			environment[index] = "PATH=" + filepath.Dir(binary) + ":" + strings.TrimPrefix(value, "PATH=")
 		}
 	}
+	if gateway := d.gatewayFor(spec); gateway.IsValid() {
+		environment = append(environment, "AIBERTAI_CLOUD_BACKEND_GATEWAY="+gateway.String())
+	}
 	var out struct {
 		ID string `json:"Id"`
 	}
