@@ -1,0 +1,35 @@
+name: Publish Linux host installers
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    if: startsWith(github.event.release.tag_name, 'host-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - name: Build both architectures
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^host-v[0-9]{8}$ ]]
+          docker buildx build -f AIbertCode/aibertai/deploy/backend.Dockerfile \
+            --target host-artifacts --build-arg ENGINE_BUILD_VERSION="${RELEASE_TAG#host-}" \
+            --output type=local,dest="$RUNNER_TEMP/host-artifacts" AIbertCode/aibertai
+      - name: Publish archive and checksum
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        working-directory: ${{ runner.temp }}
+        run: |
+          bundle="aibertai-${RELEASE_TAG}.tar.gz"
+          tar -czf "$bundle" -C host-artifacts .
+          sha256sum "$bundle" > "$bundle.sha256"
+          gh release upload "$RELEASE_TAG" "$bundle" "$bundle.sha256" --repo "$GITHUB_REPOSITORY"

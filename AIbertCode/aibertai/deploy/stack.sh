@@ -43,6 +43,7 @@ CONFIG
     compose=(docker compose --env-file .env -f compose.yaml)
     "${compose[@]}" config --quiet
     "${compose[@]}" build admin backend
+    "${compose[@]}" run --rm --no-deps backend verify-host-release
     "${compose[@]}" up -d --wait --wait-timeout 90 postgres object-storage
     "${compose[@]}" stop admin backend
     "${compose[@]}" run --rm migrate
