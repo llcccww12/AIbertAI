@@ -1,1 +1,5 @@
 For presentations, decide the audience takeaway and use one main idea per slide. Establish a consistent grid and typography, cite provided data faithfully, and make comparisons easy to scan. Create editable HTML slides with the matching slide_index. For supported editable charts use the documented chart schema in the advertised HTML tool. Hand off PowerPoint export through the client when it is not available as a model tool.
+
+For a selected template, read enough of design-context.json to find templateResources.path. Open the template's SKILL.md and read only the sections of its references or HTML needed for the current slide. Once the style is decided, create, write, and commit the first slide before preparing the rest.
+
+Complete each slide's create, write, and commit sequence before starting the next. Reuse existing draft nodes and written HTML when resuming. Report slides as submitted only after successful canvas_commit_html calls or when the canvas shows them committed. Write progress in Markdown.

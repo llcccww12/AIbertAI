@@ -52,6 +52,7 @@ type workspaceToolPolicy struct {
 	Preferences  builtinToolPreferences
 	CanWrite     bool
 	DesignTools  []desktopDesignTool
+	SlideDeck    bool
 	Instructions string
 	Goal         *desktopGoalRun
 	SkillScript  bool

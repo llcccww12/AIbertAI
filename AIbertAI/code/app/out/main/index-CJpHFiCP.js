@@ -20351,7 +20351,7 @@ async function persistDesignStyleDecision(cwd, design, decision, styleRef, resou
     atomicWrite(contextPath, JSON.stringify(context, null, 2) + "\n");
   }
   const taskPath = require$$1$1.join(dir, "DESIGN_TASK.md");
-  const reference = styleRef && resource ? visualStyleInstruction(dir, styleRef, resource) : "- Visual style reference: none.";
+  const reference = styleRef && resource ? visualStyleInstruction(design.localDesignPath, styleRef, resource) : "- Visual style reference: none.";
   atomicWrite(taskPath, node_fs.readFileSync(taskPath, "utf8").replace(/^- Visual style reference:.*$/m, reference));
 }
 async function persistDesignSystemSelection(cwd, design, designSystemRef, resources, source2 = "respub") {
@@ -20376,14 +20376,19 @@ async function persistDesignSystemSelection(cwd, design, designSystemRef, resour
 function visualStyleInstruction(localDesignPath, ref, resource) {
   return `- Visual style reference: \`${ref.id}\` at \`${ref.version}\`. Read \`${localDesignPath}/${resource.path}/STYLE.md\` before designing and turn it into concrete project rules in \`DESIGN.md\`. This is a binding local visual constraint, not a template reference.`;
 }
+function visualStylePath(ref, resource) {
+  if (ref && resource?.id === ref.id && typeof resource.path === "string" && /^resources\/styles\/[a-z0-9-]+_[a-f0-9]{24}$/.test(resource.path)) {
+    return `${resource.path}/STYLE.md`;
+  }
+}
 function withImageVisualStyle(context, prompt) {
   if (!context.payload.localDesignPath) return prompt;
   const root = require$$1$1.resolve(context.cwd, context.payload.localDesignPath);
   const saved = JSON.parse(node_fs.readFileSync(require$$1$1.join(root, "design-context.json"), "utf8"));
   if (!saved.styleRef) return prompt;
-  const resource = saved.styleResources;
-  if (!resource || resource.id !== saved.styleRef.id || typeof resource.path !== "string" || !/^resources\/styles\/[a-z0-9-]+_[a-f0-9]{24}$/.test(resource.path)) throw new Error("invalid_image_style_resource");
-  const style = node_fs.readFileSync(require$$1$1.join(root, resource.path, "STYLE.md"), "utf8");
+  const path = visualStylePath(saved.styleRef, saved.styleResources);
+  if (!path) throw new Error("invalid_image_style_resource");
+  const style = node_fs.readFileSync(require$$1$1.join(root, path), "utf8");
   const name = style.match(/^# Selected Visual Style: (.+)$/m)?.[1];
   const direction = style.match(/^- Direction: ([\s\S]*?)\n\n## Usage contract/m)?.[1].trim();
   if (!name || direction === void 0) throw new Error("invalid_image_style_description");
@@ -20424,13 +20429,15 @@ const PROVIDER_UNAVAILABLE = { status: "unavailable", message: "OhMyDesign Host 
 function designState(context) {
   const { payload } = context;
   let revision = 0;
-  let styleDecision = payload.styleDecision, styleRef = payload.styleRef, designSystemRef = payload.designSystemRef;
+  let styleDecision = payload.styleDecision, styleRef = payload.styleRef, designSystemRef = payload.designSystemRef, stylePath;
   if (payload.localDesignPath) {
     try {
       const saved = JSON.parse(node_fs.readFileSync(require$$1$1.join(context.cwd, payload.localDesignPath, "design-context.json"), "utf8"));
       if (Number.isSafeInteger(saved.revision) && Number(saved.revision) >= 0) revision = Number(saved.revision);
       if (saved.styleDecision === "selected" || saved.styleDecision === "skipped") styleDecision = saved.styleDecision;
       if (Object.hasOwn(saved, "styleRef")) styleRef = isRecord$1(saved.styleRef) ? saved.styleRef : null;
+      const path = visualStylePath(styleRef, saved.styleResources);
+      if (path) stylePath = `${payload.localDesignPath}/${path}`;
       if (Object.hasOwn(saved, "designSystemRef")) designSystemRef = isRecord$1(saved.designSystemRef) ? saved.designSystemRef : null;
     } catch {
     }
@@ -20442,6 +20449,7 @@ function designState(context) {
     templateRef: payload.templateRef ?? null,
     designSystemRef: designSystemRef ?? null,
     ...styleRef === void 0 ? {} : { styleRef },
+    ...stylePath ? { stylePath } : {},
     mediaModelId: payload.mediaModelId ?? null,
     ...styleDecision ? { styleDecision } : {},
     phase: "BRIEFING",
@@ -20508,7 +20516,7 @@ async function initializeDesignTask(cwd, sessionId, selection, canvasStore = new
 - Select methods from the actual artifact and editing requirements, not a blanket poster-plus-HTML recipe. First inspect available skill names and descriptions; generic image-design or the ability to generate images does not itself cover the required design specialty. Only in the fallback image route, for a new layered task without a clearly matching method, use SkillSearch with the real artifact type and needs. Load a matching available=true result with Skill, using its exact name. If no suitable method is found or a material gap remains, search the web for skill / SKILL.md sources and read their original bodies; stop expanding the search once a suitable method is found. Product research is not skill research. The creation and revision steps permit public non-workflow method skills without changing the active workflow, its step, permissions or review gates. Do not call them before those steps or repeat already automatically loaded step skills. HTML is conditional on editable text; reference methods are conditional on actual supplied references. Flat output needs no external skill search or adaptation. Read the original skill body and necessary references, then adopt the whole method or borrow useful parts using real tools and schemas. Missing skills, unreadable sources or incompatible tools do not block production or become task errors; continue with native capabilities and record actual sources, adopted methods and delivery-relevant limitations. Do not claim an unperformed lookup found nothing. Do not create or modify skill files, scan the filesystem to bypass availability, execute external scripts, install dependencies, upload private files or change global configuration. Ask only when a mandated skill or a substitution materially changes delivery, editability, style or cost. Reuse confirmed choices for local edits and recovery. Subject confirmation, permissions, cancellation and full preview/review remain mandatory.
 - Resource location anchor: original workspace ${JSON.stringify(require$$1$1.resolve(cwd))}; task directory ${JSON.stringify(target)}. These locations do not change when you enter a worktree. Re-read ${JSON.stringify(require$$1$1.join(target, "design-context.json"))} for current selections. Style and design-system paths in that manifest are relative to this task directory; template paths are relative to the original workspace. Never rebase these references onto the new working directory. Reuse the original resources as references; do not copy or regenerate the package just to switch worktrees.
 - Template reference: ${state.templateRef ? `\`${state.templateRef.id}\` at \`${state.templateRef.version}\`` : "none; this does not prevent the logo workflow from searching the catalog when the user has not specified a direction; do not require a manual template selection"}.
-${state.styleRef && styleResources ? visualStyleInstruction(target, state.styleRef, styleResources) : "- Visual style reference: none."}
+${state.styleRef && styleResources ? visualStyleInstruction(localDesignPath, state.styleRef, styleResources) : "- Visual style reference: none."}
 ${state.designSystemRef && designSystemResources ? designSystemInstruction(target, state.designSystemRef, designSystemResources) : "- Design System reference: none."}
 - For a web prototype, first gather the essential requirements (purpose, audience, core pages and interactions). Ask only questions whose answers would materially affect the result. If no style was selected in task creation, call \`design_await_style_choice\` and wait for it to return in the same turn before creating HTML or generating images. The Host rejects both the first HTML node and the first fill of a user-created empty HTML container until the user selects or skips. For every distinct requested page without an existing selected container, call \`canvas_create_html\` before you start implementing that page, then write and commit that page in its own returned artifact. If the current user message references a selected HTML canvas node and asks to place, generate, or edit the prototype in that container, call \`canvas_get_selection\`; when that selected container is empty, the call waits for the style decision before returning. Then write the page directly into that node's returned \`artifact_path\`, and commit the same node ID whether the HTML container is empty or already contains content; do not copy it, call \`canvas_create_html\`, or create an adjacent node. One canvas HTML node represents exactly one page: never implement multiple pages or client-side routes inside one artifact, and never postpone creating a page node until after its code is written. The Host lays prototype pages out horizontally. Implement all navigation between prototype pages in the delivered page code using normal anchors, forms, or JavaScript navigation. Link to the target page with a real relative artifact path computed from the current \`artifact_path\` to the target \`artifact_path/index.html\` (sibling artifacts are typically \`../TARGET_NODE_ID/index.html\`). Navigation must work as a standalone website in a normal browser; never depend on canvas selection, preview-only attributes, host click interception, or chat state. Honor any visual direction already present in the user request. A design system is optional and never blocks creation; when selected, read and apply its complete local package. Never suggest a template unless explicitly requested.
 - Browser panel visibility is controlled exclusively by the user in the client. Agents have no visibility parameter or panel-control tool. Search and page reading cannot expand or collapse the panel, even when asked to open a website. When the user closes the browser, continue all remaining research in the background without reopening it or asking to reopen it. If the user wants to see the page, tell them they can manually open the browser panel.
@@ -20572,7 +20580,7 @@ class DesignCanvasService {
   async styleChoice(sessionId) {
     const context = await this.sessions.context(sessionId);
     const design = designState(context);
-    return { ...design.designType ? { designType: design.designType } : {}, ...design.designType === "slide_deck" && hasInheritedDeckStyle(context.cwd) ? { inheritedStyle: true } : {}, ...design.styleDecision ? { decision: design.styleDecision } : {}, ...design.styleRef ? { styleRef: design.styleRef } : {} };
+    return { ...design.designType ? { designType: design.designType } : {}, ...design.designType === "slide_deck" && hasInheritedDeckStyle(context.cwd) ? { inheritedStyle: true } : {}, ...design.styleDecision ? { decision: design.styleDecision } : {}, ...design.styleRef ? { styleRef: design.styleRef } : {}, ...design.stylePath ? { stylePath: design.stylePath } : {} };
   }
   cropImage(...args) {
     return this.images.cropImage(...args);
@@ -22999,7 +23007,7 @@ const CANVAS_TOOLS = [
     }, required: ["root_id", "action"], additionalProperties: false }
   },
   { name: "canvas_get_selection", description: "读取用户当前选择的节点标识和节点内容；选中收纳组时同时返回组内成员，groupId 表示所属组，分组并未合并正文；精修任务必须先调用。选中的 HTML 节点会额外返回可直接写入的 artifact_path；用户要求往该容器放置或修改网页内容时，无论容器是否为空都复用此节点并提交，不要复制或再创建 HTML 节点。首次填充空网页或演示文稿容器时，本工具会先等待用户选择或跳过设计风格。图片上有画笔、图形或文字时，额外返回 marked_source：这是用户看见的那张图，标注已经画在上面；source 仍是没有标注的原图，不要把标注写回原图。", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
-  { name: "design_await_style_choice", description: "等待用户选择或跳过设计风格；选择完成后在同一轮继续。", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
+  { name: "design_await_style_choice", description: "等待用户选择或跳过设计风格；选择完成后读取返回的工作区相对路径 stylePath，并在同一轮继续。", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
   { name: "canvas_create_html", description: CREATE_HTML_DESCRIPTION + CREATE_SLIDE_DESCRIPTION, inputSchema: { type: "object", properties: { title: { type: "string" }, x: { type: "number" }, y: { type: "number" }, width: { type: "number", exclusiveMinimum: 0 }, height: { type: "number", exclusiveMinimum: 0 }, pass_through: { type: "boolean" }, slide_index: { type: "integer", minimum: 1, description: "演示文稿页序，从 1 开始且唯一。传入后画布按页码横向排页，该画布即可按此页序导出 PPTX；普通网页原型与海报请省略。" }, style_source: { type: "string", enum: ["inherited"], description: "仅用于 edit-existing-deck，表示页面继承源 PPTX 的已验证 DESIGN.md。" } }, additionalProperties: false } },
   { name: "canvas_create_text", description: "创建可编辑的备忘、剧本或分镜文本节点。已有选中文本时用 canvas_update_node 原位修改，不新建副本。content 使用 Markdown；新建分镜等下游文稿时传 source_node_id，自动沿用来源文本的尺寸和字号并记录正文快照，避免固定小卡片在缩放后不可读；传 text_role=storyboard 可在同一次创建中原子保存本镜正文、角色与来源，按镜增量写回，不先写整份工作稿。传 source_node_id 时应省略 x/y，由 Host 在来源右侧按固定三列网格排列；placement_node_id 可指定当前视觉设定等触发文稿，来源关联仍由 source_node_id 决定。", inputSchema: { type: "object", properties: { title: { type: "string" }, content: { type: "string", maxLength: 2e4 }, text_role: { type: "string", enum: [...textRoles], description: "本次创建的文稿角色，默认 note。分镜传 storyboard，与正文和来源一起原子保存。" }, source_node_id: { type: "string", description: "来源文本节点 ID。未显式指定的宽高及文字样式继承来源，并记录 sourceNodeId/sourceContent。" }, placement_node_id: placementNodeSchema, x: { type: "number" }, y: { type: "number" }, width: { type: "number", exclusiveMinimum: 0 }, height: { type: "number", exclusiveMinimum: 0 } }, anyOf: [{ required: ["source_node_id"] }, { required: ["x", "y"] }], additionalProperties: false } },
   { name: "canvas_add_artifact_asset", description: "把工作区内已有图片安全复制到指定 HTML Artifact，并返回可直接写入 HTML/CSS 的相对路径。", inputSchema: { type: "object", properties: { node_id: { type: "string" }, source_path: { type: "string" } }, required: ["node_id", "source_path"], additionalProperties: false } },
@@ -23283,6 +23291,8 @@ class CanvasTools {
     if (name === "design_catalog_detail") {
       if (typeof args.id !== "string" || !args.id.trim() || args.id.length > 200) throw new Error("invalid_design_catalog_id");
       if (/^catalog-[a-f0-9]{12}$/i.test(args.id.trim())) throw new Error("invalid_design_catalog_template_id: expected templateRef.id, received a resource version");
+      const style = styles.find((item) => item.id === args.id.trim());
+      if (style) return { style: styleItem(style) };
       return { template: await loadDesignCatalogDetail(requireCatalog(this.catalog), args.id) };
     }
     if (name === "canvas_get_document") {
@@ -52829,6 +52839,11 @@ function createPrivateCatalog(origin) {
           result.revision = revision;
           if (name === "canvas_get_document" || name === "canvas_update_node" || name === "canvas_delete_node") {
             result.document = { id, revision, nodes: nodes.slice(0, 25).map(summary), totalNodes: nodes.length };
+            if (name === "canvas_get_document" && saved.designType === "slide_deck") {
+              const slides = nodes.filter((node2) => node2.type === "html" && node2.slideIndex !== void 0 && !node2.hidden);
+              result.document.slideCount = slides.length;
+              result.document.draftSlideCount = slides.filter((node2) => node2.draft).length;
+            }
           }
         }
         if (name === "canvas_create_html" && result.node) result.artifact_path = result.node.artifact_path;

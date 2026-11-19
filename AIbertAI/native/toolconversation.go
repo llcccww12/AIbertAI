@@ -225,6 +225,9 @@ func (c *client) completeWorkspaceToolTurn(ctx context.Context, protocol, key, s
 		}
 	}
 	for roundIndex := 0; ; roundIndex++ {
+		if goal == nil && workspace != nil && workspace.SlideDeck && len(runs) >= maxCalls {
+			return "", usage, runs, errors.New("model_tool_continuation_incomplete")
+		}
 		if goal != nil && !goal.active() {
 			goal.outcome = "user_paused"
 			return lastProgress, usage, runs, nil

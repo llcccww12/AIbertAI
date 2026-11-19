@@ -35418,8 +35418,11 @@ const BYe = {
     invalid_cwd: "errors.codes.invalid_cwd",
     engine_cancelled: "errors.codes.engine_cancelled",
     engine_timeout: "errors.codes.engine_timeout",
+    backend_request_timeout: "errors.codes.engine_timeout",
+    backend_response_interrupted: "errors.codes.backend_response_interrupted",
     engine_no_response: "errors.timeout",
     engine_no_result: "errors.codes.engine_no_result",
+    model_tool_continuation_incomplete: "errors.codes.model_tool_continuation_incomplete",
     engine_internal: "errors.codes.engine_internal",
     session_missing: "errors.codes.session_missing",
     context_overflow: "errors.codes.context_overflow",
@@ -114480,7 +114483,9 @@ const qwt = {
         invalid_cwd: "这个文件夹不可用，请选择一个已存在的文件夹。",
         engine_cancelled: "本轮已停止。",
         engine_timeout: "等待上游响应超时，请重试。",
+        backend_response_interrupted: "接收后端响应时连接中断，请在当前会话继续。",
         engine_no_result: "引擎没有返回结果，请重试。",
+        model_tool_continuation_incomplete: "已达到本轮工具调用上限。已写入的页面保留在画布，可在当前会话继续。",
         engine_internal: "引擎内部出错，请重试；反复出现可在诊断页查看日志。",
         session_missing: "这个会话在引擎里已不存在，请重新发起。",
         context_overflow:
@@ -117578,7 +117583,9 @@ Start with the conclusion, then explain the reasoning.`,
         engine_cancelled: "This turn was stopped.",
         engine_timeout:
           "Timed out waiting for the upstream model. Please try again.",
+        backend_response_interrupted: "The backend connection closed while receiving a response. Continue in this conversation.",
         engine_no_result: "The engine returned no result. Please try again.",
+        model_tool_continuation_incomplete: "This turn reached its tool call limit. The canvas retains your pages. Continue in this conversation.",
         engine_internal:
           "The engine hit an internal error. Try again; check Diagnostics if it keeps happening.",
         session_missing:

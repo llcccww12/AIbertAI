@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 )
 
 const maxACPToolCalls = 4
+const maxACPDeckToolCalls = 96
 
 var (
 	errSessionReportPending = errors.New("session_report_pending")
@@ -46,6 +48,7 @@ type acpTurn struct {
 	Usage          modelUsage          `json:"usage"`
 	Permissions    reportedPermissions `json:"permissions,omitzero"`
 	Failed         bool                `json:"failed,omitempty"`
+	FailureCode    string              `json:"failureCode,omitempty"`
 	Interrupted    bool                `json:"interrupted,omitempty"`
 	Acked          bool                `json:"acked,omitempty"`
 }
@@ -308,8 +311,11 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 		}
 		turn.Interrupted = err != nil && turnCtx.Err() == context.Canceled && ctx.Err() == nil
 		turn.Failed, turn.Ended = err != nil && !turn.Interrupted, time.Now().UTC()
-		if turn.Failed && ctx.Err() == nil {
-			slog.Warn("桌面对话执行失败", "session_id", id, "operation_id", op, "reason", safeDesktopTurnFailure(err))
+		if turn.Failed {
+			turn.FailureCode = safeDesktopTurnFailure(err)
+			if ctx.Err() == nil {
+				slog.Warn("桌面对话执行失败", "session_id", id, "operation_id", op, "reason", turn.FailureCode)
+			}
 		}
 		if turn.Ended.Before(turn.Started) {
 			turn.Ended = turn.Started
@@ -425,11 +431,21 @@ func notifyACPTurnState(ctx context.Context, ws *websocket.Conn, session acpSess
 	state := map[string]any{"status": session.State, "executionId": operation, "title": title, "titleSource": source}
 	if finished {
 		state["executionId"] = nil
+		if reason := session.lastTurnFailure(); reason != "" {
+			state["lastError"] = reason
+		}
 	}
 	state["goal"] = goalView(session)
 	return writeTurnNotification(ctx, ws, "_monkeyai/session/state", map[string]any{
 		"sessionId": session.ID, "eventSeq": session.historySequence(), "state": state, "finish": finished,
 	})
+}
+
+func (s acpSession) lastTurnFailure() string {
+	if s.State == "error" && len(s.Turns) != 0 {
+		return s.Turns[len(s.Turns)-1].FailureCode
+	}
+	return ""
 }
 
 func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Conn, request *http.Request, session acpSession, turn *acpTurn, files []acpAttachment) error {
@@ -530,6 +546,12 @@ func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Co
 			if design != nil || (designExpertSelected && rootErr == nil) {
 				if design != nil {
 					limit = 12
+					var task struct{ DesignType string }
+					if json.Unmarshal(design, &task) == nil && task.DesignType == "slide_deck" {
+						// Each editable slide needs separate create, write and commit calls.
+						limit = maxACPDeckToolCalls
+						workspace.SlideDeck = true
+					}
 				}
 				workspace.DesignTools, err = h.designBridge.tools(ctx, session, design)
 				if err != nil {
@@ -759,10 +781,32 @@ func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Co
 	if goalRun != nil {
 		turn.goalOutcome = goalRun.outcome
 	}
+	if goalRun == nil && workspace != nil && workspace.SlideDeck && ctx.Err() == nil &&
+		slices.ContainsFunc(turn.ToolRuns, func(run workspaceToolRun) bool {
+			return run.Report.Name == designCreateHTMLTool || run.Report.Name == designCommitHTMLTool
+		}) {
+		result, statusErr := h.designBridge.call(ctx, session, design, designReadTool, json.RawMessage(`{}`))
+		var canvas struct {
+			Document struct {
+				SlideCount, DraftSlideCount int
+			}
+		}
+		if statusErr == nil && json.Unmarshal([]byte(result), &canvas) == nil && canvas.Document.DraftSlideCount > 0 {
+			progress := fmt.Sprintf("画布实际已提交 %d/%d 页，另有 %d 页待提交。整套 PPT 预览和导出需等这些页面提交后才能使用。",
+				canvas.Document.SlideCount-canvas.Document.DraftSlideCount, canvas.Document.SlideCount, canvas.Document.DraftSlideCount)
+			turn.Answer = strings.TrimSpace(turn.Answer + "\n\n" + progress)
+		}
+	}
 	return err
 }
 
 func safeDesktopTurnFailure(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "backend_request_timeout"
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return "backend_response_interrupted"
+	}
 	message := err.Error()
 	if knowledgeErrorCode.MatchString(message) {
 		return message

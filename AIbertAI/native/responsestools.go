@@ -168,7 +168,9 @@ func readResponsesToolStream(body io.Reader, delta func(string) error) (modelUsa
 		}
 		return nil
 	})
-	if err == nil && result != nil {
+	// A fully parsed completion includes the output and usage. A transport
+	// error after that frame cannot invalidate an already received tool call.
+	if result != nil {
 		usage, message, finish, err := result.message()
 		if err == nil && message.Content != nil {
 			if remainder, prefix := strings.CutPrefix(*message.Content, text.String()); prefix && remainder != "" {

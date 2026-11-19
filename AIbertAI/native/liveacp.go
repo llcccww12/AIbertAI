@@ -693,8 +693,12 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 
 func (row acpSession) workspaceMetadata() map[string]any {
 	title, source := row.sessionTitle()
-	return map[string]any{"cwd": row.CWD, "model": row.Model, "thinking": row.Thinking, "mode": row.permissionMode(), "mediaImageModelId": row.MediaImageModelID, "mediaVideoModelId": row.MediaVideoModelID, "expertId": row.ExpertID, "configurationRevision": row.ResourceRevision, "isDefaultWorkspace": row.Workspace != "selected", "projectId": row.ProjectID, "status": row.State, "goalModeAvailable": row.Workspace != "", "goal": goalView(row),
+	metadata := map[string]any{"cwd": row.CWD, "model": row.Model, "thinking": row.Thinking, "mode": row.permissionMode(), "mediaImageModelId": row.MediaImageModelID, "mediaVideoModelId": row.MediaVideoModelID, "expertId": row.ExpertID, "configurationRevision": row.ResourceRevision, "isDefaultWorkspace": row.Workspace != "selected", "projectId": row.ProjectID, "status": row.State, "goalModeAvailable": row.Workspace != "", "goal": goalView(row),
 		"title": title, "titleSource": source, "pinned": row.Pinned, "archivedAt": row.ArchivedAt, "readAt": row.ReadAt}
+	if reason := row.lastTurnFailure(); reason != "" {
+		metadata["lastError"] = reason
+	}
+	return metadata
 }
 
 func (h *relaySessionHost) acpFile(r *http.Request, method string, raw json.RawMessage) (any, error) {
