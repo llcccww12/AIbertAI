@@ -8,6 +8,8 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"aibertai.local/backend/internal/web"
 )
 
 func cloudImageRegistryURL(registry, listener, public string) (string, error) {
@@ -38,7 +40,7 @@ func cloudGateway(bind, origin string, backend http.Handler) (*http.Server, erro
 		MaxHeaderBytes:    64 << 10,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Host != public.Host || !cloudGatewayPath(r) {
-				http.NotFound(w, r)
+				web.NotFound(w, r)
 				return
 			}
 			// Cloud runtimes use device grants, never a browser's admin session.
