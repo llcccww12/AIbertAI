@@ -9,9 +9,10 @@ import {
 } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react"
 
+import { StatisticsCardHeader } from "@/components/statistics-card-header"
 import { TaskOverviewCards } from "@/components/task-overview-cards"
 import { TaskModelUsageCard } from "@/components/task-model-usage-card"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { useStatistics } from "@/hooks/use-statistics"
 import {
@@ -50,22 +51,7 @@ function AnalysisCard({
 }) {
   return (
     <Card className={shell} role="region" aria-label={title}>
-      <CardHeader className="flex min-h-7 flex-row items-center gap-3 px-3 py-0">
-        <HugeiconsIcon
-          icon={icon}
-          className="shrink-0 text-muted-foreground"
-          size={16}
-          strokeWidth={1.75}
-        />
-        <CardTitle className="min-w-0 flex-1 font-mono text-sm font-medium uppercase tracking-wide text-muted-foreground">
-          {title}
-        </CardTitle>
-        {qualifier && (
-          <span className="ms-auto shrink-0 font-mono text-xs text-muted-foreground/70">
-            {qualifier}
-          </span>
-        )}
-      </CardHeader>
+      <StatisticsCardHeader icon={icon} title={title} qualifier={qualifier} />
       <CardContent className={cn(body, "p-5", className)}>
         {children}
       </CardContent>

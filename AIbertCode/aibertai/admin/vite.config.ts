@@ -1,6 +1,6 @@
 import path from "path"
 import react from "@vitejs/plugin-react"
-import { defineConfig } from "vite"
+import { defaultAllowedOrigins, defineConfig } from "vite"
 
 const backend = process.env.MONKEYAI_DEV_BACKEND_URL ?? "http://127.0.0.1:8080"
 const apiBackend = process.env.MONKEYAI_DEV_API_URL ?? backend
@@ -11,6 +11,8 @@ export default defineConfig({
   build: { target: "chrome86", cssTarget: "chrome86" },
   server: {
     allowedHosts: [".trycloudflare.com"],
+    // Remote desktop preflights must reach the backend's endpoint-specific CORS policy.
+    cors: { origin: defaultAllowedOrigins, preflightContinue: true },
     watch: {
       awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 },
     },

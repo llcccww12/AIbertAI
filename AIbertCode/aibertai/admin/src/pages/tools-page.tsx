@@ -22,7 +22,7 @@ import {
 import { getCreatorInitial } from "@/lib/utils"
 import { ResourceNotice } from "@/components/resource-notice"
 import { ResourceCard } from "@/components/resource-card"
-import { ResourceCardMenuButton } from "@/components/resource-card-menu-button"
+import { ResourceCardMenuTrigger } from "@/components/resource-card-menu-trigger"
 import { TableLoading } from "@/components/table-loading"
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import {
@@ -30,7 +30,6 @@ import {
   Delete02Icon,
   Edit02Icon,
   McpServerIcon,
-  MoreHorizontalIcon,
   PauseIcon,
   PlayIcon,
   PlusSignIcon,
@@ -84,7 +83,6 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
   Field,
@@ -1450,18 +1448,7 @@ export function ToolsPage() {
                       />
                     ) : (
                       <DropdownMenu>
-                        <DropdownMenuTrigger
-                          render={
-                            <ResourceCardMenuButton
-                              aria-label={t("common.more")}
-                            />
-                          }
-                        >
-                          <HugeiconsIcon
-                            icon={MoreHorizontalIcon}
-                            strokeWidth={2}
-                          />
-                        </DropdownMenuTrigger>
+                        <ResourceCardMenuTrigger label={t("common.more")} strokeWidth={2} />
                         <DropdownMenuContent align="end">
                           <DropdownMenuGroup hidden={server.type !== "system"}>
                             <DropdownMenuItem

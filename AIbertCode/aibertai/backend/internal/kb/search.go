@@ -9,7 +9,7 @@ import (
 	"aibertai.local/backend/internal/resource"
 )
 
-func (s *Service) searchAccessible(ctx context.Context, accessible []resource.Object, input SearchInput) (SearchResponse, error) {
+func (s *Service) searchAccessible(ctx context.Context, actor string, accessible []resource.Object, input SearchInput) (SearchResponse, error) {
 	normalized, err := normalizeSearchInput(input)
 	if err != nil {
 		return SearchResponse{}, err
@@ -159,6 +159,14 @@ func (s *Service) searchAccessible(ctx context.Context, accessible []resource.Ob
 		}, nil
 	}
 	items := fuseRankedChannels(ranked, configs)
+	items, err = s.rerankCandidates(ctx, actor, normalized.Query, items)
+	if err != nil {
+		if ctx.Err() != nil {
+			return SearchResponse{}, ctx.Err()
+		}
+		degraded = true
+		warnings = append(warnings, "reranker_failed")
+	}
 	items = limitPerDocument(items, normalized.TopK)
 	if len(normalized.Filters) > 0 {
 		warnings = append(warnings, "filters_not_applied")

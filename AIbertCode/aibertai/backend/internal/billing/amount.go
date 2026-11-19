@@ -100,17 +100,4 @@ func priceVideo(unit Amount, durationMs int64) (Amount, error) {
 	return rounded(new(big.Int).Mul(big.NewInt(int64(unit)), big.NewInt(durationMs)), big.NewInt(1000))
 }
 
-func quotaAmount(a Amount, up bool) int64 {
-	n := int64(a)
-	if up {
-		return n/10000 + boolInt(n%10000 != 0)
-	}
-	return n/10000 + boolInt(n%10000 >= 5000)
-}
-func boolInt(b bool) int64 {
-	if b {
-		return 1
-	}
-	return 0
-}
 func stringInt(n int64) string { return strconv.FormatInt(n, 10) }

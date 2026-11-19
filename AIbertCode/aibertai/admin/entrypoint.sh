@@ -6,7 +6,7 @@ if [ "${1:-}" != nginx ]; then
 fi
 
 fail() {
-    printf '百智办公: %s\n' "$1" >&2
+    printf 'AIbertAI: %s\n' "$1" >&2
     exit 1
 }
 
@@ -94,7 +94,7 @@ case "${MONKEYAI_AUTO_TLS_ENABLED:-false}" in
         export MONKEYAI_ORIGIN MONKEYAI_DOMAIN MONKEYAI_AUTO_TLS_EMAIL MONKEYAI_AUTO_TLS_CA MONKEYAI_ACME_STATE
         envsubst '${MONKEYAI_ORIGIN} ${MONKEYAI_DOMAIN} ${MONKEYAI_AUTO_TLS_EMAIL} ${MONKEYAI_AUTO_TLS_CA} ${MONKEYAI_ACME_STATE}' \
             < /etc/nginx/monkeyai/acme.conf.template > /tmp/nginx/site.conf
-        printf '百智办公: 已启用 %s 的自动证书，首次签发完成前 HTTPS 暂不可用\n' "$MONKEYAI_DOMAIN" >&2
+        printf 'AIbertAI: 已启用 %s 的自动证书，首次签发完成前 HTTPS 暂不可用\n' "$MONKEYAI_DOMAIN" >&2
         ;;
     *) fail 'MONKEYAI_AUTO_TLS_ENABLED 只能为 true 或 false' ;;
 esac

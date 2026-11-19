@@ -14,6 +14,7 @@ import {
 } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react"
 
+import { StatisticsCardHeader } from "@/components/statistics-card-header"
 import { MemberActivityHeatmap } from "@/components/member-activity-heatmap"
 import { StatisticsTrendCard } from "@/components/statistics-trend-card"
 import { StatisticsPeriodComparison } from "@/components/statistics-period-comparison"
@@ -106,22 +107,7 @@ function OverviewMetric({
       role="group"
       aria-label={qualifier ? `${title} · ${qualifier}` : title}
     >
-      <CardHeader className="flex min-h-7 flex-row items-center gap-3 px-3 py-0">
-        <HugeiconsIcon
-          icon={icon}
-          className="shrink-0 text-muted-foreground"
-          size={16}
-          strokeWidth={1.75}
-        />
-        <CardTitle className="min-w-0 flex-1 font-mono text-sm font-medium uppercase tracking-wide text-muted-foreground">
-          {title}
-        </CardTitle>
-        {qualifier && (
-          <span className="ms-auto shrink-0 font-mono text-xs text-muted-foreground/70">
-            {qualifier}
-          </span>
-        )}
-      </CardHeader>
+      <StatisticsCardHeader icon={icon} title={title} qualifier={qualifier} />
       <CardContent
         className={cn(
           "group/metric-body min-h-20 flex-1 flex-row items-center gap-3 rounded-xl border border-border/60 bg-card p-5",
@@ -284,17 +270,7 @@ function MemberUsageDetails({ userID }: { userID: string }) {
         role="region"
         aria-label={t(`${key}.createdResources`)}
       >
-        <CardHeader className="flex min-h-7 flex-row items-center gap-3 px-3 py-0">
-          <HugeiconsIcon
-            icon={DocumentValidationIcon}
-            className="shrink-0 text-muted-foreground"
-            size={16}
-            strokeWidth={1.75}
-          />
-          <CardTitle className="min-w-0 flex-1 font-mono text-sm font-medium uppercase tracking-wide text-muted-foreground">
-            {t(`${key}.createdResources`)}
-          </CardTitle>
-        </CardHeader>
+        <StatisticsCardHeader icon={DocumentValidationIcon} title={t(`${key}.createdResources`)} />
         <CardContent className="min-w-0 overflow-x-auto rounded-xl border border-border/60 bg-card p-0">
           <div className="grid min-w-[480px] grid-cols-6 divide-x divide-border/60 rtl:divide-x-reverse">
             {(

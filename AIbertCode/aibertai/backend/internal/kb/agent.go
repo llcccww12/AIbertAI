@@ -14,6 +14,7 @@ import (
 
 func (s *Service) RegisterAgent(r chi.Router) {
 	s.registerPersonalGrants(r)
+	r.With(identity.RequireScope("files:read")).Post("/attachments/extract", s.extractAttachment)
 	if s.storage != nil {
 		r.Get("/kb/{id}/avatar", func(w http.ResponseWriter, req *http.Request) { s.serveAvatar(w, req, false) })
 	}

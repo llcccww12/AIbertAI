@@ -126,7 +126,7 @@ try {
             product_name:
               scenario === "branding-empty" ? " \t " : " 团队 AI 办公 ",
             workspace_name:
-              scenario === "branding-empty" ? " \t " : " 百智团队 ",
+              scenario === "branding-empty" ? " \t " : " 测试团队 ",
           })
         }
         if (p.startsWith("/api/auth/v1/oauth/")) {
@@ -245,7 +245,7 @@ try {
           ?.textContent === `${product}即将登录到${workspace}的团队空间`,
       {
         product: expectedProductName,
-        workspace: scenario.startsWith("branding-") ? "AIbertAI" : "百智团队",
+        workspace: scenario.startsWith("branding-") ? "AIbertAI" : "测试团队",
       }
     )
     const expectedImage = "/aibertai-logo.png"

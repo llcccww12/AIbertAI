@@ -51,15 +51,12 @@ test("page-level operation failures no longer render global destructive banners"
 })
 
 test("field and persistent-state errors remain inline", async () => {
-  const [bulkMembers, operationLogs, wallet] = await Promise.all([
+  const [bulkMembers, operationLogs] = await Promise.all([
     source("components/members/bulk-add-members-form.tsx"),
     source("pages/operation-logs-page.tsx"),
-    source("components/billing/wallet-settings.tsx"),
   ])
 
   assert.match(bulkMembers, /inputError &&/)
   assert.match(bulkMembers, /row\.error/)
   assert.match(operationLogs, /invalidRange &&/)
-  assert.match(wallet, /info\.error &&/)
-  assert.match(wallet, /e instanceof ApiError/)
 })

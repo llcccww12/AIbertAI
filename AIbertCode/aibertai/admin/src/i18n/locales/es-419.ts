@@ -462,6 +462,9 @@ export const es419 = {
         '¿Eliminar "{{model}}"? Esta acción no se puede deshacer.',
     },
     knowledgeBases: {
+      icon: "Ícono",
+      uploadIcon: "Subir ícono",
+      replaceIcon: "Reemplazar ícono",
       noDescription: "Sin descripción",
       noTags: "Sin etiquetas",
       createDocument: "Crear documento",
@@ -533,6 +536,7 @@ export const es419 = {
       textPlaceholder: "Ingresa el conocimiento que se debe aprender",
       selectFile: "Seleccionar archivo",
       fileDescription: "Selecciona varios archivos TXT o Markdown a la vez.",
+      visualFileDescription: "Con un modelo de visión también puedes importar PDF, PNG y JPEG de hasta 10 MB cada uno. Los PDF admiten hasta 10 páginas.",
       fileUnsupported: "Solo se admiten archivos TXT y Markdown.",
       fileEmpty: "El archivo está vacío.",
       addAndLearn: "Agregar y aprender",
@@ -964,15 +968,10 @@ export const es419 = {
         modes: {
           disabled: "Sin cobro",
           local: "Cobro directo",
-          remote: "Cobro integrado con Baizhi Cloud",
         },
         modeDescriptions: {
           local: "Este sistema procesa el uso y la deducción de créditos.",
-          remote: "El uso se envía a Baizhi Cloud para su cobro.",
         },
-        baseUrl: "Dirección de Baizhi Cloud",
-        apiKey: "Clave de Baizhi Cloud",
-        apiKeyPlaceholder: "Ingresa la clave de Baizhi Cloud",
       },
       quotaRefresh: {
         title: "Renovación automática de créditos",
@@ -1032,7 +1031,6 @@ export const es419 = {
         summary: "{{cycle}} · {{credits}} créditos",
         remaining: "{{credits}} créditos restantes",
         billingDisabled: "Facturación desactivada",
-        remoteBilling: "Facturación remota",
         actions: "Acciones de cuota",
         adjust: "Ajustar cuota",
         dialogTitle: "Ajustar cuota",
@@ -1189,27 +1187,26 @@ export const es419 = {
           "Administra cómo se procesa y recupera el contenido de conocimiento.",
         embeddingModel: "Modelo de embedding",
         rerankerModel: "Modelo de reranking",
-        documentParsingEngine: {
-          title: "Motor avanzado de análisis de documentos",
-          provider: "Baizhi Cloud",
-          defaultDescription:
-            "No configurado. El analizador integrado extraerá texto sin formato de los archivos.",
-          configuredDescription:
-            "Baizhi Cloud está configurado y mejorará el análisis de los documentos cargados.",
-          dialogTitle: "Configurar el análisis avanzado de documentos",
-          dialogDescription:
-            "AIbertAI incluye análisis básico de documentos. Si la extracción de texto de documentos complejos no es suficiente, Baizhi Cloud puede mejorar los resultados.",
-          providerLabel: "Proveedor del servicio",
-          providerDescription:
-            "Baizhi Cloud · El endpoint está fijado por el sistema y no necesita configuración.",
-          apiKey: "Clave API",
-          apiKeyPlaceholder: "Ingresa la clave API de Baizhi Cloud",
-          apiKeyUpdatePlaceholder:
-            "Déjalo vacío para conservar la clave actual",
-          apiKeyDescription:
-            "La clave solo se envía al guardar y no volverá a mostrarse completa.",
-          apiKeyUpdateDescription:
-            "Déjalo vacío para conservar la clave actual.",
+        embeddingAutomatic: "Seleccionar automáticamente un modelo de embeddings del sistema disponible",
+        embeddingDefaultConfigured: "Hay un modelo predeterminado para las bases nuevas o sin modelo asignado.",
+        embeddingDefaultDescription: "Las bases nuevas o sin modelo asignado usan este modelo de embeddings predeterminado.",
+        embeddingSelect: "Seleccionar un modelo de embeddings",
+        embeddingRegistrationHint: "Se admite cualquier modelo con una API /embeddings compatible con OpenAI. Primero agrega y habilita un modelo.",
+        manageEmbeddingModels: "Administrar modelos",
+        switchEmbedding: "Cambiar modelo de embeddings",
+        switchEmbeddingDescription: "El cambio reconstruye el índice vectorial. La búsqueda de texto completo sigue disponible.",
+        modelSaved: "Configuración del modelo guardada",
+        reranker: {
+          defaultDescription: "Sin modelo de reordenamiento. Los resultados mantienen el orden predeterminado.",
+          configuredDescription: "Este modelo reordena los fragmentos candidatos de la búsqueda.",
+          dialogDescription: "Usa un servicio con una API /rerank, como vLLM o uno compatible con Cohere o Jina. Las consultas y los fragmentos candidatos se envían al servicio.",
+        },
+        endpointAPIKeyUpdateDescription: "Déjalo vacío para conservar la clave si la URL base de la API no cambia.",
+        documentVision: {
+          title: "Modelo de visión para analizar documentos",
+          defaultDescription: "Sin configurar. Los archivos TXT y Markdown se pueden importar directamente.",
+          configuredDescription: "Este modelo extrae texto y tablas al importar PDF e imágenes.",
+          dialogDescription: "Usa una API de Chat Completions compatible con OpenAI que admita imágenes. Las páginas PDF y las imágenes se envían al proveedor del modelo para extraer texto.",
         },
         contentEnhancementModel: {
           title: "Modelo de mejora de contenido",
@@ -1230,11 +1227,6 @@ export const es419 = {
         modelIdPlaceholder: "Ingresa el ID usado por el servicio",
         modelIdDescription:
           "El servicio define el ID del modelo, por lo que puede diferir del nombre seleccionado.",
-        rerankerModelIdPlaceholder: "Por ejemplo: BAAI/bge-reranker-v2-m3",
-        embeddingSupportDescription:
-          "Actualmente solo se admite el modelo bge-m3.",
-        rerankerSupportDescription:
-          "Actualmente solo se admite el modelo bge-reranker-v2-m3.",
         baseUrl: "Base URL",
         baseUrlPlaceholder: "https://api.example.com/v1",
         apiKey: "Clave API",
@@ -1301,8 +1293,6 @@ export const es419 = {
         provider: "Proveedor",
         name: "Nombre para mostrar",
         namePlaceholder: "Por ejemplo: GitHub de la empresa",
-        baizhiyunScopes:
-          "Permisos predeterminados: auth_certification openid phone user email",
         issuerUrl: "URL del emisor",
         scopes: "Permisos (scopes)",
         scopesDescription:
@@ -1352,7 +1342,6 @@ export const es419 = {
           google: "Google",
           microsoft: "Microsoft",
           gitlab: "GitLab",
-          baizhiyun: "Baizhi Cloud",
           oidc: "OIDC personalizado",
         },
       },

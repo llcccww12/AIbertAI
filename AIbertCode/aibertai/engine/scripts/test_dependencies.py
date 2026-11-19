@@ -96,7 +96,7 @@ class DependenciesTest(unittest.TestCase):
             raise subprocess.CalledProcessError(18, command)
         with patch.object(dependencies.subprocess, 'run', side_effect=fail):
             with self.assertRaises(subprocess.CalledProcessError):
-                self.prepare()
+                dependencies.prepare('amd64', self.output, self.cache, self.lock, mirror='https://mirror.example.test/engine')
         self.assertFalse(archive.exists())
         self.assertFalse(self.output.exists())
         self.assertEqual(list(self.cache.iterdir()), [])
@@ -120,16 +120,13 @@ class DependenciesTest(unittest.TestCase):
         self.assertEqual(self.lock.read_bytes(), before)
         self.assertEqual(archive.read_bytes(), content)
 
-    def test_default_mirror_never_falls_back_to_upstream(self):
+    def test_missing_mirror_never_downloads(self):
         archive = self.fixture()
         archive.unlink()
-        def unavailable(command, **kwargs):
-            self.assertEqual(command[-3], dependencies.DEFAULT_MIRROR + '/v26110301/amd64/dependencies.tgz')
-            raise subprocess.CalledProcessError(22, command)
-        with patch.object(dependencies.subprocess, 'run', side_effect=unavailable) as run:
-            with self.assertRaises(subprocess.CalledProcessError):
+        with patch.object(dependencies.subprocess, 'run') as run:
+            with self.assertRaisesRegex(ValueError, 'ENGINE_DEPENDENCY_URL'):
                 self.prepare()
-            run.assert_called_once()
+            run.assert_not_called()
         self.assertFalse(self.output.exists())
         self.assertFalse(archive.exists())
 
@@ -144,7 +141,7 @@ class DependenciesTest(unittest.TestCase):
         corrupted = self.bundle(b'corrupt')
         with patch.object(dependencies.subprocess, 'run', side_effect=lambda command, **kw: Path(command[-1]).write_bytes(corrupted)):
             with self.assertRaisesRegex(ValueError, '摘要不匹配'):
-                self.prepare()
+                dependencies.prepare('amd64', self.output, self.cache, self.lock, mirror='https://mirror.example.test/engine')
         self.assertFalse(archive.exists())
         self.assertFalse(self.output.exists())
 

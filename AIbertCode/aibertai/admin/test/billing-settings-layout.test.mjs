@@ -38,7 +38,7 @@ test("billing settings use equal left and right columns on desktop", async () =>
   )
   assert.match(
     page,
-    /<CardContent className="min-h-0 flex-1">[\s\S]*?<ScrollArea className="-ms-1 -me-\[var\(--card-spacing\)\] min-h-0 lg:flex-1">[\s\S]*?<div className="flex flex-col gap-1 ps-1 pe-\[var\(--card-spacing\)\]">/
+    /<CardContent className="min-h-0 flex-1">[\s\S]*?<ScrollArea className="-me-\[var\(--card-spacing\)\] -ms-1 min-h-0 lg:flex-1">[\s\S]*?<div className="flex flex-col gap-1 pe-\[var\(--card-spacing\)\] ps-1">/
   )
   assert.match(
     page,
@@ -46,7 +46,7 @@ test("billing settings use equal left and right columns on desktop", async () =>
   )
   assert.match(
     page,
-    /<ScrollArea className="min-h-0 lg:h-full">\s*<div className="grid gap-4 ps-px pe-3 pt-px pb-px">/
+    /<ScrollArea className="min-h-0 lg:h-full">\s*<div className="grid gap-4 pb-px pe-3 ps-px pt-px">/
   )
 
   const columns = page
@@ -60,7 +60,7 @@ test("billing settings use equal left and right columns on desktop", async () =>
     /variant="secondary"\s+size="sm"\s+render=\{<Link to=\{CONSOLE_ROUTES\.membersAndGroups\} \/>\}[\s\S]*?groupQuota\.manageGroups/
   )
   const rightColumn = columns.indexOf(
-    '<div className="grid gap-4 ps-px pe-3 pt-px pb-px">'
+    '<div className="grid gap-4 pb-px pe-3 ps-px pt-px">'
   )
   assert.ok(groupQuota >= 0 && groupQuota < rightColumn)
 
@@ -110,13 +110,12 @@ test("member account uses integer key-value balances and dedicated actions", asy
     accountDialog,
     /\["姓名", member\.name\][\s\S]*?member\.email[\s\S]*?member\.role[\s\S]*?member\.status/
   )
-  assert.match(accountDialog, /setExternal\(value\.external_user_id\)/)
+  assert.doesNotMatch(accountDialog, /external_user_id|\/wallet/)
   assert.match(
     accountDialog,
     /view=entries&user_id=\$\{encodeURIComponent\(userId\)\}/
   )
   assert.match(accountDialog, /credits\(value, i18n\.language, 0, "floor"\)/)
-  assert.equal((accountDialog.match(/displayCredits\(/g) ?? []).length, 2)
   assert.match(
     accountDialog,
     /<dl className="divide-y rounded-lg border">[\s\S]*?\["剩余积分", data\.account\.balance\][\s\S]*?\["积分满额上限", data\.account\.quota\]/
@@ -165,7 +164,7 @@ test("billing settings name automatic credit refresh explicitly", async () => {
   )
   assert.match(
     zhCN,
-    /modes: \{\s*disabled: "不计费",\s*local: "直接计费",\s*remote: "与百智云联动计费"/
+    /modes: \{\s*disabled: "不计费",\s*local: "直接计费",\s*\}/
   )
   assert.match(
     zhCN,
@@ -195,7 +194,7 @@ test("billing settings name automatic credit refresh explicitly", async () => {
     assert.match(messages, /resetSuccess:\s*"[^"]*\{\{count\}\}[^"]*"/, locale)
     assert.match(messages, /remaining: ".*\{\{credits\}\}.*"/, locale)
     assert.match(messages, /billingDisabled: ".+"/, locale)
-    assert.match(messages, /remoteBilling: ".+"/, locale)
+    assert.doesNotMatch(messages, /remoteBilling:/, locale)
   }
 })
 
@@ -238,7 +237,7 @@ test("billing settings separate the group tree and member item list", async () =
   )
   assert.match(
     groupRows,
-    /text-muted-foreground tabular-nums transition-colors group-hover\/quota-row:text-foreground/
+    /tabular-nums text-muted-foreground transition-colors group-hover\/quota-row:text-foreground/
   )
 
   assert.match(userItem, /<div\s+key=\{user\.id\}\s+role="listitem"/)
@@ -283,11 +282,11 @@ test("billing settings separate the group tree and member item list", async () =
 
   assert.match(
     page,
-    /const savedLocalBilling =\s*settings\?\.policy\.enabled && settings\.policy\.charging_mode === "local"/
+    /const savedLocalBilling = settings\?\.policy\.enabled/
   )
   assert.match(
     page,
-    /groupQuota\.\$\{settings\?\.policy\.enabled \? "remoteBilling" : "billingDisabled"\}/
+    /groupQuota\.billingDisabled/
   )
   assert.doesNotMatch(page, /localBilling = enabled && mode === "local"/)
   assert.match(page, /quotaRefresh\.cycleLabels\.\$\{cycle\}/)
@@ -302,12 +301,12 @@ test("billing settings forms use the shared shadcn controls", async () => {
   assert.doesNotMatch(page, /from "@\/components\/ui\/checkbox"/)
   assert.match(
     page,
-    /\{enabled && mode === "local" && \([\s\S]*?quotaRefresh\.itemTitle[\s\S]*?quotaRefresh\.itemDescription/
+    /\{enabled && \([\s\S]*?quotaRefresh\.itemTitle[\s\S]*?quotaRefresh\.itemDescription/
   )
   assert.match(page, /open=\{cycleDialogOpen\}/)
   assert.match(page, /<Select\s+items=\{cycleItems\}\s+value=\{cycleValue\}/)
   assert.match(page, /<SelectTrigger id="billing-cycle" className="w-full">/)
-  assert.match(page, /save\("cycle", undefined, undefined, cycleValue\)/)
+  assert.match(page, /save\("cycle", undefined, cycleValue\)/)
   assert.match(
     page,
     /quotaRefresh\.nextResetTitle[\s\S]*?<\/ItemContent>\s*<ItemActions>[\s\S]*?dateTime\(settings\.next_refresh_at\)/
@@ -317,7 +316,7 @@ test("billing settings forms use the shared shadcn controls", async () => {
     /settings\.policy\.pending_cycle &&|当前周期规则为|重置并切换为/
   )
   assert.match(page, /<Select\s+items=\{modeItems\}\s+value=\{selectedMode\}/)
-  assert.match(page, /const selectedMode = enabled \? mode : "disabled"/)
+  assert.match(page, /const selectedMode = enabled \? "local" : "disabled"/)
   assert.equal((page.match(/useState\("weekly"\)/g) ?? []).length, 2)
   assert.match(page, /const \[enabled, setEnabled\] = useState\(true\)/)
   assert.match(page, /renderGroup\(g, "10000"\)/)
@@ -325,7 +324,7 @@ test("billing settings forms use the shared shadcn controls", async () => {
   assert.match(page, /pages\.billingSettings\.chargingMethod\.description/)
   assert.match(page, /pages\.billingSettings\.chargingMethod\.modes\.disabled/)
   assert.match(page, /pages\.billingSettings\.chargingMethod\.modes\.local/)
-  assert.match(page, /pages\.billingSettings\.chargingMethod\.modes\.remote/)
+  assert.doesNotMatch(page, /pages\.billingSettings\.chargingMethod\.modes\.remote/)
   assert.match(page, /<Tabs\s+className="my-6"\s+value=\{quotaMode\}/)
   assert.match(page, /<TabsTrigger[\s\S]*?value="inherit"[\s\S]*?继承上级额度/)
   assert.match(page, /<TabsTrigger value="custom">自定义额度<\/TabsTrigger>/)
@@ -343,12 +342,11 @@ test("billing settings forms use the shared shadcn controls", async () => {
   )
   assert.match(page, /credits\(value, i18n\.language, 0, "floor"\)/)
   assert.doesNotMatch(page, /0 表示没有付费额度/)
-  assert.match(page, /if \(value === "disabled"\) \{\s*setEnabled\(false\)/)
-  assert.match(page, /setMode\(value\)\s*setEnabled\(true\)/)
+  assert.match(page, /if \(value !== null\) setEnabled\(value === "local"\)/)
   assert.doesNotMatch(page, /<Checkbox/)
   assert.doesNotMatch(
     page,
-    /调用前预留积分，按真实用量结算|当前仅记录调用，不扣积分|百智云扣款与本地周期额度分别管理|已绑定.*位成员|未绑定成员无法发起远程付费调用|billing-enabled|<select|<option|type="checkbox"|aria-pressed=/
+    /调用前预留积分，按真实用量结算|当前仅记录调用，不扣积分|百智云扣款与本地周期额度分别管理|已绑定.*位成员|未绑定成员无法发起远程付费调用|id="billing-enabled"|<select|<option|type="checkbox"|aria-pressed=/
   )
 })
 
@@ -415,7 +413,7 @@ test("model pricing uses configurable items instead of inline inputs", async () 
   assert.match(page, /id="model-pricing-value"/)
   assert.match(
     page,
-    /void save\("pricing", undefined, nextPricing\)\.then\(\(saved\) =>/
+    /void save\("pricing", nextPricing\)\.then\(\(saved\) =>/
   )
   assert.match(page, /if \(!saved\) return\s*setPricing\(nextPricing\)/)
   const modelCard = page
@@ -428,7 +426,7 @@ test("model pricing uses configurable items instead of inline inputs", async () 
   )
   assert.match(modelCard, /modelPricing\.manageMultiplier/)
   assert.match(modelCard, /icon=\{LinkSquare02Icon\}\s+data-icon="inline-end"/)
-  assert.doesNotMatch(page, /<Input\s+id=\{key\}/)
+  assert.doesNotMatch(modelCard, /<Input\s+id=\{key\}/)
   assert.match(zhCN, /inputToken: "输入（未命中缓存）Token 费用"/)
   assert.match(zhCN, /cachedInputToken: "输入（命中缓存）Token 费用"/)
   assert.match(zhCN, /outputToken: "输出 Token 费用"/)
@@ -441,10 +439,7 @@ test("model pricing uses configurable items instead of inline inputs", async () 
 })
 
 test("billing save buttons only appear after their form changes", async () => {
-  const [page, wallet] = await Promise.all([
-    source("pages/billing-settings-page.tsx"),
-    source("components/billing/wallet-settings.tsx"),
-  ])
+  const page = await source("pages/billing-settings-page.tsx")
 
   assert.doesNotMatch(page, /hasQuotaChanges|setChanges|save\("quotas"\)/)
   assert.match(page, /const saveQuota = async \(event: FormEvent\)/)
@@ -465,26 +460,5 @@ test("billing save buttons only appear after their form changes", async () => {
   assert.doesNotMatch(page, /dirtyCycle \|\| busy === "cycle"/)
   assert.doesNotMatch(page, /dirtyPricing \|\| busy === "pricing"/)
   assert.match(page, /\{\(dirtyMode \|\| busy === "mode"\) && \(/)
-  assert.match(wallet, /\{\(dirty \|\| saving\) && \(/)
-  assert.match(wallet, /t\("pages\.billingSettings\.save"\)/)
-  assert.match(wallet, /htmlFor="billing-wallet-url">Base URL<\/FieldLabel>/)
-  assert.match(wallet, /htmlFor="billing-wallet-app">App ID<\/FieldLabel>/)
-  const baseURL = wallet.indexOf('id="billing-wallet-url"')
-  const appID = wallet.indexOf('id="billing-wallet-app"')
-  const caCertificate = wallet.indexOf(
-    "certificates.slice(2).map(certificateField)"
-  )
-  const clientCredentials = wallet.indexOf(
-    "certificates.slice(0, 2).map(certificateField)"
-  )
-  assert.ok(
-    baseURL < appID &&
-      appID < caCertificate &&
-      caCertificate < clientCredentials
-  )
-  assert.doesNotMatch(wallet, /grid gap-4 sm:grid-cols-2/)
-  assert.doesNotMatch(
-    wallet,
-    /space-y-4 rounded-md border p-4 text-sm|<h3 className="font-medium">百智云连接配置<\/h3>|保存连接配置|保存时校验证书格式|填写百智云服务地址|填写该百智云服务对应的应用 ID|最大 64 KiB|首次配置需要上传|hint: /
-  )
+  assert.doesNotMatch(page, /WalletSettings|chargingMethod\.modes\.remote|value: "remote"/)
 })

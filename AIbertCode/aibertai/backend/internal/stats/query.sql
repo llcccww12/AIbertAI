@@ -577,6 +577,17 @@ cohort AS NOT MATERIALIZED (
         AND (p.f->>'resource_id' IS NULL OR e.skill_id = p.f->>'resource_id')
         AND (p.f->>'resource_version' IS NULL OR e.version = p.f->>'resource_version')
     UNION ALL
+    SELECT s.owner_user_id,c.session_id,'model',c.model_id::text,NULL::text,
+        false,false,true,1::bigint,CASE WHEN c.status = 'succeeded' THEN 0 ELSE 1 END::bigint
+    FROM model_calls c JOIN cohort s ON s.id = c.session_id CROSS JOIN opts p
+    WHERE c.started_at >= sqlc.arg(from_time)::text::timestamptz AND c.started_at < sqlc.arg(until_time)::text::timestamptz
+        AND c.status IN ('succeeded','failed','cancelled')
+        AND (p.f->>'model_id' IS NULL OR c.model_id = (p.f->>'model_id')::uuid)
+        AND (p.f->>'outcome' IS NULL OR EXISTS (SELECT 1 FROM turns t WHERE t.session_id = c.session_id))
+        AND (p.f->>'kind' IS NULL OR p.f->>'kind' = 'model')
+        AND (p.f->>'resource_id' IS NULL OR c.model_id::text = p.f->>'resource_id')
+        AND p.f->>'resource_version' IS NULL
+    UNION ALL
     SELECT s.owner_user_id,c.session_id,'connector',c.connector_id::text,NULL::text,
         false,false,true,1::bigint,CASE WHEN c.status = 'failed' THEN 1 ELSE 0 END::bigint
     FROM mcp_tool_calls c JOIN cohort s ON s.id = c.session_id CROSS JOIN opts p

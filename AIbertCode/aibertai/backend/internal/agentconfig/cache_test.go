@@ -127,8 +127,6 @@ func TestCatalogETagInvalidation(t *testing.T) {
 		{"移出分组", "UPDATE group_users SET removed_at=now() WHERE user_id=$1", []any{user}},
 		{"重新加入分组", "UPDATE group_users SET removed_at=NULL WHERE user_id=$1", []any{user}},
 		{"分组层级变更", "UPDATE groups SET parent_id=NULL WHERE name='child'", nil},
-		{"计费权限变更", "INSERT INTO settings(key,value,updated_by_user_id) VALUES('billing','{\"charging_mode\":\"remote\"}',$1)", []any{user}},
-		{"云身份恢复系统权限", "INSERT INTO user_identities(user_id,provider,issuer,provider_subject) VALUES($1,'baizhiyun','test','test')", []any{user}},
 		{"资源停用", "UPDATE skills SET enabled=false WHERE id='10000000-0000-0000-0000-000000000001'", nil},
 		{"资源删除", "DELETE FROM skills WHERE id='10000000-0000-0000-0000-000000000002'", nil},
 	}

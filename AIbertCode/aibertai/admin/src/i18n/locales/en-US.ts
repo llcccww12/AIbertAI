@@ -1630,6 +1630,7 @@ export const enUS = {
       textPlaceholder: "Enter the knowledge content to learn",
       selectFile: "Select file",
       fileDescription: "Select multiple TXT or Markdown files at once.",
+      visualFileDescription: "With a vision model configured, you can also import PDF, PNG and JPEG files up to 10 MB each. PDFs can have up to 10 pages.",
       fileUnsupported: "Only TXT and Markdown files are supported.",
       fileEmpty: "The file is empty.",
       addAndLearn: "Add and learn",
@@ -2191,16 +2192,10 @@ export const enUS = {
         modes: {
           disabled: "No charging",
           local: "Direct charging",
-          remote: "Baizhi Cloud linked charging",
         },
         modeDescriptions: {
           local: "Usage and credit deductions are processed by this system.",
-          remote:
-            "Usage is charged through Baizhi Cloud. Only users with a Baizhi Cloud login identity can use system resources.",
         },
-        baseUrl: "Baizhi Cloud URL",
-        apiKey: "Baizhi Cloud key",
-        apiKeyPlaceholder: "Enter the Baizhi Cloud key",
       },
       quotaRefresh: {
         title: "Automatic credit refresh",
@@ -2260,7 +2255,6 @@ export const enUS = {
         summary: "{{cycle}} · {{credits}} credits",
         remaining: "Remaining {{credits}} credits",
         billingDisabled: "Billing disabled",
-        remoteBilling: "Remote billing",
         actions: "Quota actions",
         adjust: "Adjust quota",
         dialogTitle: "Adjust quota",
@@ -2482,25 +2476,26 @@ export const enUS = {
         description: "Manage how knowledge content is processed and retrieved.",
         embeddingModel: "Embedding model",
         rerankerModel: "Reranker model",
-        documentParsingEngine: {
-          title: "Enhanced document parsing engine",
-          provider: "Baizhi Cloud",
-          defaultDescription:
-            "Not configured. The built-in basic parser will extract plain text from files.",
-          configuredDescription:
-            "Baizhi Cloud is configured and will enhance parsing for uploaded documents.",
-          dialogTitle: "Configure enhanced document parsing",
-          dialogDescription:
-            "AIbertAI includes basic document parsing. When plain-text extraction is not good enough for complex documents, Baizhi Cloud can enhance the results.",
-          providerLabel: "Service provider",
-          providerDescription:
-            "Baizhi Cloud · The service endpoint is fixed by the system and does not need configuration.",
-          apiKey: "API key",
-          apiKeyPlaceholder: "Enter the Baizhi Cloud API key",
-          apiKeyUpdatePlaceholder: "Leave blank to keep the current key",
-          apiKeyDescription:
-            "The key is submitted only when saved and will not be shown in full again.",
-          apiKeyUpdateDescription: "Leave blank to keep the current key.",
+        embeddingAutomatic: "Automatically select an available system embedding model",
+        embeddingDefaultConfigured: "A default model is set for new and unbound knowledge bases.",
+        embeddingDefaultDescription: "New and unbound knowledge bases use this default embedding model.",
+        embeddingSelect: "Select an embedding model",
+        embeddingRegistrationHint: "Any model with an OpenAI-compatible /embeddings endpoint is supported. Add and enable a model first.",
+        manageEmbeddingModels: "Manage models",
+        switchEmbedding: "Switch embedding model",
+        switchEmbeddingDescription: "Switching rebuilds this knowledge base’s vector index. Full-text search stays available during the rebuild.",
+        modelSaved: "Model settings saved",
+        reranker: {
+          defaultDescription: "No reranker configured. Search results use the default ranking.",
+          configuredDescription: "Search uses this model to rerank candidate excerpts.",
+          dialogDescription: "Use a service with a /rerank endpoint, such as vLLM or a Cohere- or Jina-compatible service. Search queries and candidate excerpts are sent to that service.",
+        },
+        endpointAPIKeyUpdateDescription: "Leave blank to keep the current key when the API base URL stays the same.",
+        documentVision: {
+          title: "Vision model for document parsing",
+          defaultDescription: "No vision model configured. TXT and Markdown import directly.",
+          configuredDescription: "PDF and image imports use this model to extract text and tables.",
+          dialogDescription: "Use an OpenAI-compatible Chat Completions API that accepts images. PDF pages and images are sent to this model provider for text extraction.",
         },
         contentEnhancementModel: {
           title: "Content enhancement model",
@@ -2520,11 +2515,6 @@ export const enUS = {
         modelIdPlaceholder: "Enter the model ID used by the service",
         modelIdDescription:
           "The service defines the model ID, so it may differ from the selected model name.",
-        rerankerModelIdPlaceholder: "For example: BAAI/bge-reranker-v2-m3",
-        embeddingSupportDescription:
-          "Only the bge-m3 model is currently supported.",
-        rerankerSupportDescription:
-          "Only the bge-reranker-v2-m3 model is currently supported.",
         baseUrl: "Base URL",
         baseUrlPlaceholder: "https://api.example.com/v1",
         apiKey: "API key",
@@ -2588,8 +2578,6 @@ export const enUS = {
         provider: "Provider",
         name: "Display name",
         namePlaceholder: "For example: Company GitHub",
-        baizhiyunScopes:
-          "Default scopes: auth_certification openid phone user email.",
         issuerUrl: "Issuer URL",
         scopes: "Scopes",
         scopesDescription:
@@ -2638,7 +2626,6 @@ export const enUS = {
           google: "Google",
           microsoft: "Microsoft",
           gitlab: "GitLab",
-          baizhiyun: "Baizhi Cloud",
           oidc: "Custom OIDC",
         },
       },

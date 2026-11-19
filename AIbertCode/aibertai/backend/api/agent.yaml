@@ -796,7 +796,7 @@ paths:
                 properties:
                   pairing_id: {type: string, format: uuid, description: 一次性配对标识}
                   secret: {type: string, minLength: 43, maxLength: 43, description: 32 字节随机数的无填充 base64url，仅返回一次}
-                  qr_payload: {type: string, format: uri, description: 'https://work.baizhi.cloud/app-link/scan/?v=1&server=<公开服务地址>&id=<uuid>&secret=<secret>；仅这四个参数'}
+                  qr_payload: {type: string, format: uri, description: '<公开服务地址>/app-link/scan/?v=1&server=<公开服务地址>&id=<uuid>&secret=<secret>；仅这四个参数'}
                   expires_in: {type: integer, const: 60, description: 二维码有效秒数}
         '400': {$ref: '#/components/responses/PairingInvalidRequest'}
         '401': {$ref: '#/components/responses/PairingUnauthorized'}
@@ -4463,6 +4463,29 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '409': {$ref: '#/components/responses/ResourceError409'}
         '500': {$ref: '#/components/responses/ResourceError500'}
+  /api/v1/attachments/extract:
+    post:
+      summary: 提取当前桌面会话附件的正文
+      description: 需要桌面端 OAuth access token 及 files:read 权限。请求正文为不超过 10 MiB 的 PDF、PNG 或 JPEG 文件。PDF 优先提取正文，扫描页和图片使用后台配置的文档视觉模型。此操作不在知识库创建文档。
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: {type: string, format: binary}
+      responses:
+        '200':
+          description: 已提取的正文，输出最多 128 KiB。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [text]
+                properties:
+                  text: {type: string}
+                  truncated: {type: boolean}
+        '400': {$ref: '#/components/responses/ResourceError400'}
+        '401': {$ref: '#/components/responses/ResourceError401'}
+        '403': {$ref: '#/components/responses/ResourceError403'}
   /api/v1/kb:
     get:
       summary: 读取 Agent 知识库目录
@@ -4864,7 +4887,7 @@ paths:
 
   /mcp/kb:
     post:
-      summary: 百智办公知识库 MCP
+      summary: AIbertAI 知识库 MCP
       description: 使用含 mcp:invoke 的全局 API Key。无状态 streamable HTTP JSON-RPC；支持 initialize、ping、tools/list、tools/call。工具为 kb_list、kb_list_documents、kb_get_document、kb_create_document、kb_update_document、kb_delete_document、kb_search。kb_list 支持 owner、q、标签和分页，返回与 GET /api/v1/kb 一致的 knowledge_bases、user、total_count、page、page_size 和 version；kb_list_documents 支持分页、标题或文件名搜索、学习状态和来源类型筛选。文档读取工具支持当前用户有权限的系统或个人知识库；文档写入允许个人库所有者或目标库的读写成员，不能管理授权或删除整个库。MCP 协作更新/删除须传 expected_revision。
       security: [{InvocationKey: []}]
       parameters:
@@ -6473,7 +6496,7 @@ components:
           description: OAuth 连接的稳定标识。
         provider:
           type: string
-          enum: [github, google, microsoft, gitlab, oidc, baizhiyun]
+          enum: [github, google, microsoft, gitlab, oidc]
           description: OAuth 或 OIDC 提供方。
         name:
           type: string
@@ -6484,7 +6507,7 @@ components:
         issuer_url:
           type: string
           format: uri
-          description: OIDC Issuer URL；oidc 和 baizhiyun 必填，其他连接可不返回。
+          description: OIDC Issuer URL；oidc 必填，其他连接可不返回。
         authorization_url:
           type: string
           format: uri
@@ -6499,7 +6522,7 @@ components:
           description: 自定义用户信息端点；使用提供方默认端点时可不返回。
         scopes:
           type: array
-          description: 请求上游授权时使用的 Scope；使用默认 Scope 时可不返回。百智云默认为 auth_certification、openid、phone、user、email。
+          description: 请求上游授权时使用的 Scope；使用默认 Scope 时可不返回。
           items:
             type: string
         enabled:
@@ -6556,11 +6579,9 @@ components:
           - monthly
           description: 积分额度刷新周期。
         charging_mode:
-          description: local 为本地扣费；remote 为百智云扣费，仅具有有效百智云登录身份的用户可访问系统资源，用户自建资源仍遵循原授权。
+          description: local 为直接计费，enabled 为 false 时不计费。
           type: string
-          enum:
-          - local
-          - remote
+          const: local
         enabled:
           type: boolean
           description: 是否启用计费。
@@ -8180,6 +8201,9 @@ components:
         content: {type: string}
         title: {type: string}
         score: {type: number}
+        rerank_score:
+          type: number
+          description: 配置 Reranker 且该结果被评分时返回。
         retrieval_source: {type: string, enum: [lexical, vector, both]}
         citation: {$ref: '#/components/schemas/KbCitation'}
     KbFusionConfig:
@@ -8237,5 +8261,8 @@ components:
           description: 单库或参数一致时为 weighted_rrf 配置；不一致时返回 k_by_kb 与 weights_by_kb。
           additionalProperties: true
         degraded: {type: boolean}
-        warnings: {type: array, items: {type: string}}
+        warnings:
+          type: array
+          description: reranker_failed 表示已保留融合排序。
+          items: {type: string}
         items: {type: array, items: {$ref: '#/components/schemas/KbSearchResult'}}

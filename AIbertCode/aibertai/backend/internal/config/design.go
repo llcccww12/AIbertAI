@@ -2,10 +2,8 @@ package config
 
 import "os"
 
-const designRespubURL = "https://hub.monkeycode-ai.com/api/design"
-
 var defaultDesignPublisherID string
-var defaultDesignRespubJWTSecret = "OUmqdLTRn2sT5Bm6"
+var defaultDesignRespubJWTSecret string
 var defaultDesignMediaJWTSecret string
 
 type Design struct {
@@ -23,7 +21,7 @@ func designEnv(key, fallback string) string {
 }
 func loadDesign() Design {
 	return Design{
-		DesignRespubURL:       designRespubURL,
+		DesignRespubURL:       designEnv("MONKEYAI_DESIGN_RESPUB_URL", ""),
 		DesignPublisherID:     designEnv("MONKEYAI_DESIGN_PUBLISHER_ID", defaultDesignPublisherID),
 		DesignRespubJWTSecret: designEnv("MONKEYAI_DESIGN_RESPUB_JWT_SECRET", defaultDesignRespubJWTSecret),
 		DesignMediaJWTSecret:  designEnv("MONKEYAI_DESIGN_MEDIA_JWT_SECRET", defaultDesignMediaJWTSecret),

@@ -1180,7 +1180,9 @@ WHERE kind = 'embedding'
     AND enabled
     AND deleted_at IS NULL
     AND (embedding_config ->> 'dimension')::integer > 0
-ORDER BY (id::text = $1::text) DESC, created_at, id
+ORDER BY (id::text = $1::text) DESC,
+    COALESCE(id::text = (SELECT value->>'model_id' FROM settings WHERE key = 'knowledge_embedding'), false) DESC,
+    created_at, id
 LIMIT 1
 `
 

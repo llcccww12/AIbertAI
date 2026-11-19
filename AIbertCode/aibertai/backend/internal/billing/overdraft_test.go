@@ -10,100 +10,91 @@ import (
 )
 
 func TestSmallBalanceSettlement(t *testing.T) {
-	for _, mode := range []string{"local", "remote"} {
-		for _, category := range []string{"model", "tool"} {
-			for _, result := range []string{"succeeded", "failed"} {
-				t.Run(mode+"/"+category+"/"+result, func(t *testing.T) {
-					s, user, model := fixture(t)
-					ctx := t.Context()
-					p := defaultPolicy()
-					p.Enabled, p.Mode, p.RootCredits = true, mode, amountText("0.000001")
-					setPolicy(t, s, p)
-					if mode == "remote" {
-						s.WithWallet(&Wallet{Client: &walletStub{}, BaseURL: "https://baizhiyun.vip", AppID: 4})
-						addWalletIdentity(t, s, user, "1001")
-						if err := s.BindWallet(ctx, user, user, "1001"); err != nil {
-							t.Fatal(err)
-						}
+	for _, category := range []string{"model", "tool"} {
+		for _, result := range []string{"succeeded", "failed"} {
+			t.Run(category+"/"+result, func(t *testing.T) {
+				s, user, model := fixture(t)
+				ctx := t.Context()
+				p := defaultPolicy()
+				p.RootCredits = amountText("0.000001")
+				setPolicy(t, s, p)
+				req := Request{UserID: user, ResourceID: model, Category: category}
+				reserve, charge := amountText("14"), amountText("1.48")
+				usage := Usage{Input: 10000, Cached: 4000, Output: 2000, Known: true, Result: result}
+				if category == "tool" {
+					req.ConnectorID, req.ResourceID = resource.ID(), resource.ID()
+					if _, err := s.pool.Exec(ctx, `INSERT INTO connectors(id,owner_user_id,name,url,authorization_mode,authorization_method) VALUES($1,$2,'收费工具','https://example.com','centralized','http_header')`, req.ConnectorID, user); err != nil {
+						t.Fatal(err)
 					}
-					req := Request{UserID: user, ResourceID: model, Category: category}
-					reserve, charge := amountText("14"), amountText("1.48")
-					usage := Usage{Input: 10000, Cached: 4000, Output: 2000, Known: true, Result: result}
-					if category == "tool" {
-						req.ConnectorID, req.ResourceID = resource.ID(), resource.ID()
-						if _, err := s.pool.Exec(ctx, `INSERT INTO connectors(id,owner_user_id,name,url,authorization_mode,authorization_method) VALUES($1,$2,'收费工具','https://example.com','centralized','http_header')`, req.ConnectorID, user); err != nil {
-							t.Fatal(err)
-						}
-						if _, err := s.pool.Exec(ctx, `INSERT INTO mcp_tools(id,connector_id,name,enabled,credits_per_call,config_revision) VALUES($1,$2,'search',true,2.5,1)`, req.ResourceID, req.ConnectorID); err != nil {
-							t.Fatal(err)
-						}
-						reserve, charge = amountText("2.5"), amountText("2.5")
-						usage = Usage{Known: true, Result: result}
+					if _, err := s.pool.Exec(ctx, `INSERT INTO mcp_tools(id,connector_id,name,enabled,credits_per_call,config_revision) VALUES($1,$2,'search',true,2.5,1)`, req.ResourceID, req.ConnectorID); err != nil {
+						t.Fatal(err)
 					}
-					if result == "failed" {
-						charge = 0
-						usage = Usage{Known: true, Result: result}
+					reserve, charge = amountText("2.5"), amountText("2.5")
+					usage = Usage{Known: true, Result: result}
+				}
+				if result == "failed" {
+					charge = 0
+					usage = Usage{Known: true, Result: result}
+				}
+				r, err := s.Begin(ctx, req)
+				if err != nil {
+					t.Fatalf("正余额不足预留额时仍应获准执行: %v", err)
+				}
+				a, err := s.Account(ctx, user)
+				if err != nil || a.Balance != p.RootCredits || a.Frozen != 0 || a.Available != p.RootCredits {
+					t.Fatalf("预留不应冻结积分: %+v %v", a, err)
+				}
+				var reserved string
+				if err := s.pool.QueryRow(ctx, `SELECT reserve::text FROM billing_transactions WHERE id=$1`, r.ID).Scan(&reserved); err != nil || amountText(reserved) != reserve {
+					t.Fatalf("预估金额仍须保留用于结算核查: %s %v", reserved, err)
+				}
+				second, err := s.Begin(ctx, req)
+				if err != nil {
+					t.Fatalf("未结算请求不应占用积分: %v", err)
+				}
+				if err := s.Release(ctx, second.ID, "not_sent"); err != nil {
+					t.Fatal(err)
+				}
+				if err := s.Start(ctx, r.ID); err != nil {
+					t.Fatal(err)
+				}
+				for range 2 {
+					if err := s.Finish(ctx, r.ID, usage); err != nil {
+						t.Fatal(err)
 					}
-					r, err := s.Begin(ctx, req)
+				}
+				a, err = s.Account(ctx, user)
+				if err != nil || a.Balance != p.RootCredits-charge || a.Frozen != 0 || a.Available != a.Balance {
+					t.Fatalf("应仅按实际费用扣除余额: %+v %v", a, err)
+				}
+				var status, total string
+				if err := s.pool.QueryRow(ctx, `SELECT status FROM billing_transactions WHERE id=$1`, r.ID).Scan(&status); err != nil {
+					t.Fatal(err)
+				}
+				wantStatus := "settled"
+				if result == "failed" {
+					wantStatus = "released"
+				}
+				if status != wantStatus {
+					t.Fatalf("交易状态: %s，期望 %s", status, wantStatus)
+				}
+				if err := s.pool.QueryRow(ctx, `SELECT sum(credit_delta)::text FROM credit_ledger_entries WHERE account_id=$1`, a.ID).Scan(&total); err != nil || amountText(total) != a.Balance {
+					t.Fatalf("流水应与余额一致: %s %+v %v", total, a, err)
+				}
+				next, err := s.Begin(ctx, req)
+				if charge > 0 {
+					if !errors.Is(err, insufficient) {
+						t.Fatalf("负余额不能再次调用: %v", err)
+					}
+				} else {
 					if err != nil {
-						t.Fatalf("正余额不足预留额时仍应获准执行: %v", err)
+						t.Fatalf("未消费的预留释放后应可再次调用: %v", err)
 					}
-					a, err := s.Account(ctx, user)
-					if err != nil || a.Balance != p.RootCredits || a.Frozen != 0 || a.Available != p.RootCredits {
-						t.Fatalf("预留不应冻结积分: %+v %v", a, err)
-					}
-					var reserved string
-					if err := s.pool.QueryRow(ctx, `SELECT reserve::text FROM billing_transactions WHERE id=$1`, r.ID).Scan(&reserved); err != nil || amountText(reserved) != reserve {
-						t.Fatalf("预估金额仍须保留用于结算核查: %s %v", reserved, err)
-					}
-					second, err := s.Begin(ctx, req)
-					if err != nil {
-						t.Fatalf("未结算请求不应占用积分: %v", err)
-					}
-					if err := s.Release(ctx, second.ID, "not_sent"); err != nil {
+					if err := s.Release(ctx, next.ID, "not_sent"); err != nil {
 						t.Fatal(err)
 					}
-					if err := s.Start(ctx, r.ID); err != nil {
-						t.Fatal(err)
-					}
-					for range 2 {
-						if err := s.Finish(ctx, r.ID, usage); err != nil {
-							t.Fatal(err)
-						}
-					}
-					a, err = s.Account(ctx, user)
-					if err != nil || a.Balance != p.RootCredits-charge || a.Frozen != 0 || a.Available != a.Balance {
-						t.Fatalf("应仅按实际费用扣除余额: %+v %v", a, err)
-					}
-					var status, total string
-					if err := s.pool.QueryRow(ctx, `SELECT status FROM billing_transactions WHERE id=$1`, r.ID).Scan(&status); err != nil {
-						t.Fatal(err)
-					}
-					wantStatus := "settled"
-					if result == "failed" {
-						wantStatus = "released"
-					}
-					if status != wantStatus {
-						t.Fatalf("交易状态: %s，期望 %s", status, wantStatus)
-					}
-					if err := s.pool.QueryRow(ctx, `SELECT sum(credit_delta)::text FROM credit_ledger_entries WHERE account_id=$1`, a.ID).Scan(&total); err != nil || amountText(total) != a.Balance {
-						t.Fatalf("流水应与余额一致: %s %+v %v", total, a, err)
-					}
-					next, err := s.Begin(ctx, req)
-					if charge > 0 {
-						if !errors.Is(err, insufficient) {
-							t.Fatalf("负余额不能再次调用: %v", err)
-						}
-					} else {
-						if err != nil {
-							t.Fatalf("未消费的预留释放后应可再次调用: %v", err)
-						}
-						if err := s.Release(ctx, next.ID, "not_sent"); err != nil {
-							t.Fatal(err)
-						}
-					}
-				})
-			}
+				}
+			})
 		}
 	}
 }
@@ -190,7 +181,7 @@ func TestReviewedLocalOverageSettlesActualCharge(t *testing.T) {
 	if err != nil || before.Balance != amountText("10000") || before.Frozen != 0 {
 		t.Fatalf("核查前不应提前扣费或冻结: %+v %v", before, err)
 	}
-	call := walletAdmin(t, s, user)
+	call := billingAdmin(t, s, user)
 	path := "/billing/transactions/" + r.ID + "/resolve"
 	call("POST", path, map[string]any{
 		"reason": "已核对上游 response.completed 用量及请求编号",

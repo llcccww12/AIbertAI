@@ -126,7 +126,7 @@ try {
               },
             }
           else if (url.pathname.endsWith("/branding"))
-            body = { product_name: "百智办公", workspace_name: "测试" }
+            body = { product_name: "AIbertAI", workspace_name: "测试" }
           else if (url.pathname === apiPath) {
             requests.push(url.searchParams)
             await gate

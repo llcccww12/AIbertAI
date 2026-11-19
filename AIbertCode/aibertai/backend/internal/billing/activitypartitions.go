@@ -10,7 +10,7 @@ import (
 
 var activityTables = [...]string{"billing_transactions", "model_calls", "mcp_tool_calls", "image_calls", "video_calls"}
 
-// Mutable transaction/call maintenance runs independently of wallet recovery and
+// Mutable transaction/call maintenance runs independently of recovery and
 // the immutable ledger worker. Database advisory locks coordinate all replicas.
 func (s *Service) runActivityPartitions(ctx context.Context) {
 	checks := make(map[string]time.Time, len(activityTables))

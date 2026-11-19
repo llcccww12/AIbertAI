@@ -21,6 +21,7 @@ import { useTranslation } from "react-i18next"
 import { useNavigate, useParams } from "react-router-dom"
 
 import { useAppToast } from "@/components/animated-toast-provider"
+import { EmbeddingModelDialog } from "@/components/embedding-model-dialog"
 import { ResourceAvatarField, type ResourceAvatarDraft } from "@/components/resource-avatar-field"
 import { KbPermissionsEditor } from "@/components/kb-permissions-editor"
 import type { Grant } from "@/lib/resources"
@@ -77,6 +78,7 @@ type KbDocumentSource = "text" | "file" | "url"
 type Kb = ResourceRow & {
   document_count: number
   learned_count: number
+  embedding_model_id?: string | null
   capabilities?: { channels: string[] }
 }
 type KbDocument = {
@@ -234,6 +236,7 @@ export default function KbDetailPage() {
     const title = String(formData.get("title") ?? "").trim()
     const content = String(formData.get("body") ?? "").trim()
     const files = formData.getAll("file").filter((value): value is File => value instanceof File && value.size > 0)
+    let importedFiles = 0
     setDocumentSaving(true)
     try {
       if (editingDocument) {
@@ -244,12 +247,27 @@ export default function KbDetailPage() {
         await saveDocument({ title, parent_id: documentParentId, source_type: "text", content, size_bytes: content.length })
       } else {
         for (const file of files) {
-          const text = await file.text()
-          await saveDocument({ title: file.name, parent_id: documentParentId, source_type: "file", file_name: file.name, mime_type: file.type || "application/octet-stream", size_bytes: file.size, content: text })
+          if (/\.(txt|md|markdown)$/i.test(file.name)) {
+            const text = await file.text()
+            await saveDocument({ title: file.name, parent_id: documentParentId, source_type: "file", file_name: file.name, mime_type: file.type || "application/octet-stream", size_bytes: file.size, content: text })
+          } else {
+            const upload = new FormData()
+            upload.append("file", file)
+            if (documentParentId) upload.append("parent_id", documentParentId)
+            await api(`${base}/kb/${kbId}/documents`, { method: "POST", body: upload })
+            reload()
+          }
+          importedFiles += 1
         }
       }
       handleDocumentDialogOpenChange(false)
     } catch (reason) {
+      const fileInput = form.elements.namedItem("file")
+      if (importedFiles > 0 && fileInput instanceof HTMLInputElement) {
+        const remaining = new DataTransfer()
+        for (const file of files.slice(importedFiles)) remaining.items.add(file)
+        fileInput.files = remaining.files
+      }
       showToast({ status: "error", title: reason instanceof Error ? reason.message : String(reason) })
     } finally {
       setDocumentSaving(false)
@@ -428,10 +446,25 @@ export default function KbDetailPage() {
           </div>
         </dl>
         {selectedKb.ownership_type === "system" && (
-          <Button type="button" variant="outline" className="shrink-0" onClick={openInfoDialog}>
-            <HugeiconsIcon icon={Edit02Icon} data-icon="inline-start" />
-            {t("pages.knowledgeBases.editInfo")}
-          </Button>
+          <div className="flex flex-wrap justify-end gap-2">
+            <EmbeddingModelDialog
+              currentModelID={selectedKb.embedding_model_id ?? ""}
+              scope="knowledgeBase"
+              onSave={async (id) => {
+                await api(`${base}/kb/${kbId}/embedding-model/switch`, {
+                  method: "POST",
+                  headers: match(selectedKb.revision),
+                  body: JSON.stringify({ embedding_model_id: id }),
+                })
+                reload()
+                return true
+              }}
+            />
+            <Button type="button" variant="outline" className="shrink-0" onClick={openInfoDialog}>
+              <HugeiconsIcon icon={Edit02Icon} data-icon="inline-start" />
+              {t("pages.knowledgeBases.editInfo")}
+            </Button>
+          </div>
         )}
       </div>
       <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -607,7 +640,13 @@ export default function KbDetailPage() {
                   <Field><FieldLabel htmlFor="kb-document-body">{t("pages.knowledgeBases.textContent")}</FieldLabel><Textarea id="kb-document-body" name="body" defaultValue={editingDocument?.content} required /></Field>
                 </FieldGroup>
               </TabsContent>
-              <TabsContent value="file"><Field><FieldLabel htmlFor="kb-document-file">{t("pages.knowledgeBases.selectFile")}</FieldLabel><Input id="kb-document-file" name="file" type="file" multiple accept=".txt,.md,.markdown" required /><FieldDescription>{t("pages.knowledgeBases.fileDescription")}</FieldDescription></Field></TabsContent>
+              <TabsContent value="file">
+                <Field>
+                  <FieldLabel htmlFor="kb-document-file">{t("pages.knowledgeBases.selectFile")}</FieldLabel>
+                  <Input id="kb-document-file" name="file" type="file" multiple accept=".txt,.md,.markdown,.pdf,.png,.jpg,.jpeg" required disabled={documentSaving} />
+                  <FieldDescription>{t("pages.knowledgeBases.fileDescription")} {t("pages.knowledgeBases.visualFileDescription")}</FieldDescription>
+                </Field>
+              </TabsContent>
             </Tabs>
             <DialogFooter>
               <DialogClose render={<Button type="button" variant="outline" />}>{t("pages.knowledgeBases.cancel")}</DialogClose>

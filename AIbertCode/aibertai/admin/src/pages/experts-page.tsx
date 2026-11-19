@@ -14,7 +14,7 @@ import {
 import { useAppToast } from "@/components/animated-toast-provider"
 import { ResourceNotice } from "@/components/resource-notice"
 import { ResourceCard } from "@/components/resource-card"
-import { ResourceCardMenuButton } from "@/components/resource-card-menu-button"
+import { ResourceCardMenuTrigger } from "@/components/resource-card-menu-trigger"
 import { useEffect, useState, type FormEvent } from "react"
 import { ResourceList } from "@/components/resource-list"
 import { useResourceList } from "@/hooks/use-resource-list"
@@ -25,7 +25,6 @@ import {
   Copy01Icon,
   Delete02Icon,
   Edit02Icon,
-  MoreHorizontalIcon,
   PauseIcon,
   PlayIcon,
   PlusSignIcon,
@@ -79,7 +78,6 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
@@ -639,18 +637,7 @@ export function ExpertsPage() {
                     />
                   ) : (
                     <DropdownMenu>
-                      <DropdownMenuTrigger
-                        render={
-                          <ResourceCardMenuButton
-                            aria-label={t("common.more")}
-                          />
-                        }
-                      >
-                        <HugeiconsIcon
-                          icon={MoreHorizontalIcon}
-                          strokeWidth={2}
-                        />
-                      </DropdownMenuTrigger>
+                      <ResourceCardMenuTrigger label={t("common.more")} strokeWidth={2} />
                       <DropdownMenuContent align="end">
                         {expert.ownership === "system" && (
                           <>

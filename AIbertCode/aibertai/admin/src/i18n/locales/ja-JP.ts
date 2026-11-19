@@ -454,6 +454,9 @@ export const jaJP = {
         "「{{model}}」を削除しますか？この操作は元に戻せません。",
     },
     knowledgeBases: {
+      icon: "アイコン",
+      uploadIcon: "アイコンをアップロード",
+      replaceIcon: "アイコンを置き換える",
       noDescription: "説明なし",
       noTags: "タグなし",
       createDocument: "ドキュメントを作成",
@@ -523,6 +526,7 @@ export const jaJP = {
       textPlaceholder: "学習させるナレッジ内容を入力",
       selectFile: "ファイルを選択",
       fileDescription: "TXT または Markdown ファイルを複数同時に選択できます。",
+      visualFileDescription: "ビジョンモデルを設定すると、PDF、PNG、JPEG も取り込めます。各ファイルは 10 MB、PDF は 10 ページまでです。",
       fileUnsupported: "TXT と Markdown ファイルのみ対応しています。",
       fileEmpty: "ファイルの内容が空です。",
       addAndLearn: "追加して学習",
@@ -944,15 +948,10 @@ export const jaJP = {
         modes: {
           disabled: "課金なし",
           local: "直接課金",
-          remote: "百智クラウド連携課金",
         },
         modeDescriptions: {
           local: "使用量とポイント控除を現在のシステムで処理します。",
-          remote: "使用量を百智クラウドへ送信して課金します。",
         },
-        baseUrl: "百智クラウド URL",
-        apiKey: "百智クラウドキー",
-        apiKeyPlaceholder: "百智クラウドキーを入力",
       },
       quotaRefresh: {
         title: "クレジットの自動更新",
@@ -1011,7 +1010,6 @@ export const jaJP = {
         summary: "{{cycle}} {{credits}} ポイント",
         remaining: "残り {{credits}} ポイント",
         billingDisabled: "課金は無効です",
-        remoteBilling: "リモート課金",
         actions: "枠の操作",
         adjust: "枠を調整",
         dialogTitle: "枠を調整",
@@ -1163,24 +1161,26 @@ export const jaJP = {
         description: "ナレッジコンテンツの処理と検索を管理します。",
         embeddingModel: "埋め込みモデル",
         rerankerModel: "リランカーモデル",
-        documentParsingEngine: {
-          title: "文書解析強化エンジン",
-          provider: "Baizhi Cloud",
-          defaultDescription:
-            "未設定です。内蔵の基本解析でファイルからプレーンテキストを抽出します。",
-          configuredDescription:
-            "Baizhi Cloud が設定され、アップロード文書の解析が強化されます。",
-          dialogTitle: "文書解析強化エンジンを設定",
-          dialogDescription:
-            "AIbertAI には基本的な文書解析が含まれています。複雑な文書からのテキスト抽出が十分でない場合は、Baizhi Cloud で解析を強化できます。",
-          providerLabel: "サービスプロバイダー",
-          providerDescription:
-            "Baizhi Cloud · サービスの接続先はシステムで固定されているため、設定は不要です。",
-          apiKey: "API キー",
-          apiKeyPlaceholder: "Baizhi Cloud の API キーを入力",
-          apiKeyUpdatePlaceholder: "空欄の場合は現在のキーを保持",
-          apiKeyDescription: "キーは保存時のみ送信され、再表示されません。",
-          apiKeyUpdateDescription: "空欄の場合は現在のキーを保持します。",
+        embeddingAutomatic: "利用可能なシステム埋め込みモデルを自動選択",
+        embeddingDefaultConfigured: "新規およびモデル未指定のナレッジベースに既定のモデルが設定されています。",
+        embeddingDefaultDescription: "新規およびモデル未指定のナレッジベースで、この既定のモデルを使用します。",
+        embeddingSelect: "埋め込みモデルを選択",
+        embeddingRegistrationHint: "OpenAI 互換の /embeddings エンドポイントを提供するモデルに対応します。先にモデルを追加して有効にしてください。",
+        manageEmbeddingModels: "モデルを管理",
+        switchEmbedding: "埋め込みモデルを切り替える",
+        switchEmbeddingDescription: "切り替えるとベクトルインデックスが再構築されます。その間も全文検索は利用できます。",
+        modelSaved: "モデル設定を保存しました",
+        reranker: {
+          defaultDescription: "未設定です。検索結果は既定の順序で表示されます。",
+          configuredDescription: "検索時にこのモデルが候補の抜粋を並べ替えます。",
+          dialogDescription: "vLLM や Cohere または Jina 互換サービスなど、/rerank エンドポイントを指定してください。検索クエリと候補の抜粋がそのサービスに送信されます。",
+        },
+        endpointAPIKeyUpdateDescription: "API のベース URL が同じ場合は、空欄にすると現在のキーが保持されます。",
+        documentVision: {
+          title: "文書解析用のビジョンモデル",
+          defaultDescription: "未設定です。TXT と Markdown はそのまま取り込めます。",
+          configuredDescription: "PDF や画像の取り込み時に、このモデルが本文と表を抽出します。",
+          dialogDescription: "画像入力に対応する OpenAI 互換の Chat Completions API を指定します。文字抽出のため、PDF のページと画像がモデルサービスに送信されます。",
         },
         contentEnhancementModel: {
           title: "コンテンツ強化モデル",
@@ -1201,11 +1201,6 @@ export const jaJP = {
         modelIdPlaceholder: "サービスで使用するモデル ID を入力",
         modelIdDescription:
           "モデル ID はサービス側で定義されるため、選択したモデル名と異なる場合があります。",
-        rerankerModelIdPlaceholder: "例：BAAI/bge-reranker-v2-m3",
-        embeddingSupportDescription:
-          "現在サポートされているのは bge-m3 モデルのみです。",
-        rerankerSupportDescription:
-          "現在サポートされているのは bge-reranker-v2-m3 モデルのみです。",
         baseUrl: "Base URL",
         baseUrlPlaceholder: "https://api.example.com/v1",
         apiKey: "API キー",
@@ -1267,8 +1262,6 @@ export const jaJP = {
         provider: "プロバイダー",
         name: "表示名",
         namePlaceholder: "例：会社 GitHub",
-        baizhiyunScopes:
-          "デフォルトのスコープ： auth_certification openid phone user email",
         issuerUrl: "Issuer URL",
         scopes: "スコープ",
         scopesDescription:
@@ -1317,7 +1310,6 @@ export const jaJP = {
           google: "Google",
           microsoft: "Microsoft",
           gitlab: "GitLab",
-          baizhiyun: "Baizhi Cloud",
           oidc: "カスタム OIDC",
         },
       },

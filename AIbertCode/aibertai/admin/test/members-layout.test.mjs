@@ -21,8 +21,9 @@ test("admin AlertDialogs use the default width and keep descriptions in the body
     new URL("../src/components/ui/alert-dialog.tsx", import.meta.url),
     "utf8"
   )
-  assert.match(primitive, /max-w-xs[^"\n]*sm:max-w-lg/)
-  assert.doesNotMatch(primitive, /data-\[size=sm\]|size\?: "default" \| "sm"/)
+  assert.match(primitive, /\bw-full max-w-xs\b/)
+  assert.match(primitive, /size = "default"/)
+  assert.match(primitive, /size === "sm" \? "max-w-sm" : "sm:max-w-lg"/)
 })
 
 test("members page keeps the original split cards and compact member list", async () => {

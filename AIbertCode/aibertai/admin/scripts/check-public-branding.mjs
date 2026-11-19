@@ -89,22 +89,20 @@ try {
       )
       await page.goto("http://branding.test/")
       await brandingResponse
-      const product = scenario === "unavailable" ? "MonkeyAI" : "测试产品"
+      const product = scenario === "unavailable" ? "AIbertAI" : "测试产品"
       await page.waitForFunction(
         (name) => document.querySelector("footer")?.textContent.includes(name),
         product
       )
       const footer = await page.evaluate(() => ({
-        poweredBy: !!document.querySelector(
-          'footer a[href="https://work.baizhi.cloud/"]'
-        ),
+        links: document.querySelectorAll("footer a").length,
         text: document.querySelector("footer").textContent,
         overflow: document.documentElement.scrollWidth > innerWidth,
       }))
       assert.equal(
-        footer.poweredBy,
-        scenario !== "paid",
-        `${scenario}: hide attribution only for a verified commercial license`
+        footer.links,
+        0,
+        `${scenario}: private landing page has no external footer links`
       )
       assert.ok(footer.text.includes(product))
       assert.equal(
@@ -114,7 +112,7 @@ try {
       assert.equal(footer.overflow, false)
       assert.deepEqual(errors, [])
       console.log(
-        `${width}px ${scenario}: public branding and attribution passed`
+        `${width}px ${scenario}: public branding passed`
       )
       await page.close()
     }

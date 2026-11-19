@@ -313,7 +313,7 @@ func TestComputeMinuteRoundingAccumulatesExactly(t *testing.T) {
 	cost(t, s, user, "0.1", 60)
 }
 
-func TestComputeRejectsInvalidPricingAndRemoteMode(t *testing.T) {
+func TestComputeRejectsInvalidPricing(t *testing.T) {
 	s, _, host, _ := meterFixture(t, "10000")
 	var setup SetupView
 	if err := s.transaction(t.Context(), func(q *sqlc.Queries) error {
@@ -327,13 +327,6 @@ func TestComputeRejectsInvalidPricingAndRemoteMode(t *testing.T) {
 		if _, err := s.saveSetup(t.Context(), host, Setup{Resource: *setup.Resource, MaxEnvironments: setup.MaxEnvironments, UserMaxEnvironments: setup.UserMaxEnvironments, Billing: &pricing}); err == nil {
 			t.Fatal("接受非法环境价格")
 		}
-	}
-	if _, err := s.pool.Exec(t.Context(), `UPDATE settings SET value=jsonb_set(value,'{charging_mode}','"remote"'::jsonb) WHERE key='billing'`); err != nil {
-		t.Fatal(err)
-	}
-	pricing := BillingConfig{Enabled: true, CPU: 1_000000}
-	if _, err := s.saveSetup(t.Context(), host, Setup{Resource: *setup.Resource, MaxEnvironments: setup.MaxEnvironments, UserMaxEnvironments: setup.UserMaxEnvironments, Billing: &pricing}); err == nil {
-		t.Fatal("远程模式静默开启了本地环境收费")
 	}
 }
 

@@ -12,7 +12,7 @@
 | MONKEYAI_DESIGN_RESPUB_JWT_SECRET | 可选覆盖进程内置的 hub 签名密钥；须与 hub 的 DESIGN_OPENAPI_JWT_SECRET 一致 |
 | MONKEYAI_DESIGN_MEDIA_JWT_SECRET | 独立的本地媒体签名密钥，不能复用 hub 密钥 |
 
-Hub 完整 base 固定内置为 `https://hub.monkeycode-ai.com/api/design`，不读取 URL 环境变量或编译期 `-X` 覆盖。`instance_id` 由 Pro 入口的统计扩展通过 `server.InstanceIdentity` 提供：首次统计迁移生成 UUIDv7 并持久保存在 `pro_statistics_identity`，后续启动复用同一身份；不读取实例 ID 环境变量，也不另行生成身份。授权机器码与统计实例 ID 是独立字段。
+Hub 完整 base 固定内置为 `https://design.example.test/api/design`，不读取 URL 环境变量或编译期 `-X` 覆盖。`instance_id` 由 Pro 入口的统计扩展通过 `server.InstanceIdentity` 提供：首次统计迁移生成 UUIDv7 并持久保存在 `pro_statistics_identity`，后续启动复用同一身份；不读取实例 ID 环境变量，也不另行生成身份。授权机器码与统计实例 ID 是独立字段。
 
 本地资源只依赖 PostgreSQL/S3，断网时仍可使用；config 始终下发内置 Hub 地址。缺少签发密钥、未接入宿主身份扩展或统计身份读取失败时，相应 token 端点返回503，不使其他功能启动失败。无设计快照时 available=false、snapshot=null，目录请求404 snapshot_not_found。
 

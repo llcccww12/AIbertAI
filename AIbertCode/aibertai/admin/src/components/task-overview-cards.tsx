@@ -6,11 +6,12 @@ import {
   TaskDaily01Icon,
 } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
+import { StatisticsCardHeader } from "@/components/statistics-card-header"
 import { useTranslation } from "react-i18next"
 import type { ReactNode } from "react"
 
 import { StatisticsTrendCard } from "@/components/statistics-trend-card"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import type { SessionOverview } from "@/lib/statistics"
 import { cn } from "@/lib/utils"
 
@@ -72,22 +73,7 @@ export function TaskOverviewCards({
       aria-label={metric.label}
       className="min-w-0 gap-2 bg-muted/40 p-2 shadow-none ring-1 ring-border/70"
     >
-      <CardHeader className="flex min-h-7 flex-row items-center gap-3 px-3 py-0">
-        <HugeiconsIcon
-          icon={metric.icon}
-          className="shrink-0 text-muted-foreground"
-          size={16}
-          strokeWidth={1.75}
-        />
-        <CardTitle className="min-w-0 flex-1 font-mono text-sm font-medium uppercase tracking-wide text-muted-foreground">
-          {metric.label}
-        </CardTitle>
-        {metric.qualifier && (
-          <span className="ms-auto shrink-0 font-mono text-xs text-muted-foreground/70">
-            {metric.qualifier}
-          </span>
-        )}
-      </CardHeader>
+      <StatisticsCardHeader icon={metric.icon} title={metric.label} qualifier={metric.qualifier} />
       <CardContent
         className={cn(
           "min-h-20 flex-row items-center rounded-xl border border-border/60 bg-card p-5",

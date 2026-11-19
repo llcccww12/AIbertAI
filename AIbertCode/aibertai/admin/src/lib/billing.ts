@@ -6,24 +6,14 @@ export type Policy = {
   cached_input_credits_per_million_tokens: string
   output_credits_per_million_tokens: string
   quota_refresh_cycle: "daily" | "weekly" | "monthly"
-  charging_mode: "local" | "remote"
+  charging_mode: "local"
   enabled: boolean
   pending_cycle?: string
   cycle_effective_at?: string
   revision: number
 }
-export type WalletInfo = {
-  configured: boolean
-  credentials_configured: boolean
-  source?: "admin" | "environment"
-  error?: string
-  base_url?: string
-  app_id?: number
-  certificate_expires_at?: string
-}
 export type BillingSettings = {
   policy: Policy
-  wallet: WalletInfo
   timezone: string
   next_refresh_at: string
 }
@@ -45,7 +35,6 @@ export type QuotaUser = {
   balance_credits?: string
   available_credits: string
   inherited_from: string
-  external_user_id?: string
 }
 export type Quotas = {
   groups: QuotaGroup[]
@@ -132,11 +121,6 @@ export type AccountDetails = {
   account: Account
   user_name: string
   user_email: string
-  wallet: WalletInfo
-  external_user_id: string
-  wallet_available?: string
-  wallet_queried_at?: string
-  wallet_error?: string
 }
 export type Entry = {
   id: string

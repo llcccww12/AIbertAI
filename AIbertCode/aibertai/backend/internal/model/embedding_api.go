@@ -32,16 +32,7 @@ func (s *Service) EmbedText(ctx context.Context, modelID, input string) (Embeddi
 	if err != nil {
 		return EmbeddingResult{}, err
 	}
-	if len(payload.Data) == 0 || len(payload.Data[0].Embedding) == 0 {
-		return EmbeddingResult{}, errors.New("上游响应缺少有效的 embedding 向量")
-	}
-	dimension := len(payload.Data[0].Embedding)
-	for _, item := range payload.Data {
-		if len(item.Embedding) != dimension {
-			return EmbeddingResult{}, errors.New("上游返回了维度不一致的 embedding 向量")
-		}
-	}
-	if err := validateEmbeddingDimension(dimension); err != nil {
+	if _, err := embeddingDimension(payload); err != nil {
 		return EmbeddingResult{}, err
 	}
 	return EmbeddingResult{

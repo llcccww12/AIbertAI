@@ -8,7 +8,7 @@ import (
 	"aibertai.local/backend/internal/billing/sqlc"
 )
 
-// Keep partition maintenance independent of wallet recovery and account refresh.
+// Keep partition maintenance independent of transaction recovery and account refresh.
 // PostgreSQL coordinates replicas with a schema-scoped transaction advisory lock.
 func (s *Service) runLedgerPartitions(ctx context.Context) {
 	var nextCheck time.Time

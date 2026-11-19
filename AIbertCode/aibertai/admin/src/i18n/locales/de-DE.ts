@@ -467,6 +467,9 @@ export const deDE = {
         "„{{model}}“ löschen? Diese Aktion kann nicht rückgängig gemacht werden.",
     },
     knowledgeBases: {
+      icon: "Symbol",
+      uploadIcon: "Symbol hochladen",
+      replaceIcon: "Symbol ersetzen",
       noDescription: "Keine Beschreibung",
       noTags: "Keine Tags",
       createDocument: "Dokument erstellen",
@@ -540,6 +543,7 @@ export const deDE = {
       selectFile: "Datei auswählen",
       fileDescription:
         "Mehrere TXT- oder Markdown-Dateien gleichzeitig auswählen.",
+      visualFileDescription: "Mit einem Visionsmodell können Sie auch PDF-, PNG- und JPEG-Dateien bis je 10 MB importieren. PDFs können bis zu 10 Seiten enthalten.",
       fileUnsupported: "Nur TXT- und Markdown-Dateien werden unterstützt.",
       fileEmpty: "Die Datei ist leer.",
       addAndLearn: "Hinzufügen und lernen",
@@ -976,17 +980,11 @@ export const deDE = {
         modes: {
           disabled: "Keine Abrechnung",
           local: "Direkte Abrechnung",
-          remote: "Mit Baizhi Cloud verknüpfte Abrechnung",
         },
         modeDescriptions: {
           local:
             "Nutzung und Punkteabzug werden von diesem System verarbeitet.",
-          remote:
-            "Nutzungsdaten werden zur Abrechnung an Baizhi Cloud gesendet.",
         },
-        baseUrl: "Baizhi-Cloud-Adresse",
-        apiKey: "Baizhi-Cloud-Schlüssel",
-        apiKeyPlaceholder: "Baizhi-Cloud-Schlüssel eingeben",
       },
       quotaRefresh: {
         title: "Automatische Guthabenaktualisierung",
@@ -1048,7 +1046,6 @@ export const deDE = {
         summary: "{{cycle}} · {{credits}} Punkte",
         remaining: "Verbleibend: {{credits}} Punkte",
         billingDisabled: "Abrechnung deaktiviert",
-        remoteBilling: "Remote-Abrechnung",
         actions: "Kontingentaktionen",
         adjust: "Kontingent anpassen",
         dialogTitle: "Kontingent anpassen",
@@ -1206,27 +1203,26 @@ export const deDE = {
           "Verwalten Sie die Verarbeitung und den Abruf von Wissensinhalten.",
         embeddingModel: "Embedding-Modell",
         rerankerModel: "Reranker-Modell",
-        documentParsingEngine: {
-          title: "Erweiterte Dokumentenanalyse",
-          provider: "Baizhi Cloud",
-          defaultDescription:
-            "Nicht konfiguriert. Der integrierte Parser extrahiert einfachen Text aus Dateien.",
-          configuredDescription:
-            "Baizhi Cloud ist konfiguriert und verbessert die Analyse hochgeladener Dokumente.",
-          dialogTitle: "Erweiterte Dokumentenanalyse konfigurieren",
-          dialogDescription:
-            "AIbertAI enthält eine grundlegende Dokumentenanalyse. Wenn die Textextraktion bei komplexen Dokumenten nicht ausreicht, kann Baizhi Cloud die Ergebnisse verbessern.",
-          providerLabel: "Dienstanbieter",
-          providerDescription:
-            "Baizhi Cloud · Der Endpunkt ist systemseitig festgelegt und muss nicht konfiguriert werden.",
-          apiKey: "API-Schlüssel",
-          apiKeyPlaceholder: "API-Schlüssel von Baizhi Cloud eingeben",
-          apiKeyUpdatePlaceholder:
-            "Leer lassen, um den aktuellen Schlüssel beizubehalten",
-          apiKeyDescription:
-            "Der Schlüssel wird nur beim Speichern übertragen und danach nicht vollständig angezeigt.",
-          apiKeyUpdateDescription:
-            "Leer lassen, um den aktuellen Schlüssel beizubehalten.",
+        embeddingAutomatic: "Verfügbares System-Embedding-Modell automatisch auswählen",
+        embeddingDefaultConfigured: "Für neue und noch nicht zugewiesene Wissensdatenbanken ist ein Standardmodell festgelegt.",
+        embeddingDefaultDescription: "Neue und noch nicht zugewiesene Wissensdatenbanken verwenden dieses Standardmodell.",
+        embeddingSelect: "Embedding-Modell auswählen",
+        embeddingRegistrationHint: "Unterstützt werden Modelle mit einem OpenAI-kompatiblen /embeddings-Endpunkt. Fügen Sie zuerst ein Modell hinzu und aktivieren Sie es.",
+        manageEmbeddingModels: "Modelle verwalten",
+        switchEmbedding: "Embedding-Modell wechseln",
+        switchEmbeddingDescription: "Beim Wechsel wird der Vektorindex neu erstellt. Die Volltextsuche bleibt verfügbar.",
+        modelSaved: "Modelleinstellungen gespeichert",
+        reranker: {
+          defaultDescription: "Kein Reranker konfiguriert. Suchergebnisse verwenden die Standardsortierung.",
+          configuredDescription: "Dieses Modell sortiert die gefundenen Textabschnitte neu.",
+          dialogDescription: "Verwenden Sie einen Dienst mit /rerank-Endpunkt, etwa vLLM oder einen Cohere- oder Jina-kompatiblen Dienst. Suchanfragen und Textabschnitte werden an den Dienst gesendet.",
+        },
+        endpointAPIKeyUpdateDescription: "Lassen Sie das Feld leer, um bei unveränderter API-Basis-URL den aktuellen Schlüssel zu behalten.",
+        documentVision: {
+          title: "Visionsmodell zur Dokumentenanalyse",
+          defaultDescription: "Kein Visionsmodell konfiguriert. TXT- und Markdown-Dateien lassen sich direkt importieren.",
+          configuredDescription: "Beim Import von PDFs und Bildern extrahiert dieses Modell Text und Tabellen.",
+          dialogDescription: "Verwenden Sie eine OpenAI-kompatible Chat Completions API, die Bilder akzeptiert. PDF-Seiten und Bilder werden zur Textextraktion an den Modelldienst gesendet.",
         },
         contentEnhancementModel: {
           title: "Modell zur Inhaltsverbesserung",
@@ -1247,11 +1243,6 @@ export const deDE = {
         modelIdPlaceholder: "Die vom Dienst verwendete Modell-ID eingeben",
         modelIdDescription:
           "Der Dienst legt die Modell-ID fest; sie kann daher vom ausgewählten Modellnamen abweichen.",
-        rerankerModelIdPlaceholder: "Zum Beispiel: BAAI/bge-reranker-v2-m3",
-        embeddingSupportDescription:
-          "Derzeit wird nur das Modell bge-m3 unterstützt.",
-        rerankerSupportDescription:
-          "Derzeit wird nur das Modell bge-reranker-v2-m3 unterstützt.",
         baseUrl: "Base URL",
         baseUrlPlaceholder: "https://api.example.com/v1",
         apiKey: "API-Schlüssel",
@@ -1317,8 +1308,6 @@ export const deDE = {
         provider: "Anbieter",
         name: "Anzeigename",
         namePlaceholder: "Zum Beispiel: Firmen-GitHub",
-        baizhiyunScopes:
-          "Standardberechtigungen: auth_certification openid phone user email",
         issuerUrl: "Issuer-URL",
         scopes: "Berechtigungsbereiche (Scopes)",
         scopesDescription:
@@ -1368,7 +1357,6 @@ export const deDE = {
           google: "Google",
           microsoft: "Microsoft",
           gitlab: "GitLab",
-          baizhiyun: "Baizhi Cloud",
           oidc: "Benutzerdefiniertes OIDC",
         },
       },

@@ -2106,3 +2106,17 @@ CREATE TABLE team_capacity (
     active_members integer NOT NULL CHECK (active_members >= 0),
     CHECK (max_members IS NULL OR active_members <= max_members)
 );
+
+ALTER TABLE settings DROP CONSTRAINT settings_key_check,
+    ADD CONSTRAINT settings_key_check CHECK (key IN (
+        'branding', 'authentication', 'email', 'billing', 'session_reporting', 'proxies', 'mcp', 'document_vision'
+    ));
+
+ALTER TABLE settings DROP CONSTRAINT settings_key_check,
+    ADD CONSTRAINT settings_key_check CHECK (key IN (
+        'branding', 'authentication', 'email', 'billing', 'session_reporting', 'proxies', 'mcp',
+        'document_vision', 'knowledge_embedding', 'knowledge_reranker'
+    ));
+
+ALTER TABLE settings ADD CONSTRAINT settings_billing_local_mode_check
+    CHECK (key <> 'billing' OR value->>'charging_mode' IS DISTINCT FROM 'remote');

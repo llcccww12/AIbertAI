@@ -78,7 +78,7 @@ func (s *Service) connections(ctx context.Context) ([]OAuthConnection, error) {
 	}
 	connections := make([]OAuthConnection, 0, len(settings.OAuthConnections))
 	for _, connection := range settings.OAuthConnections {
-		if connection.Enabled {
+		if connection.Enabled && SupportsOAuthProvider(connection.Provider) {
 			connections = append(connections, connection)
 		}
 	}
@@ -98,7 +98,19 @@ func (s *Service) connection(ctx context.Context, id string) (OAuthConnection, e
 	return OAuthConnection{}, ErrNotFound
 }
 
+func SupportsOAuthProvider(provider string) bool {
+	switch provider {
+	case "github", "google", "microsoft", "gitlab", "oidc":
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Service) providerURLs(ctx context.Context, connection OAuthConnection) (providerMetadata, error) {
+	if !SupportsOAuthProvider(connection.Provider) {
+		return providerMetadata{}, errors.New("不支持的 OAuth 提供方")
+	}
 	metadata := providerMetadata{
 		AuthorizationEndpoint: connection.AuthorizationURL,
 		TokenEndpoint:         connection.TokenURL,
@@ -117,7 +129,7 @@ func (s *Service) providerURLs(ctx context.Context, connection OAuthConnection) 
 		metadata = providerMetadata{"https://login.microsoftonline.com/common/oauth2/v2.0/authorize", "https://login.microsoftonline.com/common/oauth2/v2.0/token", "https://graph.microsoft.com/oidc/userinfo"}
 	case "gitlab":
 		metadata = providerMetadata{"https://gitlab.com/oauth/authorize", "https://gitlab.com/oauth/token", "https://gitlab.com/api/v4/user"}
-	case "oidc", "baizhiyun":
+	case "oidc":
 		if connection.IssuerURL == "" {
 			return providerMetadata{}, errors.New("OIDC issuer_url 不能为空")
 		}
@@ -157,8 +169,6 @@ func (s *Service) upstreamAuthorizeURL(ctx context.Context, connection OAuthConn
 		switch connection.Provider {
 		case "github":
 			scopes = []string{"read:user", "user:email"}
-		case "baizhiyun":
-			scopes = []string{"auth_certification", "openid", "phone", "user", "email"}
 		}
 	}
 	query := endpoint.Query()
@@ -222,42 +232,12 @@ func (s *Service) exchangeUpstream(ctx context.Context, connection OAuthConnecti
 		return upstreamProfile{}, &upstreamHTTPError{operation: "读取上游用户", status: response.StatusCode}
 	}
 	decoder := json.NewDecoder(io.LimitReader(response.Body, 1<<20))
-	var profile upstreamProfile
-	if connection.Provider == "baizhiyun" {
-		var result struct {
-			Code *int `json:"code"`
-			Data struct {
-				ID     string `json:"id"`
-				Name   string `json:"name"`
-				Avatar string `json:"avatar"`
-				Email  string `json:"email"`
-			} `json:"data"`
-		}
-		if err := decoder.Decode(&result); err != nil {
-			return upstreamProfile{}, fmt.Errorf("解析百智云用户: %w", err)
-		}
-		if result.Code == nil {
-			return upstreamProfile{}, errors.New("百智云用户响应缺少 code")
-		}
-		if *result.Code != 0 {
-			return upstreamProfile{}, fmt.Errorf("读取百智云用户: code %d", *result.Code)
-		}
-		profile = upstreamProfile{
-			Provider:  connection.Provider,
-			Issuer:    connection.IssuerURL,
-			Subject:   result.Data.ID,
-			Name:      result.Data.Name,
-			Email:     strings.ToLower(strings.TrimSpace(result.Data.Email)),
-			AvatarURL: result.Data.Avatar,
-		}
-	} else {
-		var raw map[string]any
-		decoder.UseNumber()
-		if err := decoder.Decode(&raw); err != nil {
-			return upstreamProfile{}, err
-		}
-		profile = normalizeProfile(connection, raw)
+	var raw map[string]any
+	decoder.UseNumber()
+	if err := decoder.Decode(&raw); err != nil {
+		return upstreamProfile{}, err
 	}
+	profile := normalizeProfile(connection, raw)
 	if profile.Subject == "" {
 		return upstreamProfile{}, errors.New("上游用户缺少 subject")
 	}

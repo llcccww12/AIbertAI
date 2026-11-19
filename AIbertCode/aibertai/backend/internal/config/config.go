@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -119,6 +120,10 @@ func Load(args []string) (Config, error) {
 	cfg.PprofAddr = strings.TrimSpace(cfg.PprofAddr)
 	if cfg.PprofAddr == "" {
 		return Config{}, errors.New("pprof 监听地址不能为空")
+	}
+	debugHost, _, err := net.SplitHostPort(cfg.PprofAddr)
+	if err != nil || !net.ParseIP(debugHost).IsLoopback() {
+		return Config{}, errors.New("pprof 必须监听回环 IP 地址")
 	}
 	cfg.URL = strings.TrimSpace(cfg.URL)
 	if cfg.URL == "" {

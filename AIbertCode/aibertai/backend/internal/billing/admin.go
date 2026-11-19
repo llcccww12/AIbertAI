@@ -1,7 +1,6 @@
 package billing
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,7 +9,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"aibertai.local/backend/internal/billing/sqlc"
 	"aibertai.local/backend/internal/identity"
@@ -28,21 +26,6 @@ func (s *Service) RegisterAdmin(r chi.Router) {
 	r.Post("/billing/quotas/reset", s.resetQuotas)
 	r.Get("/billing/accounts/{userID}", s.account)
 	r.Post("/billing/accounts/{userID}/adjustments", s.adjust)
-	r.Put("/billing/accounts/{userID}/wallet", func(w http.ResponseWriter, r *http.Request) {
-		var in struct {
-			ExternalID string `json:"external_user_id"`
-		}
-		if err := resource.Decode(w, r, &in); err != nil {
-			resource.Fail(r.Context(), w, err)
-			return
-		}
-		u, _ := identity.UserFromContext(r.Context())
-		if err := s.BindWallet(r.Context(), u.ID, chi.URLParam(r, "userID"), in.ExternalID); err != nil {
-			resource.Fail(r.Context(), w, err)
-			return
-		}
-		w.WriteHeader(204)
-	})
 	r.Get("/billing/entries", s.entries)
 	r.Get("/billing/users", s.searchEntryUsers)
 	r.Get("/billing/summary", s.summary)
@@ -58,13 +41,8 @@ func (s *Service) settings(w http.ResponseWriter, r *http.Request) {
 		resource.Fail(r.Context(), w, err)
 		return
 	}
-	wallet, err := s.wallet(r.Context(), s.pool)
-	if err != nil {
-		resource.Fail(r.Context(), w, err)
-		return
-	}
 	_, end := p.period(s.now())
-	resource.JSON(r.Context(), w, 200, map[string]any{"policy": p, "wallet": wallet.info(), "timezone": "Asia/Shanghai", "next_refresh_at": end})
+	resource.JSON(r.Context(), w, 200, map[string]any{"policy": p, "timezone": "Asia/Shanghai", "next_refresh_at": end})
 }
 func (s *Service) saveSettings(w http.ResponseWriter, r *http.Request) {
 	var in map[string]json.RawMessage
@@ -83,8 +61,6 @@ func (s *Service) saveSettings(w http.ResponseWriter, r *http.Request) {
 		allowed = append(allowed, "quota_refresh_cycle")
 	case "mode":
 		allowed = append(allowed, "charging_mode", "enabled")
-	case "wallet":
-		allowed = append(allowed, "base_url", "app_id", "certificate", "private_key", "ca_certificate")
 	default:
 		resource.Fail(r.Context(), w, resource.NotFound)
 		return
@@ -116,7 +92,6 @@ func (s *Service) saveSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	before := p
-	var walletBefore, walletAfter WalletInfo
 	switch section {
 	case "environment":
 		if json.Unmarshal(in["enabled"], &p.Environment.Enabled) != nil {
@@ -157,29 +132,8 @@ func (s *Service) saveSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "mode":
-		if json.Unmarshal(in["charging_mode"], &p.Mode) != nil || !slices.Contains([]string{"local", "remote"}, p.Mode) || json.Unmarshal(in["enabled"], &p.Enabled) != nil {
+		if json.Unmarshal(in["charging_mode"], &p.Mode) != nil || p.Mode != "local" || json.Unmarshal(in["enabled"], &p.Enabled) != nil {
 			resource.Fail(r.Context(), w, resource.Invalid("计费方式或启用状态无效"))
-			return
-		}
-		if p.Mode == "remote" && p.Environment.Enabled {
-			resource.Fail(r.Context(), w, resource.Invalid("请先关闭云电脑计费再切换远程模式"))
-			return
-		}
-		if p.Mode == "remote" {
-			wallet, e := s.wallet(r.Context(), tx)
-			if e != nil {
-				resource.Fail(r.Context(), w, e)
-				return
-			}
-			if !wallet.ready() {
-				resource.Fail(r.Context(), w, fail(422, "wallet_not_configured", "请先在计费设置中配置有效的百智云应用和证书"))
-				return
-			}
-		}
-	case "wallet":
-		walletBefore, walletAfter, err = s.saveWallet(r.Context(), tx, in)
-		if err != nil {
-			resource.Fail(r.Context(), w, err)
 			return
 		}
 	}
@@ -193,9 +147,6 @@ func (s *Service) saveSettings(w http.ResponseWriter, r *http.Request) {
 	_, err = sqlc.New(tx).SavePolicy(r.Context(), sqlc.SavePolicyParams{Value: raw, Revision: int64(p.Revision), UpdatedByUserID: u.ID})
 	if err == nil {
 		data := map[string]any{"before": before, "after": p}
-		if section == "wallet" {
-			data = map[string]any{"before": walletBefore, "after": walletAfter}
-		}
 		err = audit(r.Context(), tx, u.ID, "configure_"+section, "", data)
 	}
 
@@ -531,33 +482,9 @@ func (s *Service) account(w http.ResponseWriter, r *http.Request) {
 		resource.Fail(r.Context(), w, fmt.Errorf("查询用户 %s 资料: %w", user, err))
 		return
 	}
-	external, err := q.WalletUser(r.Context(), user)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		resource.Fail(r.Context(), w, fmt.Errorf("查询用户 %s 钱包绑定: %w", user, err))
-		return
-	}
-
-	wallet, err := s.wallet(r.Context(), s.pool)
-	if err != nil {
-		resource.Fail(r.Context(), w, err)
-		return
-	}
-	out := map[string]any{
+	resource.JSON(r.Context(), w, http.StatusOK, map[string]any{
 		"account": a, "user_name": profile.Name, "user_email": profile.Email,
-		"external_user_id": external, "wallet": wallet.info(),
-	}
-	if external != "" && wallet.ready() {
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-		defer cancel()
-		balance, e := wallet.Client.GetUserCreditBalance(ctx, external)
-		if e == nil {
-			out["wallet_available"] = Amount(balance.AvailableCreditCents * 10000)
-			out["wallet_queried_at"] = s.now()
-		} else {
-			out["wallet_error"] = "百智云余额查询失败"
-		}
-	}
-	resource.JSON(r.Context(), w, 200, out)
+	})
 }
 func (s *Service) adjust(w http.ResponseWriter, r *http.Request) {
 	var in struct {
@@ -703,7 +630,7 @@ func (s *Service) refund(w http.ResponseWriter, r *http.Request) {
 	account, mode, status, amountText, category, item = record.AccountID, record.Mode, record.Status, record.Amount, record.Category, record.ItemName
 
 	if mode != "local" {
-		resource.Fail(r.Context(), w, fail(409, "wallet_refund_required", "远程退款需经百智云退款或对账渠道处理"))
+		resource.Fail(r.Context(), w, fail(409, "transaction_not_refundable", "此交易没有本地可退的扣款"))
 		return
 	}
 	amount, err := ParseAmount(amountText)

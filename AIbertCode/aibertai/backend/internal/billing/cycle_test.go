@@ -77,7 +77,7 @@ func TestRefreshCycleReschedule(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			call := walletAdmin(t, s, user)
+			call := billingAdmin(t, s, user)
 			save := func(cycle string) {
 				t.Helper()
 				policy, err := s.Policy(ctx)
@@ -131,7 +131,7 @@ func TestRefreshCycleChange(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			call := walletAdmin(t, s, user)
+			call := billingAdmin(t, s, user)
 			var out struct {
 				Policy Policy    `json:"policy"`
 				Next   time.Time `json:"next_refresh_at"`

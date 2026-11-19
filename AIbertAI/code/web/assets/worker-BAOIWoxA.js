@@ -1,6 +1,9 @@
 (function () {
   "use strict";
-  const i = "https://unpkg.com/@ffmpeg/core@0.12.9/dist/umd/ffmpeg-core.js";
+  const i = new URL(
+    "/assets/media-vendor/ffmpeg/core-st/ffmpeg-core.js",
+    self.location.href,
+  ).href;
   var E;
   (function (t) {
     ((t.LOAD = "LOAD"),
@@ -26,19 +29,15 @@
   let r;
   const O = async ({ coreURL: t, wasmURL: n, workerURL: e }) => {
       const o = !r;
+      const s = t || i;
       try {
-        (t || (t = i), importScripts(t));
+        importScripts(s);
       } catch {
-        if (
-          ((!t || t === i) && (t = i.replace("/umd/", "/esm/")),
-          (self.createFFmpegCore = (await import(t)).default),
-          !self.createFFmpegCore)
-        )
-          throw u;
+        self.createFFmpegCore = (await import(s)).default;
+        if (!self.createFFmpegCore) throw u;
       }
-      const s = t,
-        c = n || t.replace(/.js$/g, ".wasm"),
-        p = e || t.replace(/.js$/g, ".worker.js");
+      const c = n || s.replace(/\.js$/g, ".wasm"),
+        p = e || s.replace(/\.js$/g, ".worker.js");
       return (
         (r = await self.createFFmpegCore({
           mainScriptUrlOrBlob: `${s}#${btoa(JSON.stringify({ wasmURL: c, workerURL: p }))}`,

@@ -101,7 +101,7 @@ func TestKBMCPInitializeAndToolsList(t *testing.T) {
 	if err := json.Unmarshal(initialize.Body.Bytes(), &initialized); err != nil {
 		t.Fatal(err)
 	}
-	if initialized.Result.ProtocolVersion != "2025-06-18" || initialized.Result.ServerInfo.Name != "baizhi-office-kb" {
+	if initialized.Result.ProtocolVersion != "2025-06-18" || initialized.Result.ServerInfo.Name != "aibertai-kb" {
 		t.Fatalf("initialize 响应不正确: %#v", initialized.Result)
 	}
 

@@ -9,10 +9,11 @@ import (
 	"slices"
 	"time"
 
+	"aibertai.local/backend/internal/identity"
 	"aibertai.local/backend/internal/resource"
 )
 
-var Keys = []string{"branding", "authentication", "email", "billing", "session_reporting", "proxies", "mcp"}
+var Keys = []string{"branding", "authentication", "email", "billing", "session_reporting", "proxies", "mcp", DocumentVisionKey, RerankerKey, EmbeddingDefaultKey}
 
 var defaultSessionReporting = json.RawMessage(`{"enabled":true,"level":"stats"}`)
 
@@ -37,9 +38,10 @@ type Store interface {
 }
 
 type Service struct {
-	store       Store
-	logoStorage resource.Storage
-	publicURL   string
+	store                 Store
+	logoStorage           resource.Storage
+	publicURL             string
+	embeddingDefaultCheck func(context.Context, string) error
 }
 
 func NewService(store Store) *Service {
@@ -159,7 +161,15 @@ func (s *Service) Put(ctx context.Context, key string, value json.RawMessage, sc
 		}
 		value = encoded
 	}
-	value, err := s.mergeSecrets(ctx, key, value)
+	var err error
+	switch key {
+	case DocumentVisionKey, RerankerKey:
+		value, err = s.prepareKnowledgeEndpoint(ctx, key, value)
+	case EmbeddingDefaultKey:
+		value, err = s.prepareEmbeddingDefault(ctx, value)
+	default:
+		value, err = s.mergeSecrets(ctx, key, value)
+	}
 	if err != nil {
 		return Record{}, err
 	}
@@ -223,7 +233,7 @@ func (s *Service) AgentConfig(ctx context.Context) (Config, error) {
 	config := Config{Settings: make(map[string]json.RawMessage)}
 	seenSessionReporting := false
 	for _, record := range records {
-		if record.Key == "proxies" || record.Key == "mcp" {
+		if slices.Contains([]string{"proxies", "mcp", DocumentVisionKey, RerankerKey, EmbeddingDefaultKey}, record.Key) {
 			continue
 		}
 		value, err := redact(record.Key, record.Value)
@@ -284,14 +294,22 @@ func redact(key string, value json.RawMessage) (json.RawMessage, error) {
 		delete(object, "logo_s3_key")
 		delete(object, "logo_url")
 	case "authentication":
-		connections, _ := object["oauth_connections"].([]any)
-		for _, item := range connections {
-			if connection, ok := item.(map[string]any); ok {
+		if entries, ok := object["oauth_connections"].([]any); ok {
+			connections := make([]any, 0, len(entries))
+			for _, entry := range entries {
+				connection, ok := entry.(map[string]any)
+				if !ok || !identity.SupportsOAuthProvider(stringAny(connection["provider"])) {
+					continue
+				}
 				delete(connection, "client_secret")
+				connections = append(connections, connection)
 			}
+			object["oauth_connections"] = connections
 		}
 	case "email":
 		delete(object, "smtp_password")
+	case DocumentVisionKey, RerankerKey:
+		delete(object, "api_key")
 	case "billing":
 		delete(object, "remote_billing_api_key")
 		delete(object, "wallet")
@@ -410,10 +428,10 @@ func validate(key string, value map[string]json.RawMessage) error {
 				return errors.New("OAuth 配置缺少必填字段或 ID 重复")
 			}
 			seen[connection.ID] = true
-			if !slices.Contains([]string{"github", "google", "microsoft", "gitlab", "oidc", "baizhiyun"}, connection.Provider) {
+			if !identity.SupportsOAuthProvider(connection.Provider) {
 				return errors.New("OAuth provider 无效")
 			}
-			if (connection.Provider == "oidc" || connection.Provider == "baizhiyun") && connection.IssuerURL == "" {
+			if connection.Provider == "oidc" && connection.IssuerURL == "" {
 				return errors.New("OIDC issuer_url 不能为空")
 			}
 		}
@@ -434,7 +452,7 @@ func validate(key string, value map[string]json.RawMessage) error {
 		if cycle != "" && !slices.Contains([]string{"daily", "weekly", "monthly"}, cycle) {
 			return errors.New("quota_refresh_cycle 无效")
 		}
-		if mode != "" && !slices.Contains([]string{"local", "remote"}, mode) {
+		if mode != "" && mode != "local" {
 			return errors.New("charging_mode 无效")
 		}
 	}

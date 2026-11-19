@@ -275,18 +275,9 @@ func (s *Service) resolve(w http.ResponseWriter, r *http.Request) {
 		resource.Fail(r.Context(), w, fail(409, "transaction_not_unknown", "只有结果未知的交易可以核查处理"))
 		return
 	}
-	if mode == "remote" {
-		var ws string
-		ws, err = sqlc.New(tx).WalletStatus(r.Context(), id)
-		if err != nil {
-			resource.Fail(r.Context(), w, err)
-			return
-		}
-
-		if ws != "reserved" {
-			resource.Fail(r.Context(), w, fail(409, "wallet_review_required", "需先通过百智云核实预扣状态，不能仅在本地解除冻结"))
-			return
-		}
+	if mode != "local" {
+		resource.Fail(r.Context(), w, legacyTransaction)
+		return
 	}
 	if record.Category == "image" {
 		job, err := sqlc.New(tx).ImageJobReview(r.Context(), &id)

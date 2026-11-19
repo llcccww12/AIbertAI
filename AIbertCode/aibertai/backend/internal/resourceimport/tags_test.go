@@ -24,7 +24,7 @@ func TestTaggedManifest(t *testing.T) {
 		t.Fatal("带标签的 manifest 未使用实际文件指纹")
 	}
 	for _, entry := range append(append([]Entry{}, pkg.Manifest.AgentResources.Skills...), pkg.Manifest.AgentResources.Rules...) {
-		if !slices.Equal(entry.Tags, []string{"百智办公"}) {
+		if !slices.Equal(entry.Tags, []string{"测试办公"}) {
 			t.Fatalf("标签丢失: %+v", entry)
 		}
 	}
@@ -38,7 +38,7 @@ func TestParseTags(t *testing.T) {
 	}{
 		{"旧包不声明标签", nil, nil},
 		{"显式清空标签", []string{}, []string{}},
-		{"去空格去重并排序", []string{" 百智办公 ", "Work", "work", "研发"}, []string{"Work", "百智办公", "研发"}},
+		{"去空格去重并排序", []string{" 测试办公 ", "Work", "work", "研发"}, []string{"Work", "测试办公", "研发"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			pkg, err := Parse(packageFixture(t, func(m *Manifest, _ map[string][]byte) {

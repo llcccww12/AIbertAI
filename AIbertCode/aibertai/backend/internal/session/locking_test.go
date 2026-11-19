@@ -40,3 +40,44 @@ func TestSessionUpdateAllowsChildReference(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestTurnMirrorPreservesSessionLockCompatibility(t *testing.T) {
+	s, _, user, _ := sessionDBFixture(t)
+	started := time.Now().UTC()
+	id := turnSeedSession(t, s, user, started)
+	report, err := s.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer report.Rollback(context.Background())
+	if _, err := report.Exec(t.Context(), "SET LOCAL lock_timeout = '1s'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readSession(t.Context(), report, id, true); err != nil {
+		t.Fatal(err)
+	}
+	settlement, err := s.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer settlement.Rollback(context.Background())
+	if _, err := settlement.Exec(t.Context(), "SET LOCAL lock_timeout = '1s'"); err != nil {
+		t.Fatal(err)
+	}
+	// Inserting model_calls takes this mode through its session foreign key.
+	if _, err := settlement.Exec(t.Context(), "SELECT id FROM sessions WHERE id=$1 FOR KEY SHARE", id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := report.Exec(t.Context(), `INSERT INTO session_turns (
+		session_id,turn_index,facts_version,report_hash,input_seq,started_at,ended_at,stop_reason,resources_snapshot_id,input_kind
+	) VALUES($1,1,1,'hash',1,$2,$2,'complete','snapshot','prompt')`, id, started); err != nil {
+		t.Fatalf("轮次镜像因会话外键检查而阻塞: %v", err)
+	}
+	if err := report.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := settlement.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	turnInvariant(t, s, false)
+}

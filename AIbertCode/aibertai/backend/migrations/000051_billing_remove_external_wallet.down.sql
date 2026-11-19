@@ -1,0 +1,1 @@
+ALTER TABLE settings DROP CONSTRAINT settings_billing_local_mode_check;

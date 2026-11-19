@@ -214,26 +214,6 @@ func (q *Queries) BillingUser(ctx context.Context, id string) (BillingUserRow, e
 	return i, err
 }
 
-const bindWalletUser = `-- name: BindWalletUser :execresult
-INSERT INTO wallet_user_bindings (user_id, external_user_id, verified_at, updated_by_user_id)
-    VALUES ($1, $2, now(), $3)
-ON CONFLICT (user_id)
-    DO UPDATE SET
-        external_user_id = EXCLUDED.external_user_id,
-        verified_at = now(),
-        updated_by_user_id = EXCLUDED.updated_by_user_id
-`
-
-type BindWalletUserParams struct {
-	UserID          string
-	ExternalUserID  string
-	UpdatedByUserID string
-}
-
-func (q *Queries) BindWalletUser(ctx context.Context, arg BindWalletUserParams) (pgconn.CommandTag, error) {
-	return q.db.Exec(ctx, bindWalletUser, arg.UserID, arg.ExternalUserID, arg.UpdatedByUserID)
-}
-
 const chargeBalance = `-- name: ChargeBalance :execresult
 UPDATE
     credit_accounts
@@ -527,34 +507,6 @@ func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionPa
 	)
 }
 
-const createWalletRecord = `-- name: CreateWalletRecord :execresult
-INSERT INTO wallet_billing_records (biz_id, transaction_id, external_user_id, team_slug, base_url, app_id, status,
-    frozen_amount_quota)
-    VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7)
-`
-
-type CreateWalletRecordParams struct {
-	BizID             string
-	TransactionID     string
-	ExternalUserID    string
-	TeamSlug          string
-	BaseUrl           string
-	AppID             int32
-	FrozenAmountQuota int64
-}
-
-func (q *Queries) CreateWalletRecord(ctx context.Context, arg CreateWalletRecordParams) (pgconn.CommandTag, error) {
-	return q.db.Exec(ctx, createWalletRecord,
-		arg.BizID,
-		arg.TransactionID,
-		arg.ExternalUserID,
-		arg.TeamSlug,
-		arg.BaseUrl,
-		arg.AppID,
-		arg.FrozenAmountQuota,
-	)
-}
-
 const cutoverActivity = `-- name: CutoverActivity :one
 SELECT billing_cutover_activity($1::text)::boolean
 `
@@ -782,7 +734,7 @@ WHERE
 FOR SHARE
 `
 
-// 预留事务持有共享锁，避免连接切换漏查尚未提交的远程交易。
+// 预留事务持有共享锁，确保同一次请求使用一致的计费策略。
 func (q *Queries) GetPolicy(ctx context.Context) (Setting, error) {
 	row := q.db.QueryRow(ctx, getPolicy)
 	var i Setting
@@ -836,69 +788,6 @@ WHERE
 func (q *Queries) GetTransaction(ctx context.Context, id string) ([]byte, error) {
 	row := q.db.QueryRow(ctx, getTransaction, id)
 	var column_1 []byte
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
-const hasOtherWalletTransactions = `-- name: HasOtherWalletTransactions :one
-SELECT EXISTS (
-    SELECT 1
-    FROM wallet_billing_records w
-    JOIN billing_transactions t ON t.id = w.transaction_id
-    WHERE t.status NOT IN ('settled', 'released', 'rejected')
-        AND (w.base_url <> $1 OR w.app_id <> $2)
-)
-`
-
-type HasOtherWalletTransactionsParams struct {
-	BaseUrl string
-	AppID   int32
-}
-
-func (q *Queries) HasOtherWalletTransactions(ctx context.Context, arg HasOtherWalletTransactionsParams) (bool, error) {
-	row := q.db.QueryRow(ctx, hasOtherWalletTransactions, arg.BaseUrl, arg.AppID)
-	var exists bool
-	err := row.Scan(&exists)
-	return exists, err
-}
-
-const hasPendingWalletTransactions = `-- name: HasPendingWalletTransactions :one
-SELECT
-    EXISTS (
-        SELECT
-            1
-        FROM
-            billing_transactions
-        WHERE
-            user_id = $1
-            AND MODE = 'remote'
-            AND status NOT IN ('settled', 'released', 'rejected'))
-`
-
-func (q *Queries) HasPendingWalletTransactions(ctx context.Context, userID string) (bool, error) {
-	row := q.db.QueryRow(ctx, hasPendingWalletTransactions, userID)
-	var exists bool
-	err := row.Scan(&exists)
-	return exists, err
-}
-
-const hasWalletIdentity = `-- name: HasWalletIdentity :one
-SELECT EXISTS (
-    SELECT 1 FROM user_identities i
-    JOIN users u ON u.id = i.user_id AND u.status = 'active' AND u.deleted_at IS NULL
-    WHERE i.user_id = $1 AND i.provider_subject = $2
-        AND i.provider = 'baizhiyun' AND i.deleted_at IS NULL
-)::boolean
-`
-
-type HasWalletIdentityParams struct {
-	UserID          string
-	ProviderSubject string
-}
-
-func (q *Queries) HasWalletIdentity(ctx context.Context, arg HasWalletIdentityParams) (bool, error) {
-	row := q.db.QueryRow(ctx, hasWalletIdentity, arg.UserID, arg.ProviderSubject)
-	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
 }
@@ -1384,8 +1273,7 @@ SELECT
             g.credits, $1::numeric)::text,
         'available_credits', COALESCE(a.balance,
             g.credits, $1::numeric)::text,
-        'inherited_from', COALESCE(g.source, $2::text),
-        'external_user_id', wb.external_user_id)
+        'inherited_from', COALESCE(g.source, $2::text))
 FROM
     users u
     LEFT JOIN LATERAL (
@@ -1402,7 +1290,6 @@ FROM
             AND period_start_at = $3
         LIMIT 1
     ) a ON TRUE
-    LEFT JOIN wallet_user_bindings wb ON wb.user_id = u.id
 WHERE
     u.deleted_at IS NULL
 ORDER BY
@@ -1743,78 +1630,12 @@ SET
     error_code = 'execution_interrupted',
     updated_at = now()
 WHERE
-    status IN ('running', 'reserved', 'created')
+    mode = 'local' AND status IN ('running', 'reserved', 'created')
     AND updated_at < now() - interval '30 minutes'
 `
 
 func (q *Queries) MarkInterrupted(ctx context.Context) (pgconn.CommandTag, error) {
 	return q.db.Exec(ctx, markInterrupted)
-}
-
-const markReserved = `-- name: MarkReserved :execresult
-UPDATE
-    billing_transactions
-SET
-    status = 'reserved',
-    updated_at = now()
-WHERE
-    id = $1 AND started_at = (SELECT billing_activity_time('billing_transactions',$1::uuid))
-    AND status = 'created'
-`
-
-func (q *Queries) MarkReserved(ctx context.Context, id string) (pgconn.CommandTag, error) {
-	return q.db.Exec(ctx, markReserved, id)
-}
-
-const markWalletConfirmed = `-- name: MarkWalletConfirmed :execresult
-UPDATE
-    wallet_billing_records
-SET
-    status = 'confirmed',
-    error_code = '',
-    confirmed_at = now(),
-    updated_at = now()
-WHERE
-    transaction_id = $1
-`
-
-func (q *Queries) MarkWalletConfirmed(ctx context.Context, transactionID string) (pgconn.CommandTag, error) {
-	return q.db.Exec(ctx, markWalletConfirmed, transactionID)
-}
-
-const markWalletConfirming = `-- name: MarkWalletConfirming :execresult
-UPDATE
-    wallet_billing_records
-SET
-    status = 'confirming',
-    actual_amount_quota = $2,
-    confirmation_status = 'success',
-    updated_at = now()
-WHERE
-    transaction_id = $1
-`
-
-type MarkWalletConfirmingParams struct {
-	TransactionID     string
-	ActualAmountQuota *int64
-}
-
-func (q *Queries) MarkWalletConfirming(ctx context.Context, arg MarkWalletConfirmingParams) (pgconn.CommandTag, error) {
-	return q.db.Exec(ctx, markWalletConfirming, arg.TransactionID, arg.ActualAmountQuota)
-}
-
-const markWalletReserved = `-- name: MarkWalletReserved :execresult
-UPDATE
-    wallet_billing_records
-SET
-    status = 'reserved',
-    updated_at = now()
-WHERE
-    transaction_id = $1
-`
-
-func (q *Queries) MarkWalletReserved(ctx context.Context, transactionID string) (pgconn.CommandTag, error) {
-	return q.db.Exec(ctx, markWalletReserved, transactionID)
 }
 
 const migrationIssues = `-- name: MigrationIssues :many
@@ -2095,16 +1916,6 @@ func (q *Queries) SaveUsage(ctx context.Context, arg SaveUsageParams) (pgconn.Co
 	)
 }
 
-const saveWalletConfig = `-- name: SaveWalletConfig :execresult
-UPDATE settings
-SET value = jsonb_set(value, '{wallet}', $1::jsonb)
-WHERE key = 'billing'
-`
-
-func (q *Queries) SaveWalletConfig(ctx context.Context, dollar_1 []byte) (pgconn.CommandTag, error) {
-	return q.db.Exec(ctx, saveWalletConfig, dollar_1)
-}
-
 const scheduleRetry = `-- name: ScheduleRetry :execresult
 UPDATE
     billing_transactions
@@ -2222,112 +2033,6 @@ func (q *Queries) SetRootQuota(ctx context.Context, dollar_1 string) (pgconn.Com
 	return q.db.Exec(ctx, setRootQuota, dollar_1)
 }
 
-const setTransactionError = `-- name: SetTransactionError :execresult
-UPDATE
-    billing_transactions
-SET
-    error_code = $2
-WHERE
-    id = $1 AND started_at = (SELECT billing_activity_time('billing_transactions',$1::uuid))
-`
-
-type SetTransactionErrorParams struct {
-	ID        string
-	ErrorCode string
-}
-
-func (q *Queries) SetTransactionError(ctx context.Context, arg SetTransactionErrorParams) (pgconn.CommandTag, error) {
-	return q.db.Exec(ctx, setTransactionError, arg.ID, arg.ErrorCode)
-}
-
-const setTransactionStatus = `-- name: SetTransactionStatus :execresult
-UPDATE
-    billing_transactions
-SET
-    status = $2,
-    error_code = $3,
-    updated_at = now()
-WHERE
-    id = $1 AND started_at = (SELECT billing_activity_time('billing_transactions',$1::uuid))
-`
-
-type SetTransactionStatusParams struct {
-	ID        string
-	Status    string
-	ErrorCode string
-}
-
-func (q *Queries) SetTransactionStatus(ctx context.Context, arg SetTransactionStatusParams) (pgconn.CommandTag, error) {
-	return q.db.Exec(ctx, setTransactionStatus, arg.ID, arg.Status, arg.ErrorCode)
-}
-
-const setWalletError = `-- name: SetWalletError :execresult
-UPDATE
-    wallet_billing_records
-SET
-    error_code = $2,
-    trace_id = $3,
-    updated_at = now()
-WHERE
-    transaction_id = $1
-`
-
-type SetWalletErrorParams struct {
-	TransactionID string
-	ErrorCode     string
-	TraceID       string
-}
-
-func (q *Queries) SetWalletError(ctx context.Context, arg SetWalletErrorParams) (pgconn.CommandTag, error) {
-	return q.db.Exec(ctx, setWalletError, arg.TransactionID, arg.ErrorCode, arg.TraceID)
-}
-
-const setWalletStatus = `-- name: SetWalletStatus :execresult
-UPDATE
-    wallet_billing_records
-SET
-    status = $2,
-    error_code = $3,
-    trace_id = $4,
-    updated_at = now()
-WHERE
-    transaction_id = $1
-`
-
-type SetWalletStatusParams struct {
-	TransactionID string
-	Status        string
-	ErrorCode     string
-	TraceID       string
-}
-
-func (q *Queries) SetWalletStatus(ctx context.Context, arg SetWalletStatusParams) (pgconn.CommandTag, error) {
-	return q.db.Exec(ctx, setWalletStatus,
-		arg.TransactionID,
-		arg.Status,
-		arg.ErrorCode,
-		arg.TraceID,
-	)
-}
-
-const setWalletTeam = `-- name: SetWalletTeam :execresult
-UPDATE
-    wallet_billing_records
-SET
-    team_slug = $2
-WHERE
-    transaction_id = $1
-`
-
-type SetWalletTeamParams struct {
-	TransactionID string
-	TeamSlug      string
-}
-
-func (q *Queries) SetWalletTeam(ctx context.Context, arg SetWalletTeamParams) (pgconn.CommandTag, error) {
-	return q.db.Exec(ctx, setWalletTeam, arg.TransactionID, arg.TeamSlug)
-}
-
 const settlementStatus = `-- name: SettlementStatus :one
 SELECT
     MODE,
@@ -2374,7 +2079,7 @@ SET
     updated_at = now()
 WHERE
     id = $1 AND started_at = (SELECT billing_activity_time('billing_transactions',$1::uuid))
-    AND status = 'reserved'
+    AND mode = 'local' AND status = 'reserved'
 `
 
 func (q *Queries) StartTransaction(ctx context.Context, id string) (pgconn.CommandTag, error) {
@@ -2695,7 +2400,7 @@ SELECT
 FROM
     billing_transactions
 WHERE
-    status = 'unknown'
+    mode = 'local' AND status = 'unknown'
     AND category = 'model'
     AND request_id <> ''
     AND next_retry_at IS NOT NULL
@@ -2755,7 +2460,7 @@ SELECT
 FROM
     billing_transactions
 WHERE
-    status = 'settling'
+    mode = 'local' AND status = 'settling'
     AND (next_retry_at IS NULL
         OR next_retry_at <= now())
 ORDER BY
@@ -3030,118 +2735,6 @@ func (q *Queries) VideoPricingModel(ctx context.Context, id string) (VideoPricin
 	var i VideoPricingModelRow
 	err := row.Scan(&i.DisplayName, &i.OwnershipType)
 	return i, err
-}
-
-const walletConfirmation = `-- name: WalletConfirmation :one
-SELECT
-    w.biz_id,
-    w.external_user_id,
-    w.team_slug,
-    w.base_url,
-    w.app_id,
-    w.status,
-    t.item_name,
-    t.amount::text
-FROM
-    wallet_billing_records w
-    JOIN billing_transactions t ON t.id = w.transaction_id
-WHERE
-    t.id = $1 AND t.started_at = (SELECT billing_activity_time('billing_transactions',$1::uuid))
-`
-
-type WalletConfirmationRow struct {
-	BizID          string
-	ExternalUserID string
-	TeamSlug       string
-	BaseUrl        string
-	AppID          int32
-	Status         string
-	ItemName       string
-	TAmount        string
-}
-
-func (q *Queries) WalletConfirmation(ctx context.Context, id string) (WalletConfirmationRow, error) {
-	row := q.db.QueryRow(ctx, walletConfirmation, id)
-	var i WalletConfirmationRow
-	err := row.Scan(
-		&i.BizID,
-		&i.ExternalUserID,
-		&i.TeamSlug,
-		&i.BaseUrl,
-		&i.AppID,
-		&i.Status,
-		&i.ItemName,
-		&i.TAmount,
-	)
-	return i, err
-}
-
-const walletReservation = `-- name: WalletReservation :one
-SELECT
-    biz_id,
-    external_user_id,
-    base_url,
-    app_id,
-    frozen_amount_quota
-FROM
-    wallet_billing_records
-WHERE
-    transaction_id = $1
-`
-
-type WalletReservationRow struct {
-	BizID             string
-	ExternalUserID    string
-	BaseUrl           string
-	AppID             int32
-	FrozenAmountQuota int64
-}
-
-func (q *Queries) WalletReservation(ctx context.Context, transactionID string) (WalletReservationRow, error) {
-	row := q.db.QueryRow(ctx, walletReservation, transactionID)
-	var i WalletReservationRow
-	err := row.Scan(
-		&i.BizID,
-		&i.ExternalUserID,
-		&i.BaseUrl,
-		&i.AppID,
-		&i.FrozenAmountQuota,
-	)
-	return i, err
-}
-
-const walletStatus = `-- name: WalletStatus :one
-SELECT
-    status
-FROM
-    wallet_billing_records
-WHERE
-    transaction_id = $1
-`
-
-func (q *Queries) WalletStatus(ctx context.Context, transactionID string) (string, error) {
-	row := q.db.QueryRow(ctx, walletStatus, transactionID)
-	var status string
-	err := row.Scan(&status)
-	return status, err
-}
-
-const walletUser = `-- name: WalletUser :one
-SELECT min(i.provider_subject)::text AS external_user_id
-FROM user_identities i
-JOIN users u ON u.id = i.user_id AND u.status = 'active' AND u.deleted_at IS NULL
-LEFT JOIN wallet_user_bindings wb ON wb.user_id = i.user_id
-WHERE i.user_id = $1 AND i.provider = 'baizhiyun' AND i.deleted_at IS NULL
-    AND (wb.user_id IS NULL OR wb.external_user_id = i.provider_subject)
-GROUP BY i.user_id
-HAVING count(DISTINCT i.provider_subject) = 1
-`
-
-func (q *Queries) WalletUser(ctx context.Context, userID string) (string, error) {
-	row := q.db.QueryRow(ctx, walletUser, userID)
-	var external_user_id string
-	err := row.Scan(&external_user_id)
-	return external_user_id, err
 }
 
 const workspaceName = `-- name: WorkspaceName :one

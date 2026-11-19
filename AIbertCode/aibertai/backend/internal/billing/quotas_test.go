@@ -168,7 +168,7 @@ func TestQuotaMembershipInheritance(t *testing.T) {
 
 func TestUserQuotaChangesAreRejected(t *testing.T) {
 	s, user, _ := fixture(t)
-	call := walletAdmin(t, s, user)
+	call := billingAdmin(t, s, user)
 	call("PUT", "/billing/quotas", map[string]any{
 		"revision": 1,
 		"changes": []map[string]any{{
@@ -186,7 +186,7 @@ func TestUserQuotaChangesAreRejected(t *testing.T) {
 
 func TestGroupQuotaChangesRequireIntegers(t *testing.T) {
 	s, admin, _ := fixture(t)
-	call := walletAdmin(t, s, admin)
+	call := billingAdmin(t, s, admin)
 	call("PUT", "/billing/quotas", map[string]any{
 		"revision": 1,
 		"changes": []map[string]any{{
@@ -238,7 +238,7 @@ func TestImmediateQuotaReset(t *testing.T) {
 		adminAccount.ID, explicitAccount.ID, unselectedAccount.ID); err != nil {
 		t.Fatal(err)
 	}
-	call := walletAdmin(t, s, admin)
+	call := billingAdmin(t, s, admin)
 	key := resource.ID()
 	input := map[string]any{"group_ids": []string{parent}, "user_ids": []string{explicit}, "idempotency_key": key}
 	var result struct {

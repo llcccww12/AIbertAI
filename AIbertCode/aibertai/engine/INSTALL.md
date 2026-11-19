@@ -14,7 +14,7 @@ sudo bash -c "$(curl -kfsSL 'https://server.example/api/host/v1/install.sh?token
 
 ## server 自带安装资源
 
-MonkeyCodePro 的 server 打包默认从 `https://release.monkeycode-ai.com/public/monkeyai/engine/latest.json` 解析 engine 版本，也可通过 `ENGINE_VERSION` 指定测试版本，不触发 engine 构建或发布。在线 server 包保存 engine 下载清单，installer 在安装／升级时从固定 OSS 地址按需下载包含双架构资源的 `resources.tgz`，显示整体进度并在校验摘要后解压；本地同版本且摘要匹配时不下载。离线 server 包直接携带完整资源。安装器将资源校验后安装到 `<安装目录>/engine-releases/<version>/`，只读挂载给后台并配置固定版本。engine 宿主自身不区分在线／离线安装，仍只访问 server。
+发布版本由部署方显式配置；可通过 `ENGINE_VERSION` 指定测试版本。
 
 手动部署后台时，需要挂载完整发行目录并配置：
 
@@ -28,7 +28,7 @@ MONKEYAI_ENGINE_VERSION=v1.0.0
 
 `MONKEYAI_PUBLIC_URL` 可配置为 `http://server.example:8080` 或 HTTPS 根地址；宿主注册、心跳、命令同步、Server 资源下载和 runtime 地址沿用该协议。HTTP Server 的 Docker Registry 兼容项只登记该 Server 的 `host:port`，不改其他仓库配置。原生 runtime 按 Server 协议使用 WS 或 WSS；Server 端口和私网可达性仍须符合现有网络隔离规则。GitHub、Docker 官方依赖、OSS 发行源及依赖镜像的 HTTPS 校验和重定向策略保持不变。
 
-`dependencies.lock.json` 保留 Docker 29.4.3 与 gVisor 的官方来源与摘要，并通过 `dependency_version` 固定依赖包版本。版本采用 `vYYMMDDNN`，当前为 `v26110302`，独立于 engine 版本，仅在依赖变化时递增。普通打包优先复用已校验的本地归档缓存；缓存缺失时，从 `https://release.monkeycode-ai.com/public/monkeyai/engine/dependencies/<依赖版本>/<架构>/dependencies.tgz` 下载一个包，其中包含该架构的全部官方原始归档。解包后逐份校验锁定 SHA-256，再提取并校验 ELF。镜像缺失或失败直接退出，不回退 GitHub。可用 `ENGINE_DEPENDENCY_URL` 指定采用相同目录结构的内网 HTTPS 镜像。
+`dependencies.lock.json` 保留 Docker 29.4.3 与 gVisor 的官方来源与摘要，并通过 `dependency_version` 固定依赖包版本。版本采用 `vYYMMDDNN`，当前为 `v26110302`，独立于 engine 版本，仅在依赖变化时递增。普通打包优先复用已校验的本地归档缓存；缓存缺失时，从 `ENGINE_DEPENDENCY_URL/<依赖版本>/<架构>/dependencies.tgz` 下载一个包，其中包含该架构的全部官方原始归档。解包后逐份校验锁定 SHA-256，再提取并校验 ELF。镜像缺失或失败直接退出，不回退 GitHub。可用 `ENGINE_DEPENDENCY_URL` 指定采用相同目录结构的内网 HTTPS 镜像。
 
 首次准备或升级依赖后，在 MonkeyCodePro 执行 `make monkeyai-engine-dependencies` 生成并同步双架构依赖包：优先读取缓存，只有缓存缺失时访问官方上游；同版本同内容跳过上传，不覆盖不同内容，不修改 engine 的 latest。本地原始归档仍按摘要缓存，跨 engine 版本复用。
 

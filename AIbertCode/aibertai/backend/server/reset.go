@@ -43,9 +43,24 @@ func Reset(ctx context.Context, args []string, input io.Reader, output io.Writer
 	}
 	defer pool.Close()
 
-	email := "admin@baizhi.cloud"
 	scanner := bufio.NewScanner(input)
+	prompt := "请输入需要重置密码的管理员邮箱："
 	for {
+		if _, err := io.WriteString(output, prompt); err != nil {
+			return err
+		}
+		if !scanner.Scan() {
+			if err := scanner.Err(); err != nil {
+				return fmt.Errorf("读取管理员邮箱: %w", err)
+			}
+			return errors.New("未输入管理员邮箱，密码未重置")
+		}
+		email := strings.ToLower(strings.TrimSpace(scanner.Text()))
+		address, err := mail.ParseAddress(email)
+		if err != nil || address.Address != email {
+			prompt = "请输入有效的管理员邮箱："
+			continue
+		}
 		password, err := identity.ResetAdminPassword(ctx, pool, email)
 		if err == nil {
 			_, err = fmt.Fprintf(output, "密码重置成功\n账号: %s\n密码: %s\n", email, password)
@@ -54,30 +69,12 @@ func Reset(ctx context.Context, args []string, input io.Reader, output io.Writer
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("重置管理员密码: %w", err)
 		}
-		if _, err := fmt.Fprintf(output, "未找到管理员 %s，请填写一个管理员的邮箱：", email); err != nil {
-			return err
-		}
-		for {
-			if !scanner.Scan() {
-				if err := scanner.Err(); err != nil {
-					return fmt.Errorf("读取管理员邮箱: %w", err)
-				}
-				return errors.New("未输入管理员邮箱，密码未重置")
-			}
-			email = strings.ToLower(strings.TrimSpace(scanner.Text()))
-			address, err := mail.ParseAddress(email)
-			if err == nil && address.Address == email {
-				break
-			}
-			if _, err := io.WriteString(output, "请输入有效的管理员邮箱："); err != nil {
-				return err
-			}
-		}
+		prompt = "未找到指定管理员，请重新填写管理员邮箱："
 	}
 }
 
 func PrintResetUsage(output io.Writer) {
-	if _, err := io.WriteString(output, "用法: monkeyai-server reset [--database-url PostgreSQL连接地址]\n优先重置 admin@baizhi.cloud；未找到时提示填写管理员邮箱。\n数据库连接默认读取 MONKEYAI_DATABASE_URL，成功后输出账号和随机新密码。\n"); err != nil {
+	if _, err := io.WriteString(output, "用法: monkeyai-server reset [--database-url PostgreSQL连接地址]\n输入现有管理员的邮箱，命令仅重置该账号的密码。\n数据库连接默认读取 MONKEYAI_DATABASE_URL，成功后输出账号和随机新密码。\n"); err != nil {
 		slog.Error("写入输出失败", "module", "server", "operation", "PrintResetUsage", "error", err)
 	}
 }

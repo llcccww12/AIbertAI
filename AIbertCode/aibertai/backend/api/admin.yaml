@@ -1085,6 +1085,93 @@ paths:
                 $ref: "#/components/schemas/MCPNetworkSetting"
         "400":
           description: 配置格式或 CIDR 无效，原有配置不变
+  /api/admin/v1/settings/document_vision:
+    get:
+      summary: 查询文档解析视觉模型
+      description: 仅管理员可用。响应省略 API 密钥。
+      responses:
+        "200":
+          description: 当前设置
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/KnowledgeEndpointSetting'}
+        "404":
+          description: 尚未配置
+    put:
+      summary: 保存文档解析视觉模型
+      description: 使用支持图片输入的 OpenAI 兼容 Chat Completions API，接受基础地址或完整 /chat/completions 地址。修改基础地址时必须提供新密钥。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/KnowledgeEndpointInput'}
+      responses:
+        "200":
+          description: 已保存，响应省略 API 密钥
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/KnowledgeEndpointSetting'}
+        "400":
+          description: 地址、模型 ID 或密钥无效
+  /api/admin/v1/settings/knowledge_reranker:
+    get:
+      summary: 查询知识库 Reranker 模型
+      responses:
+        "200":
+          description: 当前设置，响应省略 API 密钥
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/KnowledgeEndpointSetting'}
+        "404":
+          description: 尚未配置
+    put:
+      summary: 保存知识库 Reranker 模型
+      description: 使用 Cohere 或 Jina 兼容的 /rerank 接口，接受基础地址或完整接口地址。修改基础地址时必须提供新密钥。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/KnowledgeEndpointInput'}
+      responses:
+        "200":
+          description: 已保存，响应省略 API 密钥
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/KnowledgeEndpointSetting'}
+        "400":
+          description: 地址、模型 ID 或密钥无效
+  /api/admin/v1/settings/knowledge_embedding:
+    get:
+      summary: 查询知识库默认向量模型
+      responses:
+        "200":
+          description: 当前设置。空 model_id 表示自动选择。
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/KnowledgeEmbeddingSetting'}
+        "404":
+          description: 尚未配置。默认自动选择可用系统向量模型。
+    put:
+      summary: 保存知识库默认向量模型
+      description: 新建或未绑定的知识库优先采用该模型。已绑定知识库通过专用切换接口重建向量索引。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [schema_version, value]
+              properties:
+                schema_version: {type: integer, minimum: 1}
+                value: {$ref: '#/components/schemas/KnowledgeEmbeddingValue'}
+      responses:
+        "200":
+          description: 已保存
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/KnowledgeEmbeddingSetting'}
+        "400":
+          description: 模型无效、未启用或未探测维度
   /api/admin/v1/settings/proxies:
     get:
       summary: 读取系统代理资源
@@ -1582,7 +1669,7 @@ paths:
           $ref: "#/components/responses/ResourceError500"
   /api/admin/v1/billing/settings:
     get:
-      summary: 读取计费策略与远程连接状态（不返回证书或私钥）
+      summary: 读取计费策略
       responses:
         '200':
           description: 请求成功
@@ -1593,8 +1680,6 @@ paths:
                 properties:
                   policy:
                     $ref: '#/components/schemas/BillingPolicy'
-                  wallet:
-                    $ref: '#/components/schemas/BillingWalletInfo'
                   timezone:
                     const: Asia/Shanghai
                   next_refresh_at:
@@ -1629,12 +1714,10 @@ paths:
         - pricing
         - cycle
         - mode
-        - wallet
         - environment
       required: true
     patch:
-      summary: 独立保存计价、周期、模式、云电脑全局计费或百智云连接配置
-      description: wallet 配置保存后无需重启，各实例在下次使用时读取。证书和私钥省略或留空时保留原值。首次保存必须提供全部证书。客户端证书与私钥须匹配且处于有效期，私钥须为 PKCS#8 ECDSA 格式。CA 须为有效的 CA 证书。服务 URL 或应用 ID 变更不能影响未完成的远程交易。校验仅在本地执行，不代表远程网络或账户权限验证成功。
+      summary: 独立保存计价、周期、模式、云电脑全局计费
       responses:
         '200':
           description: 请求成功
@@ -1645,8 +1728,6 @@ paths:
                 properties:
                   policy:
                     $ref: '#/components/schemas/BillingPolicy'
-                  wallet:
-                    $ref: '#/components/schemas/BillingWalletInfo'
                   timezone:
                     const: Asia/Shanghai
                   next_refresh_at:
@@ -1671,7 +1752,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '409':
-          description: 修订号冲突，或未完成远程交易阻止服务 URL 或应用 ID 变更
+          description: 修订号冲突
           content:
             application/json:
               schema:
@@ -1720,10 +1801,9 @@ paths:
                   revision:
                     type: integer
                   charging_mode:
-                    description: local 为本地扣费；remote 为百智云扣费，仅具有有效百智云登录身份的用户可访问系统资源，用户自建资源仍遵循原授权。
+                    description: local 为直接计费，enabled 为 false 时不计费。
                     enum:
                     - local
-                    - remote
                   enabled:
                     type: boolean
                 required:
@@ -1740,7 +1820,6 @@ paths:
                     $ref: '#/components/schemas/CreditAmount'
                   memory_credits_per_gib_hour:
                     $ref: '#/components/schemas/CreditAmount'
-              - $ref: '#/components/schemas/BillingWalletInput'
   /api/admin/v1/billing/quotas:
     get:
       summary: 读取分组、成员额度与继承来源
@@ -1809,10 +1888,6 @@ paths:
                         inherited_from:
                           type: string
                           description: 最高有效额度的来源分组 UUID（含虚拟根的全零 UUID）。额度相同时按直接所属分组的创建时间、ID 稳定选取。
-                        external_user_id:
-                          type:
-                          - string
-                          - 'null'
                   revision:
                     type: integer
                   effective_at:
@@ -1892,10 +1967,6 @@ paths:
                         inherited_from:
                           type: string
                           description: 最高有效额度的来源分组 UUID（含虚拟根的全零 UUID）。额度相同时按直接所属分组的创建时间、ID 稳定选取。
-                        external_user_id:
-                          type:
-                          - string
-                          - 'null'
                   revision:
                     type: integer
                   effective_at:
@@ -2022,17 +2093,6 @@ paths:
                     type: string
                     format: email
                     description: 积分账户所属用户的当前邮箱。
-                  external_user_id:
-                    type: string
-                  wallet:
-                    $ref: '#/components/schemas/BillingWalletInfo'
-                  wallet_available:
-                    $ref: '#/components/schemas/CreditAmount'
-                  wallet_queried_at:
-                    type: string
-                    format: date-time
-                  wallet_error:
-                    type: string
         '400':
           description: 参数不合法
         '401':
@@ -2062,17 +2122,6 @@ paths:
                   properties:
                     account:
                       $ref: '#/components/schemas/CreditAccount'
-                    external_user_id:
-                      type: string
-                    wallet:
-                      $ref: '#/components/schemas/BillingWalletInfo'
-                    wallet_available:
-                      $ref: '#/components/schemas/CreditAmount'
-                    wallet_queried_at:
-                      type: string
-                      format: date-time
-                    wallet_error:
-                      type: string
                 - $ref: '#/components/schemas/CreditAccount'
         '400':
           description: 参数不合法
@@ -2105,39 +2154,6 @@ paths:
               - delta
               - reason
               - version
-  /api/admin/v1/billing/accounts/{userID}/wallet:
-    parameters:
-    - in: path
-      name: userID
-      schema:
-        type: string
-        format: uuid
-      required: true
-    put:
-      summary: 核实并绑定百智云身份，有未完成远程交易时拒绝修改
-      description: external_user_id 必须匹配该用户有效百智云登录身份的 sub；普通 OAuth/OIDC 身份和历史手动绑定不能代替百智云身份。未指定绑定且只有一个百智云身份时自动使用其 sub。
-      responses:
-        '204':
-          description: 绑定成功
-        '400':
-          description: 参数不合法
-        '401':
-          description: 未登录
-        '403':
-          description: 权限不足
-        '409':
-          description: 修订号、幂等键或交易状态冲突
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                external_user_id:
-                  type: string
-              required:
-              - external_user_id
   /api/admin/v1/billing/users:
     get:
       summary: 按需搜索扣费筛选的用户候选
@@ -5939,12 +5955,22 @@ paths:
         '404': {$ref: '#/components/responses/ResourceError404'}
     post:
       summary: 添加并学习文档
-      description: 文档必须属于路径中的知识库。提交后立即返回 pending 文档，并创建异步学习任务完成切分、全文索引和可选向量写入。
+      description: JSON 请求提交正文。multipart 请求以配置的视觉模型同步解析 PDF、PNG 或 JPEG，成功后创建文档。两种方式均创建异步学习任务完成切分、索引和可选向量写入。
       requestBody:
         required: true
         content:
           application/json:
             schema: {$ref: '#/components/schemas/KbDocumentInput'}
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: PDF、PNG 或 JPEG，最大 10 MB，PDF 最多 10 页
+                parent_id: {type: string, format: uuid}
       responses:
         '202':
           description: 已创建并进入学习队列
@@ -5954,6 +5980,9 @@ paths:
         '400': {$ref: '#/components/responses/ResourceError400'}
         '401': {$ref: '#/components/responses/ResourceError401'}
         '404': {$ref: '#/components/responses/ResourceError404'}
+        '502': {$ref: '#/components/responses/ResourceError502'}
+        '503':
+          description: PDF 页面渲染器不可用
   /api/admin/v1/kb/{id}/documents/delete:
     parameters: [{$ref: '#/components/parameters/ResourceID'}]
     post:
@@ -8393,10 +8422,9 @@ components:
         enabled:
           type: boolean
         charging_mode:
-          description: local 为本地扣费；remote 为百智云扣费，仅具有有效百智云登录身份的用户可访问系统资源，用户自建资源仍遵循原授权。
+          description: local 为直接计费，enabled 为 false 时不计费。
           enum:
           - local
-          - remote
         quota_refresh_cycle:
           enum:
           - daily
@@ -8429,71 +8457,6 @@ components:
       - enabled
       - charging_mode
       - quota_refresh_cycle
-    BillingWalletInput:
-      type: object
-      additionalProperties: false
-      required:
-      - revision
-      - base_url
-      - app_id
-      properties:
-        revision:
-          type: integer
-          description: 当前计费策略修订号；保存连接配置会递增该修订号。
-        base_url:
-          type: string
-          format: uri
-          description: 百智云 HTTPS 服务根地址，可包含端口，不含路径、查询参数、片段或用户信息。公有云填写 https://baizhi.cloud 或 https://baizhiyun.vip，私有化填写同时提供用户和钱包接口的统一网关地址。
-          example: https://baizhi.cloud
-        app_id:
-          type: integer
-          minimum: 1
-          maximum: 999
-          description: 所填服务对应的百智云应用 ID。
-        certificate:
-          type: string
-          maxLength: 65536
-          writeOnly: true
-          description: 客户端证书 PEM 内容，首次配置必填，省略或空字符串保留已保存值。
-        private_key:
-          type: string
-          maxLength: 65536
-          writeOnly: true
-          description: PKCS#8 ECDSA 私钥 PEM 内容，首次配置必填，省略或空字符串保留已保存值；不回显、不写入审计明文。
-        ca_certificate:
-          type: string
-          maxLength: 65536
-          writeOnly: true
-          description: 服务端根 CA 证书 PEM 内容，首次配置必填，省略或空字符串保留已保存值。
-    BillingWalletInfo:
-      type: object
-      description: 仅返回连接元信息；configured 表示本地证书校验通过，不代表远程网络连通或账户授权成功。
-      properties:
-        configured:
-          type: boolean
-        credentials_configured:
-          type: boolean
-          description: 是否已有完整证书和私钥；为 true 时更新配置可以省略对应文件。
-        base_url:
-          type: string
-          format: uri
-        app_id:
-          type: integer
-          minimum: 1
-          maximum: 999
-        certificate_expires_at:
-          type: string
-          format: date-time
-        source:
-          type: string
-          enum: [admin, environment]
-          description: 当前使用后台保存的配置或部署环境配置；后台配置优先。
-        error:
-          type: string
-          description: 配置无效或证书过期时的提示，不包含凭证原文。
-      required:
-      - configured
-      - credentials_configured
     CreditAccount:
       type: object
       properties:
@@ -8787,6 +8750,44 @@ components:
           items:
             type: string
             examples: ["10.0.0.0/8", "fd00::/8", "192.168.1.1/32"]
+    KnowledgeEndpointInput:
+      type: object
+      required: [schema_version, value]
+      properties:
+        schema_version: {type: integer, minimum: 1}
+        value:
+          type: object
+          required: [base_url, model_id]
+          properties:
+            base_url: {type: string, format: uri}
+            model_id: {type: string}
+            api_key: {type: string, writeOnly: true}
+    KnowledgeEndpointSetting:
+      type: object
+      required: [key, schema_version, value]
+      properties:
+        key: {type: string, enum: [document_vision, knowledge_reranker]}
+        schema_version: {type: integer, minimum: 1}
+        value:
+          type: object
+          required: [base_url, model_id]
+          properties:
+            base_url: {type: string, format: uri}
+            model_id: {type: string}
+    KnowledgeEmbeddingValue:
+      type: object
+      required: [model_id]
+      properties:
+        model_id:
+          type: string
+          description: 已启用的系统向量模型记录 UUID，空字符串表示自动选择。
+    KnowledgeEmbeddingSetting:
+      type: object
+      required: [key, schema_version, value]
+      properties:
+        key: {type: string, const: knowledge_embedding}
+        schema_version: {type: integer, minimum: 1}
+        value: {$ref: '#/components/schemas/KnowledgeEmbeddingValue'}
     MCPNetworkSetting:
       type: object
       required: [key, value, schema_version, updated_by_user_id, updated_at]

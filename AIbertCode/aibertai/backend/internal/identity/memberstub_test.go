@@ -143,11 +143,6 @@ func (w testUserWriter) UpsertIdentity(ctx context.Context, in member.OAuthIdent
 		if err := validateUpstreamUser(userFromMember(user), in.AdminOnly); err != nil {
 			return member.User{}, err
 		}
-		if bound && in.Provider == "baizhiyun" && in.Email != "" {
-			if err := q.UpdateBaizhiyunEmail(ctx, sqlc.UpdateBaizhiyunEmailParams{UserID: user.ID, Issuer: in.Issuer, ProviderSubject: in.Subject, Email: in.Email}); err != nil {
-				return member.User{}, err
-			}
-		}
 		user, err = readTestUser(tx.QueryRow(ctx, "UPDATE users SET name=$2,avatar_url=NULLIF($3,''),last_login_at=now(),updated_at=now() WHERE id=$1 RETURNING "+testUserColumns, user.ID, in.Name, in.AvatarURL))
 	case errors.Is(err, pgx.ErrNoRows):
 		if in.AdminOnly {

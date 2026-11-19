@@ -1,0 +1,7 @@
+{
+  "name": "aibertai-runtime-acceptance",
+  "productName": "AIbertAI Runtime Acceptance",
+  "version": "0.1.0",
+  "private": true,
+  "main": "main.cjs"
+}

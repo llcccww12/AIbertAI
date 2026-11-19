@@ -1,9 +1,9 @@
+import { StatisticsCardHeader } from "@/components/statistics-card-header"
 import { Activity01Icon } from "@hugeicons/core-free-icons"
-import { HugeiconsIcon } from "@hugeicons/react"
 import { useTranslation } from "react-i18next"
 import { Cell, Pie, PieChart } from "recharts"
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import {
   ChartContainer,
   ChartTooltip,
@@ -31,20 +31,7 @@ export function TaskModelUsageCard({ items }: { items: ModelUsageItem[] }) {
       role="region"
       aria-label={t(`${key}.modelUsage`)}
     >
-      <CardHeader className="flex min-h-7 flex-row items-center gap-3 px-3 py-0">
-        <HugeiconsIcon
-          icon={Activity01Icon}
-          className="shrink-0 text-muted-foreground"
-          size={16}
-          strokeWidth={1.75}
-        />
-        <CardTitle className="min-w-0 flex-1 font-mono text-sm font-medium uppercase tracking-wide text-muted-foreground">
-          {t(`${key}.modelUsage`)}
-        </CardTitle>
-        <span className="ms-auto shrink-0 font-mono text-xs text-muted-foreground/70">
-          {t("pages.realtimeStatus.period24h")}
-        </span>
-      </CardHeader>
+      <StatisticsCardHeader icon={Activity01Icon} title={t(`${key}.modelUsage`)} qualifier={t("pages.realtimeStatus.period24h")} />
       <CardContent className="min-w-0 flex-1 rounded-xl border border-border/60 bg-card p-4">
         <div className="flex h-32 min-w-0 items-center justify-center gap-3 sm:gap-5">
           <div className="legacy-aspect-square relative aspect-square w-24 shrink-0 sm:w-32">

@@ -302,7 +302,7 @@ try {
               status: "active",
             },
           }
-        else if (p.endsWith("/branding")) body = { product_name: "百智办公" }
+        else if (p.endsWith("/branding")) body = { product_name: "AIbertAI" }
         else if (p.endsWith("/license/status")) body = { state: "valid" }
         else
           assert(!p.includes("/statistics/"), `unexpected stats request ${p}`)

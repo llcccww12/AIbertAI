@@ -5,15 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"aibertai.local/backend/logging"
 	"log/slog"
-	"sync"
 	"time"
 
 	auditlog "aibertai.local/backend/internal/audit"
 	"aibertai.local/backend/internal/billing/sqlc"
 	"aibertai.local/backend/internal/resource"
 	"aibertai.local/backend/internal/rootgroup"
+	"aibertai.local/backend/logging"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -119,19 +118,12 @@ func (p *Policy) scheduleCycle(cycle string, now time.Time) {
 }
 
 type Service struct {
-	pool         *pgxpool.Pool
-	now          func() time.Time
-	fallback     *Wallet
-	reconciler   UsageReconciler
-	walletMu     sync.Mutex
-	cachedWallet *Wallet
+	pool       *pgxpool.Pool
+	now        func() time.Time
+	reconciler UsageReconciler
 }
 
 func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool, now: time.Now} }
-func (s *Service) WithWallet(w *Wallet) *Service {
-	s.fallback = w
-	return s
-}
 func (s *Service) WithUsageReconciler(r UsageReconciler) *Service {
 	s.reconciler = r
 	return s
@@ -143,13 +135,6 @@ func (s *Service) Initialize(ctx context.Context) error {
 		return fmt.Errorf("序列化默认计费策略: %w", err)
 	}
 	_, err = sqlc.New(s.pool).InitializePolicy(ctx, b)
-	if err != nil {
-		return err
-	}
-	cfg, err := s.walletConfig(ctx, s.pool)
-	if err == nil && cfg == nil && s.fallback == nil {
-		s.fallback, err = WalletFromEnv()
-	}
 	return err
 }
 func (s *Service) policy(ctx context.Context, q resource.Queryer, lock bool) (Policy, error) {
@@ -171,6 +156,10 @@ func (s *Service) policy(ctx context.Context, q resource.Queryer, lock bool) (Po
 	if err = json.Unmarshal(record.Value, &p); err != nil {
 		return p, fmt.Errorf("读取计费策略: %w", err)
 	}
+	if p.Mode == "remote" {
+		p.Mode = "local"
+		p.Enabled = false
+	}
 	p.Revision = record.Revision
 	p.activateCycle(s.now())
 	return p, nil
@@ -181,6 +170,7 @@ func fail(status int, code, message string) error {
 }
 
 var insufficient = fail(402, "insufficient_credits", "当期可用积分不足")
+var legacyTransaction = fail(409, "billing_legacy_transaction", "历史外部计费交易仅供查询")
 var conflict = fail(409, "revision_conflict", "配置已更新，请重新加载后保存")
 
 func audit(ctx context.Context, q resource.Queryer, actor, action, target string, data any) error {

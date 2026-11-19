@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AIbertAI 私有部署验收</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="renderer.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <h1>AIbertAI 私有部署验收</h1>
+      <dl>
+        <dt>后端</dt><dd id="backend"></dd>
+        <dt>指定模型</dt><dd id="model"></dd>
+      </dl>
+      <form id="form">
+        <label for="prompt">测试提示词</label>
+        <textarea id="prompt" required maxlength="4096" rows="3">请只回复“AIbertAI 验收通过”。</textarea>
+        <div class="actions">
+          <button id="run" type="submit">开始验收</button>
+          <button id="authorize" type="button" hidden>在浏览器登录</button>
+        </div>
+      </form>
+      <p id="status" role="status">就绪</p>
+      <h2>模型回复</h2>
+      <pre id="answer" aria-live="off"></pre>
+    </main>
+  </body>
+</html>

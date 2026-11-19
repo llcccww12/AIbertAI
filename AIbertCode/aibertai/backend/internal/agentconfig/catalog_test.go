@@ -139,44 +139,39 @@ func TestCatalogPageMatchesVisibleList(t *testing.T) {
 	r, user, other := catalogDatabase(t)
 	seedCatalog(t, r, user, other)
 	ctx := context.Background()
-	for _, remote := range []bool{false, true} {
-		if remote {
-			catalogExec(t, r, "INSERT INTO settings(key,value,updated_by_user_id) VALUES('billing','{\"charging_mode\":\"remote\"}',$1)", user)
-		}
-		for _, kind := range []string{"rules", "skills", "experts", "connectors"} {
-			for _, owner := range []string{"all", "team", "mine", "shared"} {
-				for _, search := range []string{"", "翻译名称", "翻译描述", "%", "_", "not found"} {
-					filter := resource.CatalogFilter{Owner: owner, Query: search}
-					for _, tags := range [][]string{nil, {"20000000-0000-0000-0000-000000000001", "20000000-0000-0000-0000-000000000002"}, {"invalid"}} {
-						want, err := r.list(ctx, r.store.Pool, user, kind, filter, nil)
+	for _, kind := range []string{"rules", "skills", "experts", "connectors"} {
+		for _, owner := range []string{"all", "team", "mine", "shared"} {
+			for _, search := range []string{"", "翻译名称", "翻译描述", "%", "_", "not found"} {
+				filter := resource.CatalogFilter{Owner: owner, Query: search}
+				for _, tags := range [][]string{nil, {"20000000-0000-0000-0000-000000000001", "20000000-0000-0000-0000-000000000002"}, {"invalid"}} {
+					want, err := r.list(ctx, r.store.Pool, user, kind, filter, nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					want = resource.FilterTags(want, tags)
+					for _, page := range []int{1, 2, 10} {
+						selected, err := r.page(ctx, r.store.Pool, user, kind, filter, tags, page, 2)
 						if err != nil {
 							t.Fatal(err)
 						}
-						want = resource.FilterTags(want, tags)
-						for _, page := range []int{1, 2, 10} {
-							selected, err := r.page(ctx, r.store.Pool, user, kind, filter, tags, page, 2)
-							if err != nil {
-								t.Fatal(err)
-							}
-							if selected.TotalCount != int64(len(want)) {
-								t.Fatalf("%s remote=%v owner=%s q=%q tags=%v: total=%d want=%d", kind, remote, owner, search, tags, selected.TotalCount, len(want))
-							}
-							ids := []string{}
-							for _, item := range resource.PageSlice(want, page, 2) {
-								ids = append(ids, item.String("id"))
-							}
-							if !slices.Equal(selected.ResourceIds, ids) {
-								t.Fatalf("%s page=%d: ids=%v want=%v", kind, page, selected.ResourceIds, ids)
-							}
-							got, err := r.list(ctx, r.store.Pool, user, kind, filter, selected.ResourceIds)
-							if err != nil {
-								t.Fatal(err)
-							}
-							gotJSON, _ := json.Marshal(got)
-							wantJSON, _ := json.Marshal(resource.PageSlice(want, page, 2))
-							if string(gotJSON) != string(wantJSON) {
-								t.Fatalf("%s page=%d: got=%s want=%s", kind, page, gotJSON, wantJSON)
-							}
+						if selected.TotalCount != int64(len(want)) {
+							t.Fatalf("%s owner=%s q=%q tags=%v: total=%d want=%d", kind, owner, search, tags, selected.TotalCount, len(want))
+						}
+						ids := []string{}
+						for _, item := range resource.PageSlice(want, page, 2) {
+							ids = append(ids, item.String("id"))
+						}
+						if !slices.Equal(selected.ResourceIds, ids) {
+							t.Fatalf("%s page=%d: ids=%v want=%v", kind, page, selected.ResourceIds, ids)
+						}
+						got, err := r.list(ctx, r.store.Pool, user, kind, filter, selected.ResourceIds)
+						if err != nil {
+							t.Fatal(err)
+						}
+						gotJSON, _ := json.Marshal(got)
+						wantJSON, _ := json.Marshal(resource.PageSlice(want, page, 2))
+						if string(gotJSON) != string(wantJSON) {
+							t.Fatalf("%s page=%d: got=%s want=%s", kind, page, gotJSON, wantJSON)
 						}
 					}
 				}

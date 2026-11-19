@@ -75,12 +75,12 @@ func TestReset(t *testing.T) {
 	t.Setenv("MONKEYAI_INITIAL_ADMIN_PASSWORD", "")
 	for _, tc := range []struct {
 		name         string
-		defaultAdmin bool
+		anotherAdmin bool
 		input        string
 		wantEmail    string
 		wantErr      bool
 	}{
-		{name: "默认管理员", defaultAdmin: true, input: "other@example.com\n", wantEmail: "admin@baizhi.cloud"},
+		{name: "仅重置指定管理员", anotherAdmin: true, input: "other@example.com\n", wantEmail: "other@example.com"},
 		{name: "输入管理员", input: "  OTHER@EXAMPLE.COM  \n", wantEmail: "other@example.com"},
 		{name: "重新输入", input: "invalid\nmissing@example.com\nregular@example.com\nother@example.com\n", wantEmail: "other@example.com"},
 		{name: "空输入", wantErr: true},
@@ -94,8 +94,8 @@ func TestReset(t *testing.T) {
 				('普通用户','regular@example.com','user','original-hash')`); err != nil {
 				t.Fatal(err)
 			}
-			if tc.defaultAdmin {
-				if _, err := pool.Exec(ctx, `INSERT INTO users(name,email,role,password_hash) VALUES('初始管理员','admin@baizhi.cloud','admin','original-hash')`); err != nil {
+			if tc.anotherAdmin {
+				if _, err := pool.Exec(ctx, `INSERT INTO users(name,email,role,password_hash) VALUES('初始管理员','primary@example.com','admin','original-hash')`); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -113,8 +113,8 @@ func TestReset(t *testing.T) {
 				if !strings.Contains(text, "账号: "+tc.wantEmail+"\n") || !regexp.MustCompile(`密码: [0-9A-Za-z]{16}\n`).MatchString(text) {
 					t.Fatal("未输出预期账号及随机密码")
 				}
-				if tc.defaultAdmin == strings.Contains(text, "请填写") {
-					t.Fatal("默认管理员查询与提示行为错误")
+				if !strings.Contains(text, "请输入需要重置密码的管理员邮箱") {
+					t.Fatal("缺少指定管理员提示")
 				}
 			}
 			rows, err := pool.Query(ctx, `SELECT email,password_hash FROM users`)

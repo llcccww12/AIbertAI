@@ -10,7 +10,8 @@ import { useTranslation } from "react-i18next"
 import { Pie, PieChart } from "recharts"
 
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { StatisticsCardHeader } from "@/components/statistics-card-header"
+import { Card, CardContent } from "@/components/ui/card"
 import {
   ChartContainer,
   ChartTooltip,
@@ -106,23 +107,7 @@ function DistributionCard({
       aria-label={title}
       className="group/distribution min-w-0 gap-2 bg-muted/40 p-2 shadow-none ring-1 ring-border/70"
     >
-      <CardHeader className="flex min-h-7 flex-row items-center gap-3 px-3 py-0">
-        <HugeiconsIcon
-          icon={icon}
-          className="shrink-0 text-muted-foreground"
-          size={16}
-          strokeWidth={1.75}
-          aria-hidden="true"
-        />
-        <CardTitle
-          role="heading"
-          aria-level={2}
-          title={title}
-          className="min-w-0 flex-1 truncate font-mono text-sm font-medium uppercase tracking-wide text-muted-foreground"
-        >
-          {title}
-        </CardTitle>
-      </CardHeader>
+      <StatisticsCardHeader icon={icon} title={title} truncateTitle />
       <CardContent
         aria-busy={loading}
         className="min-h-40 flex-1 flex-col items-center justify-center gap-3 rounded-xl border border-border/60 bg-card p-3 group-data-[container-wide=true]/distribution:flex-row"

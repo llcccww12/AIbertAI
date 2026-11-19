@@ -324,14 +324,20 @@ test("other settings configuration buttons use the secondary style", async () =>
     "utf8"
   )
 
-  assert.equal(
-    (
-      source.match(
-        /DialogTrigger render=\{<Button variant="secondary" \/>\}/g
-      ) ?? []
-    ).length,
-    3
+  const embeddingDialog = await readFile(
+    new URL("../src/components/embedding-model-dialog.tsx", import.meta.url),
+    "utf8"
   )
+  assert.match(
+    source,
+    /\["knowledge_reranker", "document_vision"\][\s\S]*?DialogTrigger render=\{<Button variant="secondary" \/>\}/
+  )
+  assert.match(
+    source,
+    /open=\{contentEnhancementDialogOpen\}[\s\S]*?DialogTrigger render=\{<Button variant="secondary" \/>\}/
+  )
+  assert.match(source, /<EmbeddingModelDialog[\s\S]*?scope="default"/)
+  assert.match(embeddingDialog, /variant=\{isDefault \? "secondary" : "outline"\}/)
   assert.match(
     source,
     /variant="secondary"\s+onClick=\{\(\) => handleEmailDialogOpenChange\(true\)\}/

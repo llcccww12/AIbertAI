@@ -35,9 +35,6 @@ func TestAmountAndPricing(t *testing.T) {
 	if _, err = priceTokens(1, 2, 3, p); err == nil {
 		t.Fatal("缓存超出输入必须拒绝")
 	}
-	if quotaAmount(amountText("1.481"), true) != 149 || quotaAmount(amountText("1.481"), false) != 148 {
-		t.Fatal("远程单位或舍入错误")
-	}
 }
 
 func TestDefaultPolicy(t *testing.T) {
@@ -126,14 +123,12 @@ func setPolicy(t *testing.T, s *Service, p Policy) {
 
 func TestUserModelsAreFree(t *testing.T) {
 	for _, tc := range []struct {
-		name, mode                   string
-		bound, shared, empty, limits bool
+		name                  string
+		shared, empty, limits bool
 	}{
-		{name: "本地积分耗尽", mode: "local", empty: true, limits: true},
-		{name: "未绑定钱包", mode: "remote", limits: true},
-		{name: "已绑定钱包", mode: "remote", bound: true, limits: true},
-		{name: "使用他人分享的模型", mode: "remote", shared: true, limits: true},
-		{name: "未配置计费输出限制", mode: "remote"},
+		{name: "本地积分耗尽", empty: true, limits: true},
+		{name: "使用他人分享的模型", shared: true, limits: true},
+		{name: "未配置计费输出限制"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, owner, model := fixture(t)
@@ -153,16 +148,7 @@ func TestUserModelsAreFree(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			wallet := &walletStub{}
-			s.WithWallet(&Wallet{Client: wallet, BaseURL: "https://baizhiyun.vip", AppID: 4})
-			if tc.bound {
-				addWalletIdentity(t, s, user, "1001")
-				if err := s.BindWallet(ctx, user, user, "1001"); err != nil {
-					t.Fatal(err)
-				}
-			}
 			p := defaultPolicy()
-			p.Enabled, p.Mode = true, tc.mode
 			if tc.empty {
 				p.RootCredits = 0
 			}
@@ -190,18 +176,12 @@ func TestUserModelsAreFree(t *testing.T) {
 				t.Fatalf("用户模型不应扣减积分: %+v, %v", after, err)
 			}
 			var mode, status string
-			var reserve, amount, input, output, walletRecords int64
+			var reserve, amount, input, output int64
 			if err := s.pool.QueryRow(ctx, `SELECT t.mode,t.status,t.reserve::bigint,t.amount::bigint,c.input_tokens,c.output_tokens FROM billing_transactions t JOIN model_calls c ON c.id=t.id WHERE t.id=$1`, r.ID).Scan(&mode, &status, &reserve, &amount, &input, &output); err != nil {
 				t.Fatal(err)
 			}
 			if mode != "local" || status != "settled" || reserve != 0 || amount != 0 || input != 10000 || output != 2000 {
 				t.Fatalf("应保留零费用用量记录: %s %s %d %d %d %d", mode, status, reserve, amount, input, output)
-			}
-			if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM wallet_billing_records`).Scan(&walletRecords); err != nil {
-				t.Fatal(err)
-			}
-			if walletRecords != 0 || len(wallet.creates) != 0 || len(wallet.confirms) != 0 {
-				t.Fatalf("用户模型不应进入钱包流程: records=%d creates=%v confirms=%v", walletRecords, wallet.creates, wallet.confirms)
 			}
 		})
 	}
@@ -339,111 +319,6 @@ func TestQuotaInheritanceAndNoRefill(t *testing.T) {
 	a, err = s.Account(ctx, user)
 	if err != nil || a.Quota != amountText("77") {
 		t.Fatal("配置变更不应重发当期额度", a, err)
-	}
-}
-
-type walletStub struct {
-	mu                sync.Mutex
-	createErr         error
-	failConfirm       bool
-	creates, confirms []string
-}
-
-func (w *walletStub) GetUserByID(_ context.Context, id string) (*WalletUser, error) {
-	return &WalletUser{ID: id}, nil
-}
-func (w *walletStub) GetUserCreditBalance(context.Context, string) (*WalletBalance, error) {
-	return &WalletBalance{AvailableCreditCents: 1000000}, nil
-}
-func (w *walletStub) CreateBillingCharge(_ context.Context, _ string, r *WalletCharge) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.creates = append(w.creates, r.BizID)
-	return w.createErr
-}
-func (w *walletStub) ConfirmBillingCharge(_ context.Context, r *WalletConfirmation) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.confirms = append(w.confirms, r.BizID)
-	if w.failConfirm {
-		return errors.New("连接中断")
-	}
-	return nil
-}
-func TestRemoteConfirmationRecovery(t *testing.T) {
-	s, user, model := fixture(t)
-	ctx := t.Context()
-	stub := &walletStub{failConfirm: true}
-	s.WithWallet(&Wallet{Client: stub, BaseURL: "https://baizhiyun.vip", AppID: 4})
-	addWalletIdentity(t, s, user, "1001")
-	if err := s.BindWallet(ctx, user, user, "1001"); err != nil {
-		t.Fatal(err)
-	}
-	p := defaultPolicy()
-	p.Enabled = true
-	p.Mode = "remote"
-	setPolicy(t, s, p)
-	r, err := s.Begin(ctx, Request{UserID: user, ResourceID: model, Category: "model"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Start(ctx, r.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.Finish(ctx, r.ID, Usage{Input: 10000, Cached: 4000, Output: 2000, Known: true, Result: "succeeded"}); err == nil {
-		t.Fatal("远程确认失败应保持待结算")
-	}
-	a, err := s.Account(ctx, user)
-	if err != nil || a.Balance != amountText("10000") || a.Frozen != 0 {
-		t.Fatal(a, err)
-	}
-	stub.failConfirm = false
-	for range 3 {
-		if err = s.Settle(ctx, r.ID); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if len(stub.creates) != 1 || len(stub.confirms) != 2 || stub.creates[0] != stub.confirms[1] {
-		t.Fatalf("远程业务 ID 未保持幂等: %+v", stub)
-	}
-	a, err = s.Account(ctx, user)
-	if err != nil || a.Balance != amountText("9998.52") || a.Frozen != 0 {
-		t.Fatal(a, err)
-	}
-}
-
-func TestUnknownAndRejectedRemoteReservation(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		err  error
-	}{
-		{"明确余额不足", ErrWalletInsufficientBalance},
-		{"远程返回前连接中断", errors.New("connection lost")},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			s, user, model := fixture(t)
-			ctx := t.Context()
-			stub := &walletStub{createErr: tc.err}
-			s.WithWallet(&Wallet{Client: stub, BaseURL: "https://baizhiyun.vip", AppID: 4})
-			addWalletIdentity(t, s, user, "1002")
-			if err := s.BindWallet(ctx, user, user, "1002"); err != nil {
-				t.Fatal(err)
-			}
-			p := defaultPolicy()
-			p.Enabled = true
-			p.Mode = "remote"
-			setPolicy(t, s, p)
-			if _, err := s.Begin(ctx, Request{UserID: user, ResourceID: model, Category: "model"}); err == nil {
-				t.Fatal("不应放行上游")
-			}
-			a, err := s.Account(ctx, user)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if a.Frozen != 0 || a.Balance != amountText("10000") {
-				t.Fatalf("错误释放或扣款: %+v", a)
-			}
-		})
 	}
 }
 

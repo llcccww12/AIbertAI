@@ -63,7 +63,7 @@ func TestResetAdminPasswordRevokesAccess(t *testing.T) {
 	pool := emailDatabase(t)
 	ctx := t.Context()
 	var id string
-	if err := pool.QueryRow(ctx, `INSERT INTO users(name,email,role) VALUES('管理员','admin@baizhi.cloud','admin') RETURNING id`).Scan(&id); err != nil {
+	if err := pool.QueryRow(ctx, `INSERT INTO users(name,email,role) VALUES('管理员','admin@example.test','admin') RETURNING id`).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
 	for _, query := range []string{
@@ -81,12 +81,12 @@ func TestResetAdminPasswordRevokesAccess(t *testing.T) {
 		}
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO email_codes(email,purpose,code_hash,expires_at) VALUES
-		('admin@baizhi.cloud','login','login-code',now()+interval '1 hour'),
-		('admin@baizhi.cloud','reset','reset-code',now()+interval '1 hour'),
+		('admin@example.test','login','login-code',now()+interval '1 hour'),
+		('admin@example.test','reset','reset-code',now()+interval '1 hour'),
 		('other@example.com','reset','other-code',now()+interval '1 hour')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ResetAdminPassword(ctx, pool, "admin@baizhi.cloud"); err != nil {
+	if _, err := ResetAdminPassword(ctx, pool, "admin@example.test"); err != nil {
 		t.Fatal(err)
 	}
 	for _, query := range []string{
@@ -111,7 +111,7 @@ func TestResetAdminPasswordRollback(t *testing.T) {
 	pool := emailDatabase(t)
 	ctx := t.Context()
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO users(name,email,role,password_hash) VALUES('管理员','admin@baizhi.cloud','admin','original-hash');
+		INSERT INTO users(name,email,role,password_hash) VALUES('管理员','admin@example.test','admin','original-hash');
 		INSERT INTO browser_sessions(token_hash,user_id,authentication_method,expires_at)
 		 SELECT 'session',id,'password',now()+interval '1 hour' FROM users;
 		CREATE FUNCTION reject_session_revocation() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -121,12 +121,12 @@ func TestResetAdminPasswordRollback(t *testing.T) {
 	`); err != nil {
 		t.Fatal(err)
 	}
-	password, err := ResetAdminPassword(ctx, pool, "admin@baizhi.cloud")
+	password, err := ResetAdminPassword(ctx, pool, "admin@example.test")
 	if err == nil || password != "" {
 		t.Fatal("凭据撤销失败后不应提交或返回密码")
 	}
 	var hash string
-	if err := pool.QueryRow(ctx, `SELECT password_hash FROM users WHERE email='admin@baizhi.cloud'`).Scan(&hash); err != nil || hash != "original-hash" {
+	if err := pool.QueryRow(ctx, `SELECT password_hash FROM users WHERE email='admin@example.test'`).Scan(&hash); err != nil || hash != "original-hash" {
 		t.Fatalf("事务未回滚密码: err=%v", err)
 	}
 }

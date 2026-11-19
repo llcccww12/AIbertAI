@@ -101,8 +101,12 @@ func TestPairingFlow(t *testing.T) {
 	if _, err := uuid.Parse(created.ID); err != nil || len(created.Secret) < 40 || created.Expires != 60 {
 		t.Fatalf("创建响应无效: %+v %v", created, err)
 	}
+	publicURL, err := url.Parse(s.publicURL)
+	if err != nil {
+		t.Fatal(err)
+	}
 	payload, err := url.Parse(created.Payload)
-	if err != nil || payload.Scheme != "https" || payload.Host != "work.baizhi.cloud" || payload.Path != "/app-link/scan/" {
+	if err != nil || payload.Scheme != publicURL.Scheme || payload.Host != publicURL.Host || payload.Path != "/app-link/scan/" {
 		t.Fatalf("二维码地址错误: %s %v", created.Payload, err)
 	}
 	query := payload.Query()

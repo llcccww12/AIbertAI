@@ -160,22 +160,29 @@ func bumpDocumentVersion(ctx context.Context, tx pgx.Tx, current resource.Object
 	return createKbDocumentJob(ctx, queries, current.String("kb_id"), id, OperationRelearn, previous+1, modelID, dimension)
 }
 
-// Embedding requests may outlive a grant. Recheck before returning retrieved text.
+// Model requests may outlive a grant. Recheck before returning retrieved text.
 func (s *Service) searchWithPermissionRecheck(ctx context.Context, actor string, accessible []resource.Object, input SearchInput) (SearchResponse, error) {
-	response, err := s.searchAccessible(ctx, accessible, input)
+	response, err := s.searchAccessible(ctx, actor, accessible, input)
 	if err != nil {
 		return SearchResponse{}, err
 	}
+	if err := s.checkSearchPermissions(ctx, actor, response.Items); err != nil {
+		return SearchResponse{}, err
+	}
+	return response, nil
+}
+
+func (s *Service) checkSearchPermissions(ctx context.Context, actor string, items []resource.Object) error {
 	checked := map[string]bool{}
-	for _, result := range response.Items {
+	for _, result := range items {
 		id := result.String("kb_id")
 		if checked[id] {
 			continue
 		}
-		if _, err = s.accessibleKB(ctx, actor, id); err != nil {
-			return SearchResponse{}, err
+		if _, err := s.accessibleKB(ctx, actor, id); err != nil {
+			return err
 		}
 		checked[id] = true
 	}
-	return response, nil
+	return nil
 }

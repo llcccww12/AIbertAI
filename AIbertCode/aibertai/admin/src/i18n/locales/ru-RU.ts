@@ -464,6 +464,9 @@ export const ruRU = {
         "Удалить «{{model}}»? Это действие нельзя отменить.",
     },
     knowledgeBases: {
+      icon: "Значок",
+      uploadIcon: "Загрузить значок",
+      replaceIcon: "Заменить значок",
       noDescription: "Нет описания",
       noTags: "Нет тегов",
       createDocument: "Создать документ",
@@ -537,6 +540,7 @@ export const ruRU = {
       selectFile: "Выбрать файл",
       fileDescription:
         "Можно выбрать несколько файлов TXT или Markdown одновременно.",
+      visualFileDescription: "С визуальной моделью можно импортировать PDF, PNG и JPEG размером до 10 МБ. В PDF допускается до 10 страниц.",
       fileUnsupported: "Поддерживаются только файлы TXT и Markdown.",
       fileEmpty: "Файл пуст.",
       addAndLearn: "Добавить и изучить",
@@ -965,17 +969,11 @@ export const ruRU = {
         modes: {
           disabled: "Без списаний",
           local: "Прямая тарификация",
-          remote: "Тарификация в связке с Baizhi Cloud",
         },
         modeDescriptions: {
           local:
             "Использование и списание баллов обрабатываются этой системой.",
-          remote:
-            "Данные об использовании отправляются в Baizhi Cloud для списания.",
         },
-        baseUrl: "Адрес Baizhi Cloud",
-        apiKey: "Ключ Baizhi Cloud",
-        apiKeyPlaceholder: "Введите ключ Baizhi Cloud",
       },
       quotaRefresh: {
         title: "Автоматическое обновление баллов",
@@ -1034,7 +1032,6 @@ export const ruRU = {
         summary: "{{cycle}} · {{credits}} баллов",
         remaining: "Осталось {{credits}} баллов",
         billingDisabled: "Биллинг отключен",
-        remoteBilling: "Удалённый биллинг",
         actions: "Действия с квотой",
         adjust: "Изменить квоту",
         dialogTitle: "Изменить квоту",
@@ -1189,27 +1186,26 @@ export const ruRU = {
         description: "Управляйте обработкой и поиском содержимого базы знаний.",
         embeddingModel: "Модель эмбеддингов",
         rerankerModel: "Модель реранжирования",
-        documentParsingEngine: {
-          title: "Улучшенный анализ документов",
-          provider: "Baizhi Cloud",
-          defaultDescription:
-            "Не настроено. Встроенный анализатор извлечёт из файлов обычный текст.",
-          configuredDescription:
-            "Baizhi Cloud настроен и будет улучшать анализ загружаемых документов.",
-          dialogTitle: "Настроить улучшенный анализ документов",
-          dialogDescription:
-            "AIbertAI включает базовый анализ документов. Если извлечение текста из сложных документов недостаточно качественное, Baizhi Cloud может улучшить результат.",
-          providerLabel: "Поставщик услуги",
-          providerDescription:
-            "Baizhi Cloud · Адрес сервиса задан системой и не требует настройки.",
-          apiKey: "API-ключ",
-          apiKeyPlaceholder: "Введите API-ключ Baizhi Cloud",
-          apiKeyUpdatePlaceholder:
-            "Оставьте пустым, чтобы сохранить текущий ключ",
-          apiKeyDescription:
-            "Ключ передаётся только при сохранении и больше не показывается полностью.",
-          apiKeyUpdateDescription:
-            "Оставьте пустым, чтобы сохранить текущий ключ.",
+        embeddingAutomatic: "Автоматически выбирать доступную системную модель эмбеддингов",
+        embeddingDefaultConfigured: "Для новых баз знаний и баз без привязки задана модель по умолчанию.",
+        embeddingDefaultDescription: "Эта модель используется для новых баз знаний и баз без привязанной модели.",
+        embeddingSelect: "Выбрать модель эмбеддингов",
+        embeddingRegistrationHint: "Поддерживаются модели с совместимым с OpenAI API /embeddings. Сначала добавьте и включите модель.",
+        manageEmbeddingModels: "Управление моделями",
+        switchEmbedding: "Сменить модель эмбеддингов",
+        switchEmbeddingDescription: "При смене модели векторный индекс будет создан заново. Полнотекстовый поиск останется доступен.",
+        modelSaved: "Настройки модели сохранены",
+        reranker: {
+          defaultDescription: "Модель ранжирования не настроена. Результаты отсортированы по умолчанию.",
+          configuredDescription: "Модель меняет порядок отобранных фрагментов при поиске.",
+          dialogDescription: "Укажите сервис с API /rerank, например vLLM или сервис, совместимый с Cohere или Jina. Поисковые запросы и отобранные фрагменты отправляются в этот сервис.",
+        },
+        endpointAPIKeyUpdateDescription: "Оставьте поле пустым, чтобы сохранить текущий ключ, если базовый URL API не меняется.",
+        documentVision: {
+          title: "Визуальная модель для разбора документов",
+          defaultDescription: "Модель не настроена. TXT и Markdown можно импортировать напрямую.",
+          configuredDescription: "Модель извлекает текст и таблицы при импорте PDF и изображений.",
+          dialogDescription: "Укажите совместимый с OpenAI API Chat Completions с поддержкой изображений. Страницы PDF и изображения отправляются в сервис модели для извлечения текста.",
         },
         contentEnhancementModel: {
           title: "Модель улучшения контента",
@@ -1229,11 +1225,6 @@ export const ruRU = {
         modelIdPlaceholder: "Введите ID модели, используемый сервисом",
         modelIdDescription:
           "ID задаётся сервисом и может отличаться от названия выбранной модели.",
-        rerankerModelIdPlaceholder: "Например: BAAI/bge-reranker-v2-m3",
-        embeddingSupportDescription:
-          "Сейчас поддерживается только модель bge-m3.",
-        rerankerSupportDescription:
-          "Сейчас поддерживается только модель bge-reranker-v2-m3.",
         baseUrl: "Base URL",
         baseUrlPlaceholder: "https://api.example.com/v1",
         apiKey: "API-ключ",
@@ -1299,8 +1290,6 @@ export const ruRU = {
         provider: "Поставщик",
         name: "Отображаемое имя",
         namePlaceholder: "Например: Корпоративный GitHub",
-        baizhiyunScopes:
-          "Разрешения по умолчанию: auth_certification openid phone user email",
         issuerUrl: "URL издателя",
         scopes: "Области доступа (scopes)",
         scopesDescription:
@@ -1350,7 +1339,6 @@ export const ruRU = {
           google: "Google",
           microsoft: "Microsoft",
           gitlab: "GitLab",
-          baizhiyun: "Baizhi Cloud",
           oidc: "Пользовательский OIDC",
         },
       },

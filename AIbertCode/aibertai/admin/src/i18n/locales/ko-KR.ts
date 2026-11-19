@@ -444,6 +444,9 @@ export const koKR = {
         '"{{model}}" 모델을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.',
     },
     knowledgeBases: {
+      icon: "아이콘",
+      uploadIcon: "아이콘 업로드",
+      replaceIcon: "아이콘 교체",
       noDescription: "설명 없음",
       noTags: "태그 없음",
       createDocument: "문서 만들기",
@@ -513,6 +516,7 @@ export const koKR = {
       selectFile: "파일 선택",
       fileDescription:
         "TXT 또는 Markdown 파일을 여러 개 동시에 선택할 수 있습니다.",
+      visualFileDescription: "비전 모델을 설정하면 PDF, PNG, JPEG도 가져올 수 있습니다. 파일당 최대 10 MB, PDF는 최대 10페이지입니다.",
       fileUnsupported: "TXT 및 Markdown 파일만 지원합니다.",
       fileEmpty: "파일 내용이 비어 있습니다.",
       addAndLearn: "추가 및 학습",
@@ -927,15 +931,10 @@ export const koKR = {
         modes: {
           disabled: "과금 안 함",
           local: "직접 과금",
-          remote: "Baizhi Cloud 연동 과금",
         },
         modeDescriptions: {
           local: "사용량과 포인트 차감은 현재 시스템에서 처리됩니다.",
-          remote: "사용량을 Baizhi Cloud로 보내 과금합니다.",
         },
-        baseUrl: "Baizhi Cloud 주소",
-        apiKey: "Baizhi Cloud 키",
-        apiKeyPlaceholder: "Baizhi Cloud 키 입력",
       },
       quotaRefresh: {
         title: "크레딧 자동 갱신",
@@ -994,7 +993,6 @@ export const koKR = {
         summary: "{{cycle}} {{credits}} 포인트",
         remaining: "남은 포인트 {{credits}}",
         billingDisabled: "과금 비활성화",
-        remoteBilling: "원격 과금",
         actions: "한도 작업",
         adjust: "한도 조정",
         dialogTitle: "한도 조정",
@@ -1145,25 +1143,26 @@ export const koKR = {
         description: "지식 콘텐츠의 처리 및 검색 방식을 관리합니다.",
         embeddingModel: "임베딩 모델",
         rerankerModel: "리랭커 모델",
-        documentParsingEngine: {
-          title: "문서 파싱 향상 엔진",
-          provider: "Baizhi Cloud",
-          defaultDescription:
-            "아직 설정되지 않았습니다. 내장 기본 파서가 파일에서 일반 텍스트를 추출합니다.",
-          configuredDescription:
-            "Baizhi Cloud가 설정되어 업로드한 문서의 파싱을 향상합니다.",
-          dialogTitle: "문서 파싱 향상 엔진 설정",
-          dialogDescription:
-            "AIbertAI는 기본 문서 파싱을 제공합니다. 복잡한 문서의 텍스트 추출 결과가 충분하지 않을 때 Baizhi Cloud로 파싱을 향상할 수 있습니다.",
-          providerLabel: "서비스 제공자",
-          providerDescription:
-            "Baizhi Cloud · 서비스 주소는 시스템에 고정되어 있어 설정할 필요가 없습니다.",
-          apiKey: "API 키",
-          apiKeyPlaceholder: "Baizhi Cloud API 키 입력",
-          apiKeyUpdatePlaceholder: "현재 키를 유지하려면 비워 두세요",
-          apiKeyDescription:
-            "키는 저장할 때만 제출되며 이후 전체가 표시되지 않습니다.",
-          apiKeyUpdateDescription: "비워 두면 현재 키를 유지합니다.",
+        embeddingAutomatic: "사용 가능한 시스템 임베딩 모델 자동 선택",
+        embeddingDefaultConfigured: "새 지식 베이스와 모델이 지정되지 않은 지식 베이스에 기본 모델이 설정되었습니다.",
+        embeddingDefaultDescription: "새 지식 베이스와 모델이 지정되지 않은 지식 베이스는 이 기본 임베딩 모델을 사용합니다.",
+        embeddingSelect: "임베딩 모델 선택",
+        embeddingRegistrationHint: "OpenAI 호환 /embeddings 엔드포인트를 제공하는 모델을 지원합니다. 먼저 모델을 추가하고 활성화하세요.",
+        manageEmbeddingModels: "모델 관리",
+        switchEmbedding: "임베딩 모델 전환",
+        switchEmbeddingDescription: "모델을 바꾸면 벡터 인덱스를 다시 생성합니다. 전체 텍스트 검색은 계속 사용할 수 있습니다.",
+        modelSaved: "모델 설정을 저장했습니다",
+        reranker: {
+          defaultDescription: "리랭커가 설정되지 않았습니다. 검색 결과는 기본 순서를 따릅니다.",
+          configuredDescription: "검색할 때 이 모델로 후보 텍스트의 순위를 다시 매깁니다.",
+          dialogDescription: "vLLM 또는 Cohere나 Jina 호환 서비스처럼 /rerank 엔드포인트를 제공하는 서비스를 사용하세요. 검색어와 후보 텍스트가 해당 서비스로 전송됩니다.",
+        },
+        endpointAPIKeyUpdateDescription: "API 기본 URL이 같다면 비워 두어 현재 키를 유지할 수 있습니다.",
+        documentVision: {
+          title: "문서 분석용 비전 모델",
+          defaultDescription: "설정되지 않았습니다. TXT와 Markdown은 바로 가져올 수 있습니다.",
+          configuredDescription: "PDF 및 이미지에서 본문과 표를 추출할 때 이 모델을 사용합니다.",
+          dialogDescription: "이미지 입력을 지원하는 OpenAI 호환 Chat Completions API를 입력하세요. 텍스트 추출을 위해 PDF 페이지와 이미지가 모델 서비스로 전송됩니다.",
         },
         contentEnhancementModel: {
           title: "콘텐츠 강화 모델",
@@ -1183,10 +1182,6 @@ export const koKR = {
         modelIdPlaceholder: "서비스에서 실제 사용하는 모델 ID 입력",
         modelIdDescription:
           "모델 ID는 서비스에서 정의하므로 선택한 모델 이름과 다를 수 있습니다.",
-        rerankerModelIdPlaceholder: "예: BAAI/bge-reranker-v2-m3",
-        embeddingSupportDescription: "현재 bge-m3 모델만 지원됩니다.",
-        rerankerSupportDescription:
-          "현재 bge-reranker-v2-m3 모델만 지원됩니다.",
         baseUrl: "Base URL",
         baseUrlPlaceholder: "https://api.example.com/v1",
         apiKey: "API 키",
@@ -1248,8 +1243,6 @@ export const koKR = {
         provider: "제공자",
         name: "표시 이름",
         namePlaceholder: "예: 회사 GitHub",
-        baizhiyunScopes:
-          "기본 권한 범위: auth_certification openid phone user email",
         issuerUrl: "Issuer URL",
         scopes: "권한 범위 (Scope)",
         scopesDescription:
@@ -1298,7 +1291,6 @@ export const koKR = {
           google: "Google",
           microsoft: "Microsoft",
           gitlab: "GitLab",
-          baizhiyun: "Baizhi Cloud",
           oidc: "사용자 지정 OIDC",
         },
       },

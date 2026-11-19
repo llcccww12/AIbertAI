@@ -22,7 +22,7 @@ import { ResourceAuthorizationBadge } from "@/components/resource-authorization-
 import { SkillTagSelect } from "@/components/skill-tag-select"
 import { useSkillTags } from "@/hooks/use-skill-tags"
 import { ResourceCard } from "@/components/resource-card"
-import { ResourceCardMenuButton } from "@/components/resource-card-menu-button"
+import { ResourceCardMenuTrigger } from "@/components/resource-card-menu-trigger"
 import { ResourceEditorFooter } from "@/components/resource-editor-footer"
 import type { RuleType } from "@/hooks/use-rule-page"
 import { useState, type FormEvent } from "react"
@@ -31,7 +31,6 @@ import {
   Delete02Icon,
   DocumentValidationIcon,
   Edit02Icon,
-  MoreHorizontalIcon,
   PauseIcon,
   PlayIcon,
   PlusSignIcon,
@@ -75,7 +74,6 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
@@ -529,18 +527,7 @@ export function RulesPage() {
                       />
                     ) : (
                       <DropdownMenu>
-                        <DropdownMenuTrigger
-                          render={
-                            <ResourceCardMenuButton
-                              aria-label={t("common.more")}
-                            />
-                          }
-                        >
-                          <HugeiconsIcon
-                            icon={MoreHorizontalIcon}
-                            strokeWidth={2}
-                          />
-                        </DropdownMenuTrigger>
+                        <ResourceCardMenuTrigger label={t("common.more")} strokeWidth={2} />
                         <DropdownMenuContent align="end">
                           <DropdownMenuGroup hidden={rule.type !== "system"}>
                             <DropdownMenuItem

@@ -26,7 +26,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 FROM alpine:3.23
 
-RUN apk add --no-cache ca-certificates curl tzdata \
+RUN apk add --no-cache ca-certificates curl tzdata poppler-utils \
     && addgroup -S -g 10001 monkeyai \
     && adduser -S -D -u 10001 -G monkeyai monkeyai \
     && mkdir -p /app/runtime /app/import-tmp \

@@ -18,7 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-func TestActivityWeeklyRemoteAfterObservation(t *testing.T) {
+func TestActivityWeeklyLocalAfterObservation(t *testing.T) {
 	s, user, model := fixture(t)
 	activityCutover(t, s)
 	ledgerExec(t, s, `SELECT billing_finish_activity_observation()`)
@@ -27,16 +27,6 @@ func TestActivityWeeklyRemoteAfterObservation(t *testing.T) {
 	if err := s.pool.QueryRow(t.Context(), `SELECT count(*) FROM pg_constraint WHERE contype='f' AND confrelid=(SELECT source_relation FROM billing_activity_partition_state WHERE table_name='billing_transactions')`).Scan(&dangling); err != nil || dangling != 0 {
 		t.Fatalf("还有外键指向旧交易表: %d %v", dangling, err)
 	}
-	stub := &walletStub{failConfirm: true}
-	s.WithWallet(&Wallet{Client: stub, BaseURL: "https://baizhiyun.vip", AppID: 4})
-	addWalletIdentity(t, s, user, "1001")
-	if err := s.BindWallet(t.Context(), user, user, "1001"); err != nil {
-		t.Fatal(err)
-	}
-	p := defaultPolicy()
-	p.Enabled = true
-	p.Mode = "remote"
-	setPolicy(t, s, p)
 	r, err := s.Begin(t.Context(), Request{UserID: user, ResourceID: model, Category: "model"})
 	if err != nil {
 		t.Fatal(err)
@@ -44,17 +34,13 @@ func TestActivityWeeklyRemoteAfterObservation(t *testing.T) {
 	if err = s.Start(t.Context(), r.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.Finish(t.Context(), r.ID, Usage{Input: 10000, Cached: 4000, Output: 2000, Known: true, Result: "succeeded"}); err == nil {
-		t.Fatal("确认失败应保留待结算")
+	if err = s.Finish(t.Context(), r.ID, Usage{Input: 10000, Cached: 4000, Output: 2000, Known: true, Result: "succeeded"}); err != nil {
+		t.Fatal(err)
 	}
-	stub.failConfirm = false
 	for range 3 {
 		if err = s.Settle(t.Context(), r.ID); err != nil {
 			t.Fatal(err)
 		}
-	}
-	if len(stub.creates) != 1 || len(stub.confirms) != 2 || stub.creates[0] != stub.confirms[1] {
-		t.Fatalf("远程重试不幂等: %+v", stub)
 	}
 	activityAssert(t, s, false)
 	ledgerAssert(t, s)

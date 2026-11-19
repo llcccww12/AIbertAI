@@ -16,7 +16,6 @@ import tempfile
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_MIRROR = 'https://release.monkeycode-ai.com/public/monkeyai/engine/dependencies'
 NAMES = {'gvisor_sentry', 'runsc-metric-server', 'ctr', 'docker-init', 'runsc-fd-parking', 'runsc', 'containerd', 'dockerd', 'containerd-shim-runc-v2', 'runc', 'docker', 'checkpointgofer', 'docker-proxy', 'gvisor-proc-umounter', 'gvisor-sentry-prewarmer'}
 
 
@@ -153,13 +152,15 @@ def unpack_bundle(bundle, entries, cache):
 
 def ensure_archives(arch, entries, cache, lockfile, mirror):
     version = dependency_version(lockfile)
-    parsed = urlsplit(mirror)
-    if parsed.scheme != 'https' or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
-        raise ValueError('依赖镜像必须为无凭据的 HTTPS 地址')
     present = [cached(entry, cache) is not None for entry in entries]
     if all(present):
         print(f'{arch} 全部依赖归档缓存校验通过，跳过下载', flush=True)
         return
+    if not mirror:
+        raise ValueError('依赖缓存未齐全，请设置 ENGINE_DEPENDENCY_URL 指向私有 HTTPS 镜像')
+    parsed = urlsplit(mirror)
+    if parsed.scheme != 'https' or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError('依赖镜像必须为无凭据的 HTTPS 地址')
     print(f'下载依赖包 {version}/{arch}/dependencies.tgz', flush=True)
     with tempfile.TemporaryDirectory(prefix='.download-', dir=cache) as work:
         path = Path(work) / 'dependencies.tgz'
@@ -167,7 +168,7 @@ def ensure_archives(arch, entries, cache, lockfile, mirror):
         unpack_bundle(path, entries, cache)
 
 
-def prepare(arch, output, cache, lockfile, reuse=False, mirror=DEFAULT_MIRROR):
+def prepare(arch, output, cache, lockfile, reuse=False, mirror=None):
     entries = locked_entries(arch, lockfile)
     if output.is_symlink():
         raise ValueError('依赖输出目录不能是符号链接')
@@ -199,7 +200,7 @@ if __name__ == '__main__':
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--cache', type=Path, default=ROOT / 'dist/cache')
     parser.add_argument('--lock', type=Path, default=ROOT / 'dependencies.lock.json')
-    parser.add_argument('--mirror', default=os.environ.get('ENGINE_DEPENDENCY_URL') or DEFAULT_MIRROR,
+    parser.add_argument('--mirror', default=os.environ.get('ENGINE_DEPENDENCY_URL'),
                         help='依赖镜像地址；缺失时直接失败，不回退官方上游')
     args = parser.parse_args()
     try:

@@ -3,7 +3,6 @@ import {
   BookOpenTextIcon,
   Delete02Icon,
   Edit02Icon,
-  MoreHorizontalIcon,
   PauseIcon,
   PlayIcon,
   PlusSignIcon,
@@ -20,7 +19,7 @@ import {
 import { KbPermissionsEditor } from "@/components/kb-permissions-editor"
 import type { Grant } from "@/lib/resources"
 import { ResourceCard } from "@/components/resource-card"
-import { ResourceCardMenuButton } from "@/components/resource-card-menu-button"
+import { ResourceCardMenuTrigger } from "@/components/resource-card-menu-trigger"
 import { ResourceList } from "@/components/resource-list"
 import { ResourceTagSummary } from "@/components/resource-tag-summary"
 import { SkillTagSelect } from "@/components/skill-tag-select"
@@ -58,7 +57,6 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Textarea } from "@/components/ui/textarea"
@@ -406,16 +404,7 @@ export function KbPage() {
                     </div>
                     {kb.ownership_type === "system" && (
                       <DropdownMenu>
-                        <DropdownMenuTrigger
-                          render={
-                            <ResourceCardMenuButton
-                              aria-label={t("common.more")}
-                              onClick={(event) => event.stopPropagation()}
-                            />
-                          }
-                        >
-                          <HugeiconsIcon icon={MoreHorizontalIcon} />
-                        </DropdownMenuTrigger>
+                        <ResourceCardMenuTrigger label={t("common.more")} onClick={(event) => event.stopPropagation()} />
                         <DropdownMenuContent
                           align="end"
                           onClick={(event) => event.stopPropagation()}

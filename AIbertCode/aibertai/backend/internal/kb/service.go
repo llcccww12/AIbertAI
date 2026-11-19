@@ -13,17 +13,20 @@ import (
 	"aibertai.local/backend/internal/kb/sqlc"
 	"aibertai.local/backend/internal/model"
 	"aibertai.local/backend/internal/resource"
+	"aibertai.local/backend/internal/setting"
 
 	"github.com/jackc/pgx/v5"
 )
 
 type Service struct {
-	CRUD    *resource.CRUD
-	store   *resource.Store
-	models  Embedder
-	worker  string
-	storage resource.Storage
-	syncMu  sync.Mutex
+	CRUD           *resource.CRUD
+	store          *resource.Store
+	models         Embedder
+	worker         string
+	storage        resource.Storage
+	syncMu         sync.Mutex
+	documentVision func(context.Context) (setting.KnowledgeEndpoint, error)
+	reranker       func(context.Context) (setting.KnowledgeEndpoint, error)
 }
 
 type Embedder interface {
@@ -46,6 +49,24 @@ func NewService(store *resource.Store, models *model.Service) *Service {
 		DeleteFunc:     s.Delete,
 	})
 	return s
+}
+
+func (s *Service) WithDocumentVision(load func(context.Context) (setting.KnowledgeEndpoint, error)) *Service {
+	s.documentVision = load
+	return s
+}
+
+func (s *Service) WithReranker(load func(context.Context) (setting.KnowledgeEndpoint, error)) *Service {
+	s.reranker = load
+	return s
+}
+
+func (s *Service) ValidateEmbeddingDefault(ctx context.Context, id string) error {
+	dimension, err := sqlc.New(s.store.Pool).GetEmbeddingModel(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && dimension <= 0) {
+		return resource.InvalidCode("embedding_model_unavailable", "请选择已启用并完成维度检测的系统向量模型")
+	}
+	return err
 }
 
 func (s *Service) validate(ctx context.Context, tx pgx.Tx, in, old resource.Object) error {

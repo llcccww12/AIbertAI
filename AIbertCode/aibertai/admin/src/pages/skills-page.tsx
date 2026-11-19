@@ -19,7 +19,7 @@ import {
 import { getCreatorInitial } from "@/lib/utils"
 import { ResourceNotice } from "@/components/resource-notice"
 import { ResourceCard } from "@/components/resource-card"
-import { ResourceCardMenuButton } from "@/components/resource-card-menu-button"
+import { ResourceCardMenuTrigger } from "@/components/resource-card-menu-trigger"
 import { ResourceTagSummary } from "@/components/resource-tag-summary"
 import { ResourcePackageBadge } from "@/components/resource-package-badge"
 import { ResourceAuthorizationBadge } from "@/components/resource-authorization-badge"
@@ -28,7 +28,6 @@ import {
   Delete02Icon,
   DocumentValidationIcon,
   Edit02Icon,
-  MoreHorizontalIcon,
   PauseIcon,
   PlayIcon,
   PlusSignIcon,
@@ -76,7 +75,6 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
   Field,
@@ -865,18 +863,7 @@ export function SkillsPage() {
                       />
                     ) : skill.type === "system" ? (
                       <DropdownMenu>
-                        <DropdownMenuTrigger
-                          render={
-                            <ResourceCardMenuButton
-                              aria-label={t("common.more")}
-                            />
-                          }
-                        >
-                          <HugeiconsIcon
-                            icon={MoreHorizontalIcon}
-                            strokeWidth={2}
-                          />
-                        </DropdownMenuTrigger>
+                        <ResourceCardMenuTrigger label={t("common.more")} strokeWidth={2} />
                         <DropdownMenuContent align="end">
                           <DropdownMenuGroup>
                             <DropdownMenuItem

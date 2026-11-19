@@ -438,6 +438,9 @@ export const ar = {
         "هل تريد حذف «{{model}}»؟ لا يمكن التراجع عن هذا الإجراء.",
     },
     knowledgeBases: {
+      icon: "الأيقونة",
+      uploadIcon: "رفع الأيقونة",
+      replaceIcon: "استبدال الأيقونة",
       noDescription: "لا يوجد وصف",
       noTags: "لا توجد وسوم",
       createDocument: "إنشاء مستند",
@@ -507,6 +510,7 @@ export const ar = {
       textPlaceholder: "أدخل المحتوى المعرفي المراد تعلمه",
       selectFile: "اختيار ملف",
       fileDescription: "يمكن اختيار عدة ملفات TXT أو Markdown في وقت واحد.",
+      visualFileDescription: "بعد إعداد نموذج الرؤية، يمكنك أيضًا استيراد PDF وPNG وJPEG بحجم يصل إلى 10 ميغابايت للملف. الحد الأقصى لملف PDF هو 10 صفحات.",
       fileUnsupported: "يتم دعم ملفات TXT وMarkdown فقط.",
       fileEmpty: "الملف فارغ.",
       addAndLearn: "إضافة وتعلّم",
@@ -918,15 +922,10 @@ export const ar = {
         modes: {
           disabled: "بدون خصم",
           local: "فوترة مباشرة",
-          remote: "فوترة متكاملة مع Baizhi Cloud",
         },
         modeDescriptions: {
           local: "يعالج هذا النظام الاستخدام وخصم النقاط.",
-          remote: "تُرسل بيانات الاستخدام إلى Baizhi Cloud للفوترة.",
         },
-        baseUrl: "عنوان Baizhi Cloud",
-        apiKey: "مفتاح Baizhi Cloud",
-        apiKeyPlaceholder: "أدخل مفتاح Baizhi Cloud",
       },
       quotaRefresh: {
         title: "التجديد التلقائي للنقاط",
@@ -985,7 +984,6 @@ export const ar = {
         summary: "{{cycle}} · {{credits}} نقطة",
         remaining: "الرصيد المتبقي {{credits}} نقطة",
         billingDisabled: "الفوترة غير مفعّلة",
-        remoteBilling: "الفوترة عن بُعد",
         actions: "إجراءات الحصة",
         adjust: "تعديل الحصة",
         dialogTitle: "تعديل الحصة",
@@ -1137,25 +1135,26 @@ export const ar = {
         description: "إدارة معالجة محتوى المعرفة واسترجاعه.",
         embeddingModel: "نموذج التضمين",
         rerankerModel: "نموذج إعادة الترتيب",
-        documentParsingEngine: {
-          title: "محرك تحليل المستندات المحسّن",
-          provider: "Baizhi Cloud",
-          defaultDescription:
-            "غير مهيأ. سيستخرج المحلل الأساسي المدمج النص العادي من الملفات.",
-          configuredDescription:
-            "تمت تهيئة Baizhi Cloud لتحسين تحليل المستندات المرفوعة.",
-          dialogTitle: "تهيئة تحليل المستندات المحسّن",
-          dialogDescription:
-            "يتضمن AIbertAI تحليلاً أساسيًا للمستندات. عندما لا يكون استخراج النص من المستندات المعقدة كافيًا، يمكن لـ Baizhi Cloud تحسين النتائج.",
-          providerLabel: "مقدم الخدمة",
-          providerDescription:
-            "Baizhi Cloud · عنوان الخدمة ثابت في النظام ولا يحتاج إلى تهيئة.",
-          apiKey: "مفتاح API",
-          apiKeyPlaceholder: "أدخل مفتاح API لخدمة Baizhi Cloud",
-          apiKeyUpdatePlaceholder: "اتركه فارغًا للاحتفاظ بالمفتاح الحالي",
-          apiKeyDescription:
-            "يُرسل المفتاح عند الحفظ فقط ولن يظهر كاملاً مرة أخرى.",
-          apiKeyUpdateDescription: "اتركه فارغًا للاحتفاظ بالمفتاح الحالي.",
+        embeddingAutomatic: "اختيار نموذج تضمين متاح في النظام تلقائيًا",
+        embeddingDefaultConfigured: "تم تعيين نموذج افتراضي لقواعد المعرفة الجديدة وغير المرتبطة بنموذج.",
+        embeddingDefaultDescription: "تستخدم قواعد المعرفة الجديدة وغير المرتبطة بهذا النوع من النماذج نموذج التضمين الافتراضي هذا.",
+        embeddingSelect: "اختر نموذج التضمين",
+        embeddingRegistrationHint: "يمكن استخدام أي نموذج يدعم نقطة /embeddings المتوافقة مع OpenAI. أضف نموذجًا ثم فعّله.",
+        manageEmbeddingModels: "إدارة النماذج",
+        switchEmbedding: "تبديل نموذج التضمين",
+        switchEmbeddingDescription: "يعيد التبديل بناء فهرس المتجهات. يظل البحث في النص الكامل متاحًا.",
+        modelSaved: "تم حفظ إعدادات النموذج",
+        reranker: {
+          defaultDescription: "لم يتم إعداد نموذج لإعادة الترتيب. تُعرض النتائج وفق الترتيب الافتراضي.",
+          configuredDescription: "يعيد هذا النموذج ترتيب المقاطع المرشحة عند البحث.",
+          dialogDescription: "استخدم خدمة توفر نقطة /rerank، مثل vLLM أو خدمة متوافقة مع Cohere أو Jina. تُرسل استعلامات البحث والمقاطع المرشحة إلى الخدمة.",
+        },
+        endpointAPIKeyUpdateDescription: "اترك الحقل فارغًا للاحتفاظ بالمفتاح الحالي إذا لم يتغيّر عنوان API الأساسي.",
+        documentVision: {
+          title: "نموذج رؤية لتحليل المستندات",
+          defaultDescription: "لم يتم إعداد نموذج رؤية. يمكن استيراد ملفات TXT وMarkdown مباشرةً.",
+          configuredDescription: "يستخرج هذا النموذج النصوص والجداول عند استيراد ملفات PDF والصور.",
+          dialogDescription: "استخدم واجهة Chat Completions متوافقة مع OpenAI وتدعم الصور. تُرسل صفحات PDF والصور إلى موفر النموذج لاستخراج النص.",
         },
         contentEnhancementModel: {
           title: "نموذج تحسين المحتوى",
@@ -1175,10 +1174,6 @@ export const ar = {
         modelIdPlaceholder: "أدخل معرّف النموذج المستخدم في الخدمة",
         modelIdDescription:
           "تحدد الخدمة معرّف النموذج، لذلك قد يختلف عن اسم النموذج المحدد.",
-        rerankerModelIdPlaceholder: "مثال: BAAI/bge-reranker-v2-m3",
-        embeddingSupportDescription: "نموذج bge-m3 هو المدعوم حاليًا فقط.",
-        rerankerSupportDescription:
-          "نموذج bge-reranker-v2-m3 هو المدعوم حاليًا فقط.",
         baseUrl: "Base URL",
         baseUrlPlaceholder: "https://api.example.com/v1",
         apiKey: "مفتاح API",
@@ -1242,8 +1237,6 @@ export const ar = {
         provider: "الموفر",
         name: "اسم العرض",
         namePlaceholder: "مثال: GitHub للشركة",
-        baizhiyunScopes:
-          "نطاقات التفويض الافتراضية: auth_certification openid phone user email",
         issuerUrl: "عنوان URL للمُصدر",
         scopes: "نطاقات التفويض (Scope)",
         scopesDescription:
@@ -1292,7 +1285,6 @@ export const ar = {
           google: "Google",
           microsoft: "Microsoft",
           gitlab: "GitLab",
-          baizhiyun: "Baizhi Cloud",
           oidc: "OIDC مخصص",
         },
       },

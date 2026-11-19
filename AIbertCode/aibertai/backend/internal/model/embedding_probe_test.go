@@ -83,6 +83,24 @@ func TestTestEmbedding(t *testing.T) {
 	}
 }
 
+func TestCompatibleEmbeddingFullEndpointAndBase64Vector(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/custom/embeddings" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		_, _ = io.WriteString(w, `{"data":[{"embedding":"AACAPwAAAD8="}]}`)
+	}))
+	defer server.Close()
+	service := NewService(&repositoryStub{models: []Model{{
+		ID: "custom", Enabled: true, Kind: KindEmbedding, BaseURL: server.URL + "/custom/embeddings/",
+		ModelID: "third-party-embedding", APIKey: "test-key",
+	}}})
+	result, err := service.EmbedText(t.Context(), "custom", "hello")
+	if err != nil || len(result.Vector) != 2 || result.Vector[0] != 1 || result.Vector[1] != 0.5 {
+		t.Fatalf("invalid vector result: %+v, %v", result, err)
+	}
+}
+
 func TestProbeEndpointSupportsEmbeddingModel(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {

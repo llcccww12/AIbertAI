@@ -654,7 +654,7 @@ export function BillingDetailsPage() {
         >
           <p className="text-sm text-muted-foreground">
             系统会自动重试扣费确认，并对带上游响应 ID 的 Responses
-            异常查询真实用量；不会重新执行模型调用，证据不足时仍需人工核查。百智云历史余额以钱包侧记录为准。
+            异常查询真实用量。证据不足时需人工核查。
           </p>
           {!!pending?.differences.length && (
             <div
@@ -924,7 +924,7 @@ function TransactionDialog({
         },
         {
           label: "模式",
-          value: data.mode === "remote" ? "百智云远程计费" : "本地计费",
+          value: data.mode === "remote" ? "历史外部计费" : "本地计费",
         },
         ...(data.category !== "environment"
           ? [{ label: "会话", value: data.session_id || "未关联会话" }]
@@ -1074,12 +1074,9 @@ function TransactionDialog({
             )}
             {data.wallet_records?.map((w) => (
               <div key={w.biz_id} className="rounded-md border p-3 text-xs">
-                <p>百智云业务单：{w.biz_id}</p>
+                <p>历史外部订单：{w.biz_id}</p>
                 <p className="mt-1">
                   状态：{w.status} {w.trace_id && `· 跟踪 ID：${w.trace_id}`}
-                </p>
-                <p className="mt-2 text-muted-foreground">
-                  钱包历史余额需以百智云账单为准。
                 </p>
               </div>
             ))}
@@ -1190,7 +1187,7 @@ function TransactionDialog({
                   提交核查结果
                 </Button>
                 <p className="text-xs text-muted-foreground">
-                  提交只处理账目，不重新执行模型或工具。远程预扣状态未知时需先联系百智云核实。
+                  提交后仅更新账目。
                 </p>
               </form>
             )}

@@ -12,7 +12,7 @@ try {
   page.on("pageerror", (error) => errors.push(error.message))
   let applied = false
   const upload = { id: "ready-kb", status: "ready", files: [{ name: "knowledge.zip", size: 100 }], total_size: 100, chunk_size: 67108864, chunks: [{ index: 0, size: 100, sha256: "sha256:fixture" }], expires_at: "2099-01-01T00:00:00Z" }
-  const knowledge = { publisher_id: "wiki", release_id: "r-1", plan_digest: "knowledge-plan", changes: [{ slug: "manual", name: "百智办公文档", action: "create", documents: 32, folders: 2, images: 119 }] }
+  const knowledge = { publisher_id: "wiki", release_id: "r-1", plan_digest: "knowledge-plan", changes: [{ slug: "manual", name: "AIbertAI文档", action: "create", documents: 32, folders: 2, images: 119 }] }
   await page.route("**/*", async (route) => {
     const request = route.request()
     const p = new URL(request.url()).pathname
@@ -50,7 +50,7 @@ try {
   await page.getByRole("checkbox", { name: /知识库/ }).first().waitFor()
   await page.getByRole("button", { name: "解析并预览", exact: true }).click()
   const preview = page.getByRole("region", { name: "知识库预览" })
-  await preview.getByText("百智办公文档", { exact: true }).waitFor()
+  await preview.getByText("AIbertAI文档", { exact: true }).waitFor()
   assert.match(await preview.innerText(), /文档 32/)
   assert.match(await preview.innerText(), /图片 119/)
   const confirm = page.locator('label[for="import-final"]')

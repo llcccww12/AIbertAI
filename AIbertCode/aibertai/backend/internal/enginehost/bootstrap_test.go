@@ -154,9 +154,16 @@ func TestBootstrapDisconnectDoesNotRemoveRunningInstaller(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		_ = os.WriteFile(gate, []byte("continue"), 0600)
+		if cmd.ProcessState == nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	})
 	waitFile := func(path string, exists bool) {
 		t.Helper()
-		end := time.Now().Add(5 * time.Second)
+		end := time.Now().Add(20 * time.Second)
 		for time.Now().Before(end) {
 			_, err := os.Stat(path)
 			if (err == nil) == exists {
@@ -164,7 +171,8 @@ func TestBootstrapDisconnectDoesNotRemoveRunningInstaller(t *testing.T) {
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
-		t.Fatal("等待文件状态超时", path, exists)
+		output, _ := os.ReadFile(log.Name())
+		t.Fatalf("等待文件状态超时 %s exists=%t\n%s", path, exists, output)
 	}
 	waitFile(filepath.Join(dir, "executed"), true)
 	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {

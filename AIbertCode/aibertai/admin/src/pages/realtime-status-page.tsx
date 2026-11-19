@@ -11,9 +11,10 @@ import {
   TokenCircleIcon,
 } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react"
+import { StatisticsCardHeader } from "@/components/statistics-card-header"
 import { useTranslation } from "react-i18next"
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import { StatisticsTrendCard as TrendCard } from "@/components/statistics-trend-card"
 import { ModelMessageDistributionCard } from "@/components/model-message-distribution-card"
 import { StatisticsPeriodComparison as MetricComparison } from "@/components/statistics-period-comparison"
@@ -139,22 +140,7 @@ function RealtimeMetricCard({
 }) {
   return (
     <Card className="gap-2 bg-muted/40 p-2 shadow-none ring-1 ring-border/70">
-      <CardHeader className="flex min-h-7 flex-row items-center gap-3 px-3 py-0">
-        <HugeiconsIcon
-          className="shrink-0 text-muted-foreground"
-          icon={icon}
-          size={16}
-          strokeWidth={1.75}
-        />
-        <CardTitle className="min-w-0 flex-1 font-mono text-sm font-medium uppercase tracking-wide text-muted-foreground">
-          {label}
-        </CardTitle>
-        {qualifier && (
-          <span className="ms-auto shrink-0 font-mono text-xs text-muted-foreground/70">
-            {qualifier}
-          </span>
-        )}
-      </CardHeader>
+      <StatisticsCardHeader icon={icon} title={label} qualifier={qualifier} />
       <CardContent
         className={cn(
           "min-h-20 flex-row items-center rounded-xl border border-border/60 bg-card p-5",

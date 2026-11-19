@@ -174,7 +174,7 @@ func TestImportTags(t *testing.T) {
 	f := newImportTest(t)
 	existing := resource.ID()
 	f.exec(`INSERT INTO tags(id,name,created_by_user_id) VALUES($1,'work',$2)`, existing, f.actor)
-	f.exec(`INSERT INTO tags(name,created_by_user_id,deleted_at) VALUES('百智办公',$1,now())`, f.actor)
+	f.exec(`INSERT INTO tags(name,created_by_user_id,deleted_at) VALUES('测试办公',$1,now())`, f.actor)
 	apply := func(version int64, tags []string, action string) {
 		t.Helper()
 		data := taggedFixture(t, version, tags)
@@ -189,7 +189,7 @@ func TestImportTags(t *testing.T) {
 		}
 		f.post(data, &preview, http.StatusOK)
 	}
-	apply(16, []string{"百智办公", "WORK", "work"}, "create")
+	apply(16, []string{"测试办公", "WORK", "work"}, "create")
 	current, err := bindings(t.Context(), f.pool, "monkeyai-respub")
 	if err != nil {
 		t.Fatal(err)
@@ -213,7 +213,7 @@ func TestImportTags(t *testing.T) {
 			}
 		}
 	}
-	assertTags([]string{"work", "百智办公"})
+	assertTags([]string{"work", "测试办公"})
 	var count int
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM tags WHERE deleted_at IS NULL`).Scan(&count); err != nil || count != 2 {
 		t.Fatalf("不同资源应复用标签: %d %v", count, err)
@@ -223,7 +223,7 @@ func TestImportTags(t *testing.T) {
 		grants[item.ID] = resource.ID()
 		f.exec(`INSERT INTO resource_access_grants(id,resource_type,resource_id,user_id,access_level,granted_by_user_id) VALUES($1,$2,$3,$4,'read_only',$4)`, grants[item.ID], item.Type, item.ID, f.actor)
 	}
-	apply(17, []string{"work", "百智办公", "WORK"}, "skip")
+	apply(17, []string{"work", "测试办公", "WORK"}, "skip")
 	apply(18, []string{"替换标签"}, "update")
 	assertTags([]string{"替换标签"})
 	apply(19, []string{}, "update")

@@ -14,7 +14,7 @@ import (
 	"testing"
 )
 
-func TestBaizhiyunOIDC(t *testing.T) {
+func TestOIDCDiscoveryAndUserInfo(t *testing.T) {
 	var issuer string
 	var userinfo string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -41,14 +41,12 @@ func TestBaizhiyunOIDC(t *testing.T) {
 	defer upstream.Close()
 	issuer = upstream.URL
 	s := NewService(nil, nil, "https://monkeyai.example")
-	connection := OAuthConnection{Provider: "baizhiyun", IssuerURL: issuer, ClientID: "client", ClientSecret: "secret"}
+	connection := OAuthConnection{Provider: "oidc", IssuerURL: issuer, ClientID: "client", ClientSecret: "secret"}
 	for _, tc := range []struct {
 		provider string
 		scopes   []string
 		want     string
 	}{
-		{"baizhiyun", nil, "auth_certification openid phone user email"},
-		{"baizhiyun", []string{"openid", "user"}, "openid user"},
 		{"oidc", nil, "openid profile email"},
 		{"oidc", []string{"profile"}, "profile"},
 	} {
@@ -74,30 +72,6 @@ func TestBaizhiyunOIDC(t *testing.T) {
 		wantErr  string
 	}{
 		{
-			name:     "baizhiyun",
-			provider: "baizhiyun",
-			body:     `{"code":0,"message":"success","data":{"id":"1001","name":"百智云用户","avatar":"https://example.com/avatar.png","phone_number":"13800000000","is_certified":false,"user_type":"personal"}}`,
-			want:     upstreamProfile{Provider: "baizhiyun", Issuer: issuer, Subject: "1001", Name: "百智云用户", AvatarURL: "https://example.com/avatar.png"},
-		},
-		{
-			name:     "baizhiyun_email",
-			provider: "baizhiyun",
-			body:     `{"code":0,"data":{"id":"1001","name":"百智云用户","email":" User@Example.com "}}`,
-			want:     upstreamProfile{Provider: "baizhiyun", Issuer: issuer, Subject: "1001", Name: "百智云用户", Email: "user@example.com"},
-		},
-		{
-			name:     "baizhiyun_empty_email",
-			provider: "baizhiyun",
-			body:     `{"code":0,"data":{"id":"1001","email":" "}}`,
-			want:     upstreamProfile{Provider: "baizhiyun", Issuer: issuer, Subject: "1001"},
-		},
-		{
-			name:     "baizhiyun_null_email",
-			provider: "baizhiyun",
-			body:     `{"code":0,"data":{"id":"1001","email":null}}`,
-			want:     upstreamProfile{Provider: "baizhiyun", Issuer: issuer, Subject: "1001"},
-		},
-		{
 			name:     "oidc",
 			provider: "oidc",
 			body:     `{"sub":"1002","name":"OIDC 用户","preferred_username":"user","email":"user@example.com","picture":"https://example.com/oidc.png"}`,
@@ -115,30 +89,6 @@ func TestBaizhiyunOIDC(t *testing.T) {
 			provider: "oidc",
 			fields:   OAuthConnection{IDField: "id"},
 			body:     `{"sub":"other"}`,
-			wantErr:  "上游用户缺少 subject",
-		},
-		{
-			name:     "business_error",
-			provider: "baizhiyun",
-			body:     `{"code":1001,"message":"denied","data":{"id":"1001"}}`,
-			wantErr:  "读取百智云用户: code 1001",
-		},
-		{
-			name:     "missing_code",
-			provider: "baizhiyun",
-			body:     `{"data":{"id":"1001"}}`,
-			wantErr:  "百智云用户响应缺少 code",
-		},
-		{
-			name:     "missing_data",
-			provider: "baizhiyun",
-			body:     `{"code":0,"data":null,"id":"1001"}`,
-			wantErr:  "上游用户缺少 subject",
-		},
-		{
-			name:     "missing_id",
-			provider: "baizhiyun",
-			body:     `{"code":0,"data":{"sub":"1001","phone_number":"13800000000"}}`,
 			wantErr:  "上游用户缺少 subject",
 		},
 	} {
@@ -170,93 +120,12 @@ func TestOAuthConnectionAutoRegistrationDefault(t *testing.T) {
 	}
 }
 
-func TestBaizhiyunIdentityRegistration(t *testing.T) {
-	for _, email := range []string{"", "user@example.com"} {
-		t.Run(email, func(t *testing.T) {
-			pool := emailDatabase(t)
-			s := newTestService(pool, nil, "")
-			profile := upstreamProfile{Provider: "baizhiyun", Issuer: "https://identity.example", Subject: "1001", Name: "百智云用户", Email: email}
-			first, err := s.upsertIdentity(t.Context(), profile, false, true)
-			if err != nil {
-				t.Fatal(err)
-			}
-			wantEmail := email
-			if wantEmail == "" {
-				wantEmail = "1001@baizhiyun.oauth.local"
-			}
-			if first.Email != wantEmail {
-				t.Fatalf("注册邮箱错误: got=%q want=%q", first.Email, wantEmail)
-			}
-			again, err := s.upsertIdentity(t.Context(), profile, false, false)
-			if err != nil || first.ID != again.ID || again.Email != wantEmail {
-				t.Fatalf("重复登录未复用身份: %+v %v", again, err)
-			}
-			var provider, subject, savedEmail string
-			if err := pool.QueryRow(t.Context(), `SELECT provider,provider_subject,email FROM user_identities WHERE user_id=$1`, first.ID).Scan(&provider, &subject, &savedEmail); err != nil || provider != "baizhiyun" || subject != "1001" || savedEmail != wantEmail {
-				t.Fatalf("百智云身份未持久化: %s %s %s %v", provider, subject, savedEmail, err)
-			}
-		})
-	}
-}
-
-func TestBaizhiyunIdentityEmail(t *testing.T) {
-	for _, tc := range []struct {
-		name         string
-		initialEmail string
-		ownerStatus  string
-		wantEmail    string
-	}{
-		{name: "backfill", wantEmail: "user@example.com"},
-		{name: "existing_email", initialEmail: "original@example.com", wantEmail: "original@example.com"},
-		{name: "email_conflict", ownerStatus: "active", wantEmail: "1001@baizhiyun.oauth.local"},
-		{name: "disabled_owner", ownerStatus: "disabled", wantEmail: "1001@baizhiyun.oauth.local"},
-		{name: "deleted_owner", ownerStatus: "deleted", wantEmail: "user@example.com"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			pool := emailDatabase(t)
-			s := newTestService(pool, nil, "")
-			profile := upstreamProfile{Provider: "baizhiyun", Issuer: "https://identity.example", Subject: "1001", Name: "百智云用户", Email: tc.initialEmail}
-			first, err := s.upsertIdentity(t.Context(), profile, false, true)
-			if err != nil {
-				t.Fatal(err)
-			}
-			profile.Email = "user@example.com"
-			if tc.ownerStatus != "" {
-				owner, err := s.insertUser(t.Context(), "邮箱所有者", profile.Email, "admin", "")
-				if err != nil {
-					t.Fatal(err)
-				}
-				switch tc.ownerStatus {
-				case "disabled":
-					_, err = s.updateUser(t.Context(), owner.ID, owner.Name, owner.Role, "disabled", "")
-				case "deleted":
-					_, err = pool.Exec(t.Context(), `UPDATE users SET deleted_at=now() WHERE id=$1`, owner.ID)
-				}
-				if err != nil {
-					t.Fatal(err)
-				}
-			}
-			for range 2 {
-				again, err := s.upsertIdentity(t.Context(), profile, false, false)
-				if err != nil || again.ID != first.ID || again.Email != tc.wantEmail || again.Role != "user" {
-					t.Fatalf("邮箱补齐改变了用户身份或邮箱错误: user=%+v err=%v", again, err)
-				}
-				var savedEmail string
-				if err := pool.QueryRow(t.Context(), `SELECT email FROM user_identities WHERE user_id=$1`, first.ID).Scan(&savedEmail); err != nil || savedEmail != "user@example.com" {
-					t.Fatalf("上游身份邮箱未保留: email=%q err=%v", savedEmail, err)
-				}
-				profile.Email = ""
-			}
-		})
-	}
-}
-
-func TestBaizhiyunEmailBinding(t *testing.T) {
+func TestOIDCEmailBinding(t *testing.T) {
 	pool := emailDatabase(t)
 	s := newTestService(pool, nil, "")
 	for _, role := range []string{"user", "admin"} {
 		t.Run(role, func(t *testing.T) {
-			profile := upstreamProfile{Provider: "baizhiyun", Issuer: "https://identity.example", Subject: role, Name: "百智云用户", Email: role + "@example.com"}
+			profile := upstreamProfile{Provider: "oidc", Issuer: "https://identity.example", Subject: role, Name: "OIDC 测试用户", Email: role + "@example.com"}
 			owner, err := s.insertUser(t.Context(), "已有用户", strings.ToUpper(profile.Email), role, "")
 			if err != nil {
 				t.Fatal(err)

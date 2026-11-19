@@ -1142,7 +1142,7 @@ DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION reject_test_tag();`)
 
 	t.Run("模型配置接口", func(t *testing.T) { testModelConfiguration(t, pool, handler, cookie) })
 
-	t.Run("百智云扣费限制系统资源", func(t *testing.T) {
+	t.Run("直接计费下的系统资源与个人专家权限", func(t *testing.T) {
 		must := func(method, path string, body any, token, revision string) resource.Object {
 			t.Helper()
 			code, out, _ := call(method, path, body, token, revision)
@@ -1151,7 +1151,7 @@ DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION reject_test_tag();`)
 			}
 			return out
 		}
-		expert := must("POST", "/api/admin/v1/experts", resource.Object{"name": "百智云权限测试专家", "description": "访问控制测试", "prompt": "测试", "rule_ids": []string{rule.String("id")}, "skill_ids": []string{skill.String("id")}, "connectors": []any{}, "grants": grantA}, "", "")
+		expert := must("POST", "/api/admin/v1/experts", resource.Object{"name": "计费权限测试专家", "description": "访问控制测试", "prompt": "测试", "rule_ids": []string{rule.String("id")}, "skill_ids": []string{skill.String("id")}, "connectors": []any{}, "grants": grantA}, "", "")
 		exec := func(query string, args ...any) {
 			t.Helper()
 			if _, err := pool.Exec(ctx, query, args...); err != nil {
@@ -1164,18 +1164,18 @@ DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION reject_test_tag();`)
 		}
 		t.Cleanup(func() {
 			exec(`UPDATE settings SET value=$1 WHERE key='billing'`, originalPolicy)
-			exec(`DELETE FROM user_identities WHERE user_id=$1`, users[0])
 			exec(`UPDATE users SET role='user' WHERE id=$1`, users[0])
 		})
-		input := resource.Object{"model_id": "baizhiyun-access-test", "display_name": "百智云访问测试", "protocol": "openai_chat_completions", "base_url": upstream.URL, "api_key": "test", "advanced_config": resource.Object{"context_window_tokens": 1000, "max_output_tokens": 100}, "credit_multiplier": 1, "authorization": resource.Object{"all_users": true}}
+		exec(`UPDATE settings SET value=value || '{"charging_mode":"local","enabled":true}' WHERE key='billing'`)
+		input := resource.Object{"model_id": "local-billing-access-test", "display_name": "本地计费访问测试", "protocol": "openai_chat_completions", "base_url": upstream.URL, "api_key": "test", "advanced_config": resource.Object{"context_window_tokens": 1000, "max_output_tokens": 100}, "credit_multiplier": 1, "authorization": resource.Object{"all_users": true}}
 		systemModel := must("POST", "/api/admin/v1/models", input, "", "")
 		t.Cleanup(func() {
 			exec(`DELETE FROM resource_access_grants WHERE resource_type='model' AND resource_id=$1`, systemModel.String("id"))
 		})
 		personalModel := must("POST", "/api/v1/models", input, "a", "")
-		key := must("POST", "/api/v1/api-keys", resource.Object{"name": "百智云访问测试", "scopes": []string{"model:invoke"}}, "a", "").String("api_key")
-		personalRule := must("POST", "/api/v1/rules", resource.Object{"name": "远程模式个人规则", "content": "个人内容"}, "a", "")
-		personalExpert := must("POST", "/api/v1/experts", resource.Object{"name": "远程模式个人专家", "prompt": "测试", "rule_ids": []string{personalRule.String("id")}}, "a", "")
+
+		personalRule := must("POST", "/api/v1/rules", resource.Object{"name": "本地计费个人规则", "content": "个人内容"}, "a", "")
+		personalExpert := must("POST", "/api/v1/experts", resource.Object{"name": "本地计费个人专家", "prompt": "测试", "rule_ids": []string{personalRule.String("id")}}, "a", "")
 		personalExpertPath := "/api/v1/experts/" + personalExpert.String("id")
 		defer func() {
 			current := must("GET", personalExpertPath, nil, "a", "")
@@ -1196,47 +1196,31 @@ DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION reject_test_tag();`)
 		}
 		must("GET", adminExpertPath, nil, "", "")
 		exec(`UPDATE users SET role='admin' WHERE id=$1`, users[0])
-		exec(`INSERT INTO user_identities(user_id,provider,issuer,provider_subject) VALUES($1,'oidc','https://identity.example','1001')`, users[0])
-		exec(`UPDATE settings SET value=value || '{"charging_mode":"remote","enabled":false}' WHERE key='billing'`)
-		for _, kind := range []string{"models", "rules", "skills", "experts", "connectors"} {
-			out := must("GET", "/api/v1/"+kind, nil, "a", "")
-			for _, raw := range out[kind].([]any) {
-				o := resource.Object(raw.(map[string]any))
-				if o.String("ownership_type") == "system" {
-					t.Fatalf("普通 OIDC 用户收到系统 %s: %v", kind, o)
-				}
-			}
-		}
-		for _, path := range []string{
-			"/api/v1/experts/" + expert.String("id") + "/manifest",
-			"/api/v1/skills/" + skill.String("id") + "/package",
-			"/api/v1/experts/" + expert.String("id") + "/skills/" + skill.String("id") + "/package",
-			"/api/v1/connectors/" + conn.String("id") + "/tools",
-		} {
-			if code, _, _ := call("GET", path, nil, "a", ""); code != 404 {
-				t.Fatalf("系统资源未拒绝访问: %s %d", path, code)
-			}
-		}
-		if code, _, _ := call("POST", "/mcp/connectors/"+conn.String("id"), resource.Object{"jsonrpc": "2.0", "id": "blocked", "method": "initialize"}, invokeKeys["a"], ""); code != 404 {
-			t.Fatalf("既有 MCP 密钥未受限制: %d", code)
-		}
-		if code, _, _ := call("POST", "/v1/chat/completions", resource.Object{"model": systemModel.String("id"), "messages": []any{}}, key, ""); code != 401 {
-			t.Fatalf("既有模型密钥未受限制: %d", code)
-		}
+
 		out := must("POST", "/api/v1/resources/resolve", resource.Object{"rule_ids": []string{personalRule.String("id")}}, "a", "")
-		if len(out["rules"].([]any)) != 1 || out["rules"].([]any)[0].(map[string]any)["id"] != personalRule.String("id") {
-			t.Fatalf("个人规则不可用或混入强制系统规则: %v", out)
+		foundRule := false
+		for _, raw := range out["rules"].([]any) {
+			foundRule = foundRule || raw.(map[string]any)["id"] == personalRule.String("id")
+		}
+		if !foundRule {
+			t.Fatalf("个人规则不可用: %v", out)
 		}
 		if out := must("GET", personalExpertPath+"/manifest", nil, "a", ""); !out.Bool("available") {
-			t.Fatalf("远程模式个人专家不可用: %v", out)
+			t.Fatalf("本地计费个人专家不可用: %v", out)
 		}
 		must("POST", "/api/v1/resources/shares", resource.ShareInput{Resources: []resource.ShareResource{{Type: "expert", ID: personalExpert.String("id")}, {Type: "model", ID: personalModel.String("id")}}, UserIDs: []string{users[1]}}, "a", "")
-		if out := must("GET", personalExpertPath+"/manifest", nil, "b", ""); out.Bool("available") || len(out["rules"].([]any)) != 0 {
-			t.Fatalf("远程模式共享专家泄露个人规则: %v", out)
+		out = must("GET", personalExpertPath+"/manifest", nil, "b", "")
+		if out.Bool("available") {
+			t.Fatalf("依赖未共享规则的专家不应可用: %v", out)
+		}
+		for _, raw := range out["rules"].([]any) {
+			if raw.(map[string]any)["id"] == personalRule.String("id") {
+				t.Fatalf("共享专家泄露个人规则: %v", out)
+			}
 		}
 		must("GET", "/api/v1/models/"+personalModel.String("id"), nil, "a", "")
 		must("GET", "/api/admin/v1/billing/settings", nil, "", "")
-		exec(`INSERT INTO user_identities(user_id,provider,issuer,provider_subject) VALUES($1,'baizhiyun','https://identity.example','1001')`, users[0])
+
 		must("GET", "/api/v1/experts/"+expert.String("id")+"/manifest", nil, "a", "")
 		must("GET", "/api/v1/experts/"+expert.String("id")+"/skills/"+skill.String("id")+"/package?sha256="+skill.String("package_sha256"), nil, "a", "")
 		must("GET", "/api/v1/connectors/"+conn.String("id")+"/tools", nil, "a", "")
@@ -1245,14 +1229,8 @@ DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION reject_test_tag();`)
 			found = found || raw.(map[string]any)["id"] == systemModel.String("id")
 		}
 		if !found {
-			t.Fatal("百智云用户缺少系统模型")
+			t.Fatal("本地计费用户缺少已授权的系统模型")
 		}
-		exec(`UPDATE user_identities SET deleted_at=now() WHERE user_id=$1 AND provider='baizhiyun'`, users[0])
-		if code, _, _ := call("GET", "/api/v1/experts/"+expert.String("id")+"/manifest", nil, "a", ""); code != 404 {
-			t.Fatalf("已失效百智云身份继续访问: %d", code)
-		}
-		exec(`UPDATE settings SET value=value || '{"charging_mode":"local"}' WHERE key='billing'`)
-		must("GET", "/api/v1/experts/"+expert.String("id")+"/manifest", nil, "a", "")
 	})
 
 	t.Run("专家不依赖模型", func(t *testing.T) {

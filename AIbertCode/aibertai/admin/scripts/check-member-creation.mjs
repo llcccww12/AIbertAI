@@ -119,7 +119,7 @@ try {
           if (endpoint.endsWith("/session"))
             return json({ authenticated: true, user: users[0] })
           if (endpoint.endsWith("/branding"))
-            return json({ product_name: "百智办公" })
+            return json({ product_name: "AIbertAI" })
           if (endpoint.endsWith("/license/status"))
             return json({ state: "valid" })
           if (endpoint.endsWith("/users")) return json({ users })

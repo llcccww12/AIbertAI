@@ -52,7 +52,7 @@ func TestSearchReusesFailedEmbeddingAcrossKnowledgeBases(t *testing.T) {
 		{"id": resource.ID(), "embedding_dimension": 3},
 	}
 	items[1]["embedding_model_id"] = items[0]["embedding_model_id"]
-	result, err := s.searchAccessible(t.Context(), items, SearchInput{Query: "test"})
+	result, err := s.searchAccessible(t.Context(), "", items, SearchInput{Query: "test"})
 	if err != nil || !result.Degraded || result.RetrievalMode != SearchModeLexical || calls != 1 {
 		t.Fatalf("calls=%d result=%+v err=%v", calls, result, err)
 	}

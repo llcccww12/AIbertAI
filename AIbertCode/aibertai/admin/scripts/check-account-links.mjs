@@ -122,7 +122,7 @@ try {
               },
             }
           else if (url.pathname.endsWith("/branding"))
-            body = { product_name: "百智办公" }
+            body = { product_name: "AIbertAI" }
           else if (url.pathname === `${memberAPI}/overview`)
             body = {
               total_members: 2,

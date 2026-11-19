@@ -93,7 +93,7 @@ func (s *Service) RegisterMCP(router chi.Router, keys MCPKeyAuthenticator) {
 			writeMCPReply(r.Context(), w, http.StatusOK, request.ID, resource.Object{
 				"protocolVersion": version,
 				"capabilities":    resource.Object{"tools": resource.Object{}},
-				"serverInfo":      resource.Object{"name": "baizhi-office-kb", "version": "1"},
+				"serverInfo":      resource.Object{"name": "aibertai-kb", "version": "1"},
 			}, nil)
 		case "ping":
 			writeMCPReply(r.Context(), w, http.StatusOK, request.ID, resource.Object{}, nil)

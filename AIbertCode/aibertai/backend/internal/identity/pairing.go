@@ -26,10 +26,6 @@ const (
 	PairingTTL       = 60 * time.Second
 	PairingMaxTTL    = 180 * time.Second
 	PairingMaxFailed = 5
-
-	// mobilePairingURL 是官网落地页的 App Link 地址。Universal Link 绑定的是这个
-	// 域名，不能用 s.publicURL：私有部署的服务端域名没有关联文件，手机无法通过它唤起 App。
-	mobilePairingURL = "https://work.baizhi.cloud/app-link/scan/"
 )
 
 var mobilePairingScopes = []string{
@@ -63,7 +59,7 @@ type pairingJoined struct {
 
 func (s *Service) pairingPayload(id, secret string) string {
 	query := url.Values{"v": {"1"}, "server": {s.publicURL}, "id": {id}, "secret": {secret}}
-	return mobilePairingURL + "?" + query.Encode()
+	return strings.TrimRight(s.publicURL, "/") + "/app-link/scan/?" + query.Encode()
 }
 
 func (s *Service) pairingAvailable(w http.ResponseWriter, r *http.Request) bool {

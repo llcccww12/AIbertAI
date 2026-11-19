@@ -1,11 +1,11 @@
+import { StatisticsCardHeader } from "@/components/statistics-card-header"
 import { useRef } from "react"
 import { useNavigate } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import { format } from "date-fns"
 import { Activity01Icon } from "@hugeicons/core-free-icons"
-import { HugeiconsIcon } from "@hugeicons/react"
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import {
   Tooltip,
   TooltipContent,
@@ -67,20 +67,7 @@ export function MemberActivityHeatmap({
       role="region"
       aria-label={title}
     >
-      <CardHeader className="flex min-h-7 flex-row items-center gap-3 px-3 py-0">
-        <HugeiconsIcon
-          icon={Activity01Icon}
-          className="shrink-0 text-muted-foreground"
-          size={16}
-          strokeWidth={1.75}
-        />
-        <CardTitle className="min-w-0 flex-1 font-mono text-sm font-medium uppercase tracking-wide text-muted-foreground">
-          {title}
-        </CardTitle>
-        <span className="ms-auto shrink-0 font-mono text-xs text-muted-foreground/70">
-          {t(`${key}.activity.pastYear`)}
-        </span>
-      </CardHeader>
+      <StatisticsCardHeader icon={Activity01Icon} title={title} qualifier={t(`${key}.activity.pastYear`)} />
       <CardContent className="min-w-0 rounded-xl border border-border/60 bg-card p-4">
         <div
           className="overflow-x-auto pb-2"

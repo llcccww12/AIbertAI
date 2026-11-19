@@ -24,6 +24,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { useAppToast } from "@/components/animated-toast-provider"
+import { EmbeddingModelDialog } from "@/components/embedding-model-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -102,10 +103,6 @@ const OAUTH_PROVIDERS = [
     labelKey: "pages.otherSettings.oauth.providers.microsoft",
   },
   { value: "gitlab", labelKey: "pages.otherSettings.oauth.providers.gitlab" },
-  {
-    value: "baizhiyun",
-    labelKey: "pages.otherSettings.oauth.providers.baizhiyun",
-  },
   { value: "oidc", labelKey: "pages.otherSettings.oauth.providers.oidc" },
 ] as const
 
@@ -132,10 +129,12 @@ const ENCRYPTION_OPTIONS = [
   },
 ] as const
 
-const KNOWLEDGE_MODEL_OPTIONS = {
-  embeddingModel: [{ value: "bge-m3", label: "bge-m3" }],
-  rerankerModel: [{ value: "bge-reranker-v2-m3", label: "bge-reranker-v2-m3" }],
+const KNOWLEDGE_ENDPOINTS = {
+  knowledge_reranker: { title: "rerankerModel", copy: "reranker", example: "BAAI/bge-reranker-v2-m3" },
+  document_vision: { title: "documentVision.title", copy: "documentVision", example: "qwen3-vl-plus" },
 } as const
+type KnowledgeEndpointKind = keyof typeof KNOWLEDGE_ENDPOINTS
+const knowledgeCopy = "pages.otherSettings.knowledgeBase"
 
 const KNOWLEDGE_MODEL_PROTOCOLS = [
   { value: "openai-chat-completions", label: "OpenAI Chat Completions" },
@@ -227,16 +226,9 @@ type EmailSettings = {
   encryption: Encryption
 }
 
-type KnowledgeModelConfig = {
-  model: string
-  modelId: string
-  baseUrl: string
-  apiKey: string
-}
-
-type DocumentParsingEngineConfig = {
-  provider: "baizhi"
-  apiKey: string
+type KnowledgeEndpointConfig = {
+  base_url: string
+  model_id: string
 }
 
 type ContentEnhancementModelConfig = {
@@ -247,15 +239,6 @@ type ContentEnhancementModelConfig = {
   protocol: KnowledgeModelProtocol
   apiKey: string
 }
-
-type KnowledgeBaseSettings = {
-  embeddingModel: KnowledgeModelConfig | null
-  rerankerModel: KnowledgeModelConfig | null
-  documentParsingEngine: DocumentParsingEngineConfig | null
-  contentEnhancementModel: ContentEnhancementModelConfig | null
-}
-
-type KnowledgeModelKind = "embeddingModel" | "rerankerModel"
 
 const INITIAL_OAUTH_CONNECTIONS: OAuthConnection[] = []
 
@@ -273,13 +256,6 @@ const INITIAL_EMAIL_SETTINGS: EmailSettings = {
   smtpUsername: "no-reply@example.com",
   smtpPassword: "",
   encryption: "starttls",
-}
-
-const INITIAL_KNOWLEDGE_BASE_SETTINGS: KnowledgeBaseSettings = {
-  embeddingModel: null,
-  rerankerModel: null,
-  documentParsingEngine: null,
-  contentEnhancementModel: null,
 }
 
 export function OtherSettingsPage() {
@@ -332,13 +308,11 @@ export function OtherSettingsPage() {
   const [emailSaving, setEmailSaving] = useState(false)
   const [tagSaving, setTagSaving] = useState(false)
   const [tagDeleting, setTagDeleting] = useState(false)
-  const [knowledgeBaseSettings, setKnowledgeBaseSettings] = useState(
-    INITIAL_KNOWLEDGE_BASE_SETTINGS
-  )
-  const [knowledgeModelDialog, setKnowledgeModelDialog] =
-    useState<KnowledgeModelKind | null>(null)
-  const [documentParsingDialogOpen, setDocumentParsingDialogOpen] =
-    useState(false)
+  const [embeddingDefault, setEmbeddingDefault] = useState("")
+  const [knowledgeEndpoints, setKnowledgeEndpoints] = useState<Partial<Record<KnowledgeEndpointKind, KnowledgeEndpointConfig>>>({})
+  const [knowledgeEndpointDialog, setKnowledgeEndpointDialog] = useState<KnowledgeEndpointKind | null>(null)
+  const [knowledgeEndpointSaving, setKnowledgeEndpointSaving] = useState(false)
+  const [contentEnhancementModel, setContentEnhancementModel] = useState<ContentEnhancementModelConfig | null>(null)
   const [contentEnhancementDialogOpen, setContentEnhancementDialogOpen] =
     useState(false)
   const [tagDialogOpen, setTagDialogOpen] = useState(false)
@@ -426,6 +400,15 @@ export function OtherSettingsPage() {
             setEmailSettings(applyEmail)
             setSavedEmailSettings(applyEmail)
             setEmailConfigured(true)
+          }
+          if (setting.key === "knowledge_embedding" && typeof setting.value.model_id === "string") {
+            setEmbeddingDefault(setting.value.model_id)
+          }
+          if (setting.key === "document_vision" || setting.key === "knowledge_reranker") {
+            const { base_url, model_id } = setting.value
+            if (typeof base_url === "string" && typeof model_id === "string") {
+              setKnowledgeEndpoints((current) => ({ ...current, [setting.key]: { base_url, model_id } }))
+            }
           }
         }
       })
@@ -557,8 +540,7 @@ export function OtherSettingsPage() {
       !name ||
       !clientId ||
       (!clientSecret && !editingOauthConnection) ||
-      ((oauthProvider === "oidc" || oauthProvider === "baizhiyun") &&
-        !issuerUrl) ||
+      (oauthProvider === "oidc" && !issuerUrl) ||
       (oidcFields && Object.values(oidcFields).some((field) => !field))
     ) {
       return
@@ -727,62 +709,29 @@ export function OtherSettingsPage() {
     }
   }
 
-  const handleKnowledgeModelSubmit = (
-    event: FormEvent<HTMLFormElement>,
-    kind: KnowledgeModelKind
-  ) => {
+  async function handleKnowledgeEndpointSubmit(event: FormEvent<HTMLFormElement>, kind: KnowledgeEndpointKind) {
     event.preventDefault()
+    if (knowledgeEndpointSaving) return
 
-    const formData = new FormData(event.currentTarget)
-    const model = String(formData.get("model") ?? "").trim()
-    const modelId = String(formData.get("modelId") ?? "").trim()
-    const baseUrl = String(formData.get("baseUrl") ?? "").trim()
-    const apiKey = String(formData.get("apiKey") ?? "").trim()
-    const currentConfig = knowledgeBaseSettings[kind]
-    const modelSupported = KNOWLEDGE_MODEL_OPTIONS[kind].some(
-      (option) => option.value === model
-    )
-
-    if (
-      !modelSupported ||
-      !modelId ||
-      !baseUrl ||
-      (!apiKey && !currentConfig)
-    ) {
-      return
+    const form = new FormData(event.currentTarget)
+    setKnowledgeEndpointSaving(true)
+    try {
+      const saved = await saveSetting(kind, {
+        base_url: String(form.get("baseUrl") ?? "").trim(),
+        model_id: String(form.get("modelId") ?? "").trim(),
+        api_key: String(form.get("apiKey") ?? "").trim(),
+      })
+      if (saved) {
+        setKnowledgeEndpoints((current) => ({
+          ...current,
+          [kind]: { base_url: String(saved.value.base_url), model_id: String(saved.value.model_id) },
+        }))
+        setKnowledgeEndpointDialog(null)
+        showToast({ status: "success", title: t(`${knowledgeCopy}.modelSaved`) })
+      }
+    } finally {
+      setKnowledgeEndpointSaving(false)
     }
-
-    setKnowledgeBaseSettings((settings) => ({
-      ...settings,
-      [kind]: {
-        model,
-        modelId,
-        baseUrl,
-        apiKey: apiKey || currentConfig?.apiKey || "",
-      },
-    }))
-    setKnowledgeModelDialog(null)
-  }
-
-  const handleDocumentParsingSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-
-    const formData = new FormData(event.currentTarget)
-    const apiKey = String(formData.get("apiKey") ?? "").trim()
-    const currentConfig = knowledgeBaseSettings.documentParsingEngine
-
-    if (!apiKey && !currentConfig) {
-      return
-    }
-
-    setKnowledgeBaseSettings((settings) => ({
-      ...settings,
-      documentParsingEngine: {
-        provider: "baizhi",
-        apiKey: apiKey || currentConfig?.apiKey || "",
-      },
-    }))
-    setDocumentParsingDialogOpen(false)
   }
 
   const handleContentEnhancementSubmit = (
@@ -797,7 +746,7 @@ export function OtherSettingsPage() {
     const baseUrl = String(formData.get("baseUrl") ?? "").trim()
     const protocol = String(formData.get("protocol") ?? "").trim()
     const apiKey = String(formData.get("apiKey") ?? "").trim()
-    const currentConfig = knowledgeBaseSettings.contentEnhancementModel
+    const currentConfig = contentEnhancementModel
     const protocolSupported = KNOWLEDGE_MODEL_PROTOCOLS.some(
       (option) => option.value === protocol
     )
@@ -814,17 +763,14 @@ export function OtherSettingsPage() {
       return
     }
 
-    setKnowledgeBaseSettings((settings) => ({
-      ...settings,
-      contentEnhancementModel: {
-        modelId,
-        displayName,
-        contextSizeK,
-        baseUrl,
-        protocol: protocol as KnowledgeModelProtocol,
-        apiKey: apiKey || currentConfig?.apiKey || "",
-      },
-    }))
+    setContentEnhancementModel({
+      modelId,
+      displayName,
+      contextSizeK,
+      baseUrl,
+      protocol: protocol as KnowledgeModelProtocol,
+      apiKey: apiKey || currentConfig?.apiKey || "",
+    })
     setContentEnhancementDialogOpen(false)
   }
 
@@ -1201,304 +1147,84 @@ export function OtherSettingsPage() {
         </CardHeader>
         <CardContent>
           <ItemGroup>
-            {(["embeddingModel", "rerankerModel"] as KnowledgeModelKind[]).map(
-              (kind) => {
-                const config = knowledgeBaseSettings[kind]
-                const modelOptions = KNOWLEDGE_MODEL_OPTIONS[kind]
-                const modelName = t(`pages.otherSettings.knowledgeBase.${kind}`)
-
-                return (
-                  <Item key={kind} variant="outline">
-                    <ItemContent>
-                      <ItemTitle>{modelName}</ItemTitle>
-                      <ItemDescription>
-                        {config ? (
-                          <>
-                            <bdi>{config.model}</bdi>
-                            <span aria-hidden="true"> · </span>
-                            <bdi>{config.modelId}</bdi>
-                            <span aria-hidden="true"> · </span>
-                            <bdi>{config.baseUrl}</bdi>
-                          </>
-                        ) : (
-                          t("pages.otherSettings.knowledgeBase.notConfigured")
-                        )}
-                      </ItemDescription>
-                    </ItemContent>
-                    <ItemActions>
-                      <Dialog
-                        open={knowledgeModelDialog === kind}
-                        onOpenChange={(open) =>
-                          setKnowledgeModelDialog(open ? kind : null)
-                        }
-                      >
-                        <DialogTrigger render={<Button variant="secondary" />}>
-                          {t(
-                            config
-                              ? "pages.otherSettings.knowledgeBase.edit"
-                              : "pages.otherSettings.knowledgeBase.configure"
-                          )}
-                        </DialogTrigger>
-                        <DialogContent
-                          className="sm:max-w-lg"
-                          closeLabel={t("common.close")}
-                        >
-                          <form
-                            className="flex flex-col gap-6"
-                            onSubmit={(event) =>
-                              handleKnowledgeModelSubmit(event, kind)
-                            }
-                          >
-                            <DialogHeader>
-                              <DialogTitle>
-                                {t(
-                                  "pages.otherSettings.knowledgeBase.dialogTitle",
-                                  { model: modelName }
-                                )}
-                              </DialogTitle>
-                              <DialogDescription>
-                                {t(
-                                  "pages.otherSettings.knowledgeBase.dialogDescription"
-                                )}
-                              </DialogDescription>
-                            </DialogHeader>
-                            <FieldGroup className="gap-4">
-                              <Field>
-                                <FieldLabel htmlFor={`${kind}-model`}>
-                                  {t("pages.otherSettings.knowledgeBase.model")}
-                                </FieldLabel>
-                                <Select
-                                  name="model"
-                                  defaultValue={
-                                    config?.model ?? modelOptions[0].value
-                                  }
-                                  items={modelOptions}
-                                >
-                                  <SelectTrigger
-                                    id={`${kind}-model`}
-                                    className="w-full"
-                                  >
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent alignItemWithTrigger={false}>
-                                    <SelectGroup>
-                                      {modelOptions.map((option) => (
-                                        <SelectItem
-                                          key={option.value}
-                                          value={option.value}
-                                        >
-                                          {option.label}
-                                        </SelectItem>
-                                      ))}
-                                    </SelectGroup>
-                                  </SelectContent>
-                                </Select>
-                                <FieldDescription>
-                                  {t(
-                                    kind === "embeddingModel"
-                                      ? "pages.otherSettings.knowledgeBase.embeddingSupportDescription"
-                                      : "pages.otherSettings.knowledgeBase.rerankerSupportDescription"
-                                  )}
-                                </FieldDescription>
-                              </Field>
-                              <Field>
-                                <FieldLabel htmlFor={`${kind}-model-id`}>
-                                  {t(
-                                    "pages.otherSettings.knowledgeBase.modelId"
-                                  )}
-                                </FieldLabel>
-                                <Input
-                                  id={`${kind}-model-id`}
-                                  name="modelId"
-                                  defaultValue={
-                                    config?.modelId ?? modelOptions[0].value
-                                  }
-                                  placeholder={t(
-                                    "pages.otherSettings.knowledgeBase.modelIdPlaceholder"
-                                  )}
-                                  required
-                                />
-                                <FieldDescription>
-                                  {t(
-                                    "pages.otherSettings.knowledgeBase.modelIdDescription"
-                                  )}
-                                </FieldDescription>
-                              </Field>
-                              <Field>
-                                <FieldLabel htmlFor={`${kind}-base-url`}>
-                                  {t(
-                                    "pages.otherSettings.knowledgeBase.baseUrl"
-                                  )}
-                                </FieldLabel>
-                                <Input
-                                  id={`${kind}-base-url`}
-                                  name="baseUrl"
-                                  type="url"
-                                  defaultValue={config?.baseUrl}
-                                  placeholder={t(
-                                    "pages.otherSettings.knowledgeBase.baseUrlPlaceholder"
-                                  )}
-                                  required
-                                />
-                              </Field>
-                              <Field>
-                                <FieldLabel htmlFor={`${kind}-api-key`}>
-                                  {t(
-                                    "pages.otherSettings.knowledgeBase.apiKey"
-                                  )}
-                                </FieldLabel>
-                                <Input
-                                  id={`${kind}-api-key`}
-                                  name="apiKey"
-                                  type="password"
-                                  autoComplete="new-password"
-                                  placeholder={t(
-                                    config
-                                      ? "pages.otherSettings.knowledgeBase.apiKeyUpdatePlaceholder"
-                                      : "pages.otherSettings.knowledgeBase.apiKeyPlaceholder"
-                                  )}
-                                  required={!config}
-                                />
-                                <FieldDescription>
-                                  {t(
-                                    config
-                                      ? "pages.otherSettings.knowledgeBase.apiKeyUpdateDescription"
-                                      : "pages.otherSettings.knowledgeBase.apiKeyDescription"
-                                  )}
-                                </FieldDescription>
-                              </Field>
-                            </FieldGroup>
-                            <DialogFooter>
-                              <DialogClose
-                                render={
-                                  <Button type="button" variant="outline" />
-                                }
-                              >
-                                {t("pages.otherSettings.knowledgeBase.cancel")}
-                              </DialogClose>
-                              <Button type="submit">
-                                {t("pages.otherSettings.knowledgeBase.save")}
-                              </Button>
-                            </DialogFooter>
-                          </form>
-                        </DialogContent>
-                      </Dialog>
-                    </ItemActions>
-                  </Item>
-                )
-              }
-            )}
             <Item variant="outline">
               <ItemContent>
-                <ItemTitle>
-                  {t(
-                    "pages.otherSettings.knowledgeBase.documentParsingEngine.title"
-                  )}
-                  {knowledgeBaseSettings.documentParsingEngine && (
-                    <Badge variant="outline">
-                      {t(
-                        "pages.otherSettings.knowledgeBase.documentParsingEngine.provider"
-                      )}
-                    </Badge>
-                  )}
-                </ItemTitle>
+                <ItemTitle>{t(`${knowledgeCopy}.embeddingModel`)}</ItemTitle>
                 <ItemDescription>
-                  {t(
-                    knowledgeBaseSettings.documentParsingEngine
-                      ? "pages.otherSettings.knowledgeBase.documentParsingEngine.configuredDescription"
-                      : "pages.otherSettings.knowledgeBase.documentParsingEngine.defaultDescription"
-                  )}
+                  {t(`${knowledgeCopy}.${embeddingDefault ? "embeddingDefaultConfigured" : "embeddingAutomatic"}`)}
                 </ItemDescription>
               </ItemContent>
               <ItemActions>
-                <Dialog
-                  open={documentParsingDialogOpen}
-                  onOpenChange={setDocumentParsingDialogOpen}
-                >
-                  <DialogTrigger render={<Button variant="secondary" />}>
-                    {t(
-                      knowledgeBaseSettings.documentParsingEngine
-                        ? "pages.otherSettings.knowledgeBase.edit"
-                        : "pages.otherSettings.knowledgeBase.configure"
-                    )}
-                  </DialogTrigger>
-                  <DialogContent
-                    className="sm:max-w-lg"
-                    closeLabel={t("common.close")}
-                  >
-                    <form
-                      className="flex flex-col gap-6"
-                      onSubmit={handleDocumentParsingSubmit}
-                    >
-                      <DialogHeader>
-                        <DialogTitle>
-                          {t(
-                            "pages.otherSettings.knowledgeBase.documentParsingEngine.dialogTitle"
-                          )}
-                        </DialogTitle>
-                        <DialogDescription>
-                          {t(
-                            "pages.otherSettings.knowledgeBase.documentParsingEngine.dialogDescription"
-                          )}
-                        </DialogDescription>
-                      </DialogHeader>
-                      <FieldGroup className="gap-4">
-                        <Field>
-                          <FieldLabel>
-                            {t(
-                              "pages.otherSettings.knowledgeBase.documentParsingEngine.providerLabel"
-                            )}
-                          </FieldLabel>
-                          <FieldDescription>
-                            {t(
-                              "pages.otherSettings.knowledgeBase.documentParsingEngine.providerDescription"
-                            )}
-                          </FieldDescription>
-                        </Field>
-                        <Field>
-                          <FieldLabel htmlFor="document-parsing-api-key">
-                            {t(
-                              "pages.otherSettings.knowledgeBase.documentParsingEngine.apiKey"
-                            )}
-                          </FieldLabel>
-                          <Input
-                            id="document-parsing-api-key"
-                            name="apiKey"
-                            type="password"
-                            autoComplete="new-password"
-                            placeholder={t(
-                              knowledgeBaseSettings.documentParsingEngine
-                                ? "pages.otherSettings.knowledgeBase.documentParsingEngine.apiKeyUpdatePlaceholder"
-                                : "pages.otherSettings.knowledgeBase.documentParsingEngine.apiKeyPlaceholder"
-                            )}
-                            required={
-                              !knowledgeBaseSettings.documentParsingEngine
-                            }
-                          />
-                          <FieldDescription>
-                            {t(
-                              knowledgeBaseSettings.documentParsingEngine
-                                ? "pages.otherSettings.knowledgeBase.documentParsingEngine.apiKeyUpdateDescription"
-                                : "pages.otherSettings.knowledgeBase.documentParsingEngine.apiKeyDescription"
-                            )}
-                          </FieldDescription>
-                        </Field>
-                      </FieldGroup>
-                      <DialogFooter>
-                        <DialogClose
-                          render={<Button type="button" variant="outline" />}
-                        >
-                          {t("pages.otherSettings.knowledgeBase.cancel")}
-                        </DialogClose>
-                        <Button type="submit">
-                          {t("pages.otherSettings.knowledgeBase.save")}
-                        </Button>
-                      </DialogFooter>
-                    </form>
-                  </DialogContent>
-                </Dialog>
+                <EmbeddingModelDialog
+                  currentModelID={embeddingDefault}
+                  scope="default"
+                  onSave={async (id) => {
+                    const saved = await saveSetting("knowledge_embedding", { model_id: id })
+                    if (saved) setEmbeddingDefault(String(saved.value.model_id))
+                    return Boolean(saved)
+                  }}
+                />
               </ItemActions>
             </Item>
+            {(["knowledge_reranker", "document_vision"] as const).map((kind) => {
+              const endpoint = KNOWLEDGE_ENDPOINTS[kind]
+              const config = knowledgeEndpoints[kind]
+              const modelName = t(`${knowledgeCopy}.${endpoint.title}`)
+              return (
+                <Item key={kind} variant="outline">
+                  <ItemContent>
+                    <ItemTitle>
+                      {modelName}
+                      {config && <Badge variant="outline"><bdi>{config.model_id}</bdi></Badge>}
+                    </ItemTitle>
+                    <ItemDescription>
+                      {t(`${knowledgeCopy}.${endpoint.copy}.${config ? "configuredDescription" : "defaultDescription"}`)}
+                    </ItemDescription>
+                  </ItemContent>
+                  <ItemActions>
+                    <Dialog open={knowledgeEndpointDialog === kind} onOpenChange={(open) => {
+                      if (!knowledgeEndpointSaving) setKnowledgeEndpointDialog(open ? kind : null)
+                    }}>
+                      <DialogTrigger render={<Button variant="secondary" />}>
+                        {t(`${knowledgeCopy}.${config ? "edit" : "configure"}`)}
+                      </DialogTrigger>
+                      <DialogContent className="sm:max-w-lg" closeLabel={t("common.close")}>
+                        <form className="flex flex-col gap-6" onSubmit={(event) => handleKnowledgeEndpointSubmit(event, kind)}>
+                          <DialogHeader>
+                            <DialogTitle>{t(`${knowledgeCopy}.dialogTitle`, { model: modelName })}</DialogTitle>
+                            <DialogDescription>{t(`${knowledgeCopy}.${endpoint.copy}.dialogDescription`)}</DialogDescription>
+                          </DialogHeader>
+                          <FieldGroup className="gap-4">
+                            <Field>
+                              <FieldLabel htmlFor={`${kind}-base-url`}>{t(`${knowledgeCopy}.baseUrl`)}</FieldLabel>
+                              <Input id={`${kind}-base-url`} name="baseUrl" type="url" defaultValue={config?.base_url} placeholder={t(`${knowledgeCopy}.baseUrlPlaceholder`)} required />
+                            </Field>
+                            <Field>
+                              <FieldLabel htmlFor={`${kind}-model-id`}>{t(`${knowledgeCopy}.modelId`)}</FieldLabel>
+                              <Input id={`${kind}-model-id`} name="modelId" defaultValue={config?.model_id} placeholder={endpoint.example} required />
+                            </Field>
+                            <Field>
+                              <FieldLabel htmlFor={`${kind}-api-key`}>{t(`${knowledgeCopy}.apiKey`)}</FieldLabel>
+                              <Input id={`${kind}-api-key`} name="apiKey" type="password" autoComplete="new-password"
+                                placeholder={t(`${knowledgeCopy}.${config ? "apiKeyUpdatePlaceholder" : "apiKeyPlaceholder"}`)} required={!config} />
+                              <FieldDescription>
+                                {t(`${knowledgeCopy}.${config ? "endpointAPIKeyUpdateDescription" : "apiKeyDescription"}`)}
+                              </FieldDescription>
+                            </Field>
+                          </FieldGroup>
+                          <DialogFooter>
+                            <DialogClose render={<Button type="button" variant="outline" disabled={knowledgeEndpointSaving} />}>
+                              {t(`${knowledgeCopy}.cancel`)}
+                            </DialogClose>
+                            <Button type="submit" loading={knowledgeEndpointSaving}>{t(`${knowledgeCopy}.save`)}</Button>
+                          </DialogFooter>
+                        </form>
+                      </DialogContent>
+                    </Dialog>
+                  </ItemActions>
+                </Item>
+              )
+            })}
             <Item variant="outline">
               <ItemContent>
                 <ItemTitle>
@@ -1507,17 +1233,17 @@ export function OtherSettingsPage() {
                   )}
                 </ItemTitle>
                 <ItemDescription>
-                  {knowledgeBaseSettings.contentEnhancementModel ? (
+                  {contentEnhancementModel ? (
                     <>
                       <bdi>
                         {
-                          knowledgeBaseSettings.contentEnhancementModel
+                          contentEnhancementModel
                             .displayName
                         }
                       </bdi>
                       <span aria-hidden="true"> · </span>
                       <bdi>
-                        {knowledgeBaseSettings.contentEnhancementModel.modelId}
+                        {contentEnhancementModel.modelId}
                       </bdi>
                       <span aria-hidden="true"> · </span>
                       <bdi>
@@ -1525,14 +1251,14 @@ export function OtherSettingsPage() {
                           KNOWLEDGE_MODEL_PROTOCOLS.find(
                             (option) =>
                               option.value ===
-                              knowledgeBaseSettings.contentEnhancementModel
+                              contentEnhancementModel
                                 ?.protocol
                           )?.label
                         }
                       </bdi>
                       <span aria-hidden="true"> · </span>
                       <bdi>
-                        {knowledgeBaseSettings.contentEnhancementModel.baseUrl}
+                        {contentEnhancementModel.baseUrl}
                       </bdi>
                     </>
                   ) : (
@@ -1549,7 +1275,7 @@ export function OtherSettingsPage() {
                 >
                   <DialogTrigger render={<Button variant="secondary" />}>
                     {t(
-                      knowledgeBaseSettings.contentEnhancementModel
+                      contentEnhancementModel
                         ? "pages.otherSettings.knowledgeBase.edit"
                         : "pages.otherSettings.knowledgeBase.configure"
                     )}
@@ -1584,7 +1310,7 @@ export function OtherSettingsPage() {
                               id="enhancement-model-id"
                               name="modelId"
                               defaultValue={
-                                knowledgeBaseSettings.contentEnhancementModel
+                                contentEnhancementModel
                                   ?.modelId
                               }
                               placeholder={t("pages.models.modelIdPlaceholder")}
@@ -1599,7 +1325,7 @@ export function OtherSettingsPage() {
                               id="enhancement-model-display-name"
                               name="displayName"
                               defaultValue={
-                                knowledgeBaseSettings.contentEnhancementModel
+                                contentEnhancementModel
                                   ?.displayName
                               }
                               placeholder={t(
@@ -1618,7 +1344,7 @@ export function OtherSettingsPage() {
                             name="baseUrl"
                             type="url"
                             defaultValue={
-                              knowledgeBaseSettings.contentEnhancementModel
+                              contentEnhancementModel
                                 ?.baseUrl
                             }
                             placeholder={t("pages.models.baseUrlPlaceholder")}
@@ -1635,17 +1361,17 @@ export function OtherSettingsPage() {
                             type="password"
                             autoComplete="new-password"
                             placeholder={t(
-                              knowledgeBaseSettings.contentEnhancementModel
+                              contentEnhancementModel
                                 ? "pages.otherSettings.knowledgeBase.apiKeyUpdatePlaceholder"
                                 : "pages.models.apiKeyPlaceholder"
                             )}
                             required={
-                              !knowledgeBaseSettings.contentEnhancementModel
+                              !contentEnhancementModel
                             }
                           />
                           <FieldDescription>
                             {t(
-                              knowledgeBaseSettings.contentEnhancementModel
+                              contentEnhancementModel
                                 ? "pages.otherSettings.knowledgeBase.apiKeyUpdateDescription"
                                 : "pages.otherSettings.knowledgeBase.apiKeyDescription"
                             )}
@@ -1663,7 +1389,7 @@ export function OtherSettingsPage() {
                               min="1"
                               step="1"
                               defaultValue={
-                                knowledgeBaseSettings.contentEnhancementModel
+                                contentEnhancementModel
                                   ?.contextSizeK ?? 128
                               }
                               required
@@ -1677,7 +1403,7 @@ export function OtherSettingsPage() {
                               name="protocol"
                               items={KNOWLEDGE_MODEL_PROTOCOLS}
                               defaultValue={
-                                knowledgeBaseSettings.contentEnhancementModel
+                                contentEnhancementModel
                                   ?.protocol ??
                                 KNOWLEDGE_MODEL_PROTOCOLS[0].value
                               }
@@ -1798,8 +1524,7 @@ export function OtherSettingsPage() {
                         required
                       />
                     </Field>
-                    {(oauthProvider === "oidc" ||
-                      oauthProvider === "baizhiyun") && (
+                    {oauthProvider === "oidc" && (
                       <Field>
                         <FieldLabel htmlFor="oauth-issuer-url">
                           {t("pages.otherSettings.oauth.issuerUrl")}
@@ -1930,11 +1655,6 @@ export function OtherSettingsPage() {
                           </Field>
                         </FieldGroup>
                       </FieldSet>
-                    )}
-                    {oauthProvider === "baizhiyun" && (
-                      <FieldDescription>
-                        {t("pages.otherSettings.oauth.baizhiyunScopes")}
-                      </FieldDescription>
                     )}
                   </FieldGroup>
                   <DialogFooter>

@@ -381,8 +381,6 @@ function parseFeedbackImage(dataUrl) {
   const byteSize = base64.length / 4 * 3 - padding;
   return byteSize > 0 ? { mimeType: match[1], base64, byteSize } : null;
 }
-const DEFAULT_DESIGN_RESPUB_BASE_URL = "https://hub.monkeycode-ai.com/api/design";
-const DEFAULT_DESIGN_OHMYINSPIRE_BASE_URL = "https://design-prompt.app.baizhi.cloud/openapi/v1";
 const CHAT_PROTOCOLS = ["openai_chat_completions", "openai_responses", "anthropic"];
 const isHigh = (unit) => unit >= 55296 && unit <= 56319;
 const isLow = (unit) => unit >= 56320 && unit <= 57343;
@@ -979,8 +977,6 @@ BROWSER_TOOL_NAMES.map((name) => {
   const fields = spec.fields;
   return { name, description: spec.description, inputSchema: { type: "object", properties: Object.fromEntries(Object.entries(fields).map(([key, { optional: _optional, ...schema }]) => [key, schema])), required: Object.keys(fields).filter((key) => !fields[key].optional), additionalProperties: false }, annotations: { readOnlyHint: spec.access === "observe", destructiveHint: spec.access === "interact", openWorldHint: true } };
 });
-new URL(DEFAULT_DESIGN_RESPUB_BASE_URL).origin;
-new URL(DEFAULT_DESIGN_OHMYINSPIRE_BASE_URL).origin;
 function subscribe(channel, listener) {
   const handler = (_event, value) => listener(value);
   electron.ipcRenderer.on(channel, handler);
@@ -1027,7 +1023,11 @@ function exposeHostApi(getPathForFile2, features) {
     revealInFolder: (path) => electron.ipcRenderer.invoke("shell:revealInFolder", path),
     openDirectory: (path) => electron.ipcRenderer.invoke("shell:openDirectory", path),
     setDesignMediaOrigins: (origins) => electron.ipcRenderer.invoke("design:media-origins", origins),
+    privateDesignCatalog: (tool, args) => electron.ipcRenderer.invoke("design:private-catalog", tool, args),
+    privateDesignWorkspace: (tool, args) => electron.ipcRenderer.invoke("design:private-workspace", tool, args),
+    onPrivateCanvasChanged: (listener) => subscribe("design:canvas-changed", listener),
     exportSlideDeck: (scope, request2) => electron.ipcRenderer.invoke("workspace:export-pptx", scope, request2),
+    storePrivateSlideDeck: (scope, bytes, slideCount, manifest) => electron.ipcRenderer.invoke("workspace:store-private-pptx", scope, bytes, slideCount, manifest),
     saveSlideDeck: (scope, fileName) => electron.ipcRenderer.invoke("workspace:save-pptx", scope, fileName),
     checkForUpdates: () => electron.ipcRenderer.invoke("update:check"),
     getUpdateStatus: () => electron.ipcRenderer.invoke("update:status"),
@@ -1062,6 +1062,7 @@ function exposeHostApi(getPathForFile2, features) {
       return electron.ipcRenderer.invoke("attachments:paste", sources);
     },
     previewAttachment: (uri) => electron.ipcRenderer.invoke("attachments:preview", uri),
+    saveEmployeeAttachment: (sessionId, uri) => electron.ipcRenderer.invoke("attachments:save-employee", sessionId, uri),
     fetchRemoteImage: (url) => electron.ipcRenderer.invoke("images:fetch", url),
     saveImage: (dataUrl, name) => electron.ipcRenderer.invoke("images:save", dataUrl, name),
     saveFile: (data, name) => electron.ipcRenderer.invoke("files:save-bytes", data, name),
@@ -1069,6 +1070,7 @@ function exposeHostApi(getPathForFile2, features) {
     cancelWorkspaceVideo: (id) => electron.ipcRenderer.invoke("files:cancel-video", id),
     captureWindow: () => electron.ipcRenderer.invoke("feedback:capture"),
     getRuntimeEndpoint: (rejectedToken) => electron.ipcRenderer.invoke("runtime:endpoint", rejectedToken),
+    readSessionArchive: (sessionId, kind, parameter) => electron.ipcRenderer.invoke("runtime:session-archive", sessionId, kind, parameter),
     files: {
       onLinkRequest: (listener) => subscribe("files:link-request", (request2) => {
         void Promise.resolve().then(() => listener(request2)).then(

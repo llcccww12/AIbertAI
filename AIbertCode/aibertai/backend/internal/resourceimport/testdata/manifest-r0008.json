@@ -10,7 +10,7 @@
         "slug": "copywriter",
         "name": "copywriter",
         "tags": [
-          "百智办公"
+          "测试办公"
         ],
         "path": "agent/skills/copywriter.zip",
         "sha256": "sha256:c196165f838102d71030304ce4750f647468b6016220db43e00a9c26a2089a2f",
@@ -23,7 +23,7 @@
         "slug": "frontend-design",
         "name": "frontend-design",
         "tags": [
-          "百智办公"
+          "测试办公"
         ],
         "path": "agent/skills/frontend-design.zip",
         "sha256": "sha256:dee0100b0694dc54a8b002f91ccc7cf3e2def1a5c74e5454dca0116ce4ff3c15",
@@ -36,7 +36,7 @@
         "slug": "i-have-adhd",
         "name": "i-have-adhd",
         "tags": [
-          "百智办公"
+          "测试办公"
         ],
         "path": "agent/skills/i-have-adhd.zip",
         "sha256": "sha256:e3d46b6e5f4d256f2de96fe73a78739a29b86736d85d9bc899e4ca27b5e76878",
@@ -49,7 +49,7 @@
         "slug": "mono",
         "name": "dws",
         "tags": [
-          "百智办公"
+          "测试办公"
         ],
         "path": "agent/skills/mono.zip",
         "sha256": "sha256:6fdea9d4d40cc7fbd45649cb31ee803dd42da72c75b955cb414d4a93b9d451ef",
@@ -62,7 +62,7 @@
         "slug": "pair-agent",
         "name": "pair-agent",
         "tags": [
-          "百智办公"
+          "测试办公"
         ],
         "path": "agent/skills/pair-agent.zip",
         "sha256": "sha256:4abb1432c6c8ec4023f4b2102f181a40844716c3de8a5c325f1211e0fa6c6920",
@@ -75,7 +75,7 @@
         "slug": "research",
         "name": "research",
         "tags": [
-          "百智办公"
+          "测试办公"
         ],
         "path": "agent/skills/research.zip",
         "sha256": "sha256:06aef3b8b0ff6dc15917a1dce0fd18603c4f2a6a1ad41f919aec779ed2b989e7",
@@ -90,7 +90,7 @@
         "slug": "speak-chinese",
         "name": "和用户用简体中文交流",
         "tags": [
-          "百智办公"
+          "测试办公"
         ],
         "path": "agent/rules/speak-chinese.json",
         "sha256": "sha256:04c977dc8968e641ebfee21964f8379ee4a29ae42c5aa094a56ce8cb1355a761",
@@ -105,7 +105,7 @@
         "slug": "tavily",
         "name": "tavily",
         "tags": [
-          "百智办公"
+          "测试办公"
         ],
         "path": "agent/connectors/tavily.json",
         "sha256": "sha256:571cb4c0ef9d5e0c2c915772c1b2dd67d2d28c1620f5bb3c1e26bba0de989ad2"

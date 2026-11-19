@@ -89,8 +89,8 @@ func (s *Service) RegisterAdmin(r chi.Router) {
 			resource.Fail(r.Context(), w, err)
 			return
 		}
-		var input DocumentInput
-		if err := resource.Decode(w, r, &input); err != nil {
+		input, err := s.readDocumentInput(w, r)
+		if err != nil {
 			resource.Fail(r.Context(), w, err)
 			return
 		}

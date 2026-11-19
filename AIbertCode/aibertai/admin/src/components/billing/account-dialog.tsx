@@ -12,7 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
+import { Field, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -51,15 +51,11 @@ export function AccountDialog({
   const [data, setData] = useState<AccountDetails | null>(null)
   const [member, setMember] = useState<AccountMember | null>(null)
   const [loadFailed, setLoadFailed] = useState(false)
-  const [pendingAction, setPendingAction] = useState<
-    "adjust" | "wallet" | null
-  >(null)
-  const busy = pendingAction !== null
+  const [busy, setBusy] = useState(false)
   const [adjustOpen, setAdjustOpen] = useState(false)
   const [adjustmentType, setAdjustmentType] = useState<"add" | "deduct">("add")
   const [adjustmentAmount, setAdjustmentAmount] = useState("")
   const [adjustmentReason, setAdjustmentReason] = useState("")
-  const [external, setExternal] = useState("")
   const running = useRef(false)
   const accountPath = `/api/admin/v1/billing/accounts/${encodeURIComponent(userId)}`
   const memberPath = `/api/admin/v1/users/${encodeURIComponent(userId)}`
@@ -71,7 +67,6 @@ export function AccountDialog({
       ]).then(([person, value]) => {
         setMember(person)
         setData(value)
-        setExternal(value.external_user_id)
         setLoadFailed(false)
       }),
     [accountPath, memberPath]
@@ -85,32 +80,25 @@ export function AccountDialog({
   useEffect(() => {
     loadAccount()
   }, [loadAccount])
-  const run = async (kind: "adjust" | "wallet") => {
+  const saveAdjustment = async () => {
     if (running.current) return
     running.current = true
-    setPendingAction(kind)
+    setBusy(true)
     try {
-      if (kind === "adjust") {
-        await api(`${accountPath}/adjustments`, {
-          method: "POST",
-          body: JSON.stringify({
-            delta:
-              adjustmentType === "add"
-                ? adjustmentAmount
-                : `-${adjustmentAmount}`,
-            reason: adjustmentReason.trim(),
-            version: data?.account.version,
-          }),
-        })
-        setAdjustOpen(false)
-        setAdjustmentAmount("")
-        setAdjustmentReason("")
-      }
-      if (kind === "wallet")
-        await api(`${accountPath}/wallet`, {
-          method: "PUT",
-          body: JSON.stringify({ external_user_id: external }),
-        })
+      await api(`${accountPath}/adjustments`, {
+        method: "POST",
+        body: JSON.stringify({
+          delta:
+            adjustmentType === "add"
+              ? adjustmentAmount
+              : `-${adjustmentAmount}`,
+          reason: adjustmentReason.trim(),
+          version: data?.account.version,
+        }),
+      })
+      setAdjustOpen(false)
+      setAdjustmentAmount("")
+      setAdjustmentReason("")
       await load()
       onChanged?.()
       showToast({
@@ -126,7 +114,7 @@ export function AccountDialog({
       }
     } finally {
       running.current = false
-      setPendingAction(null)
+      setBusy(false)
     }
   }
   const adjustmentValid =
@@ -207,45 +195,6 @@ export function AccountDialog({
                       </div>
                     ))}
                   </dl>
-                  {data.wallet.configured && (
-                    <div className="space-y-3 border-t pt-4">
-                      <Field>
-                        <FieldLabel htmlFor="wallet-user">
-                          百智云用户 ID
-                        </FieldLabel>
-                        <Input
-                          id="wallet-user"
-                          value={external}
-                          onChange={(e) => setExternal(e.target.value)}
-                        />
-                        <FieldDescription>
-                          保存时由服务端核实用户身份。此操作不发放或转移积分。
-                        </FieldDescription>
-                      </Field>
-                      <Button
-                        variant="outline"
-                        disabled={busy || !external.trim()}
-                        loading={pendingAction === "wallet"}
-                        onClick={() => void run("wallet")}
-                      >
-                        核实并绑定
-                      </Button>
-                      {data.wallet_available !== undefined && (
-                        <p>
-                          百智云当前可用：
-                          {displayCredits(data.wallet_available)} 积分{" "}
-                          <span className="text-xs text-muted-foreground">
-                            （{dateTime(data.wallet_queried_at)} 查询）
-                          </span>
-                        </p>
-                      )}
-                      {data.wallet_error && (
-                        <p className="text-sm text-destructive">
-                          {data.wallet_error}
-                        </p>
-                      )}
-                    </div>
-                  )}
                 </div>
               ) : null}
             </div>
@@ -315,7 +264,7 @@ export function AccountDialog({
             className="space-y-4"
             onSubmit={(event) => {
               event.preventDefault()
-              if (adjustmentValid) void run("adjust")
+              if (adjustmentValid) void saveAdjustment()
             }}
           >
             <Field>
@@ -384,7 +333,7 @@ export function AccountDialog({
                   adjustmentType === "deduct" ? "destructive" : "default"
                 }
                 disabled={busy || !adjustmentValid}
-                loading={pendingAction === "adjust"}
+                loading={busy}
               >
                 确认调整
               </Button>

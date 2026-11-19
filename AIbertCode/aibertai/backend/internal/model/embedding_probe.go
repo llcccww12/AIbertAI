@@ -3,14 +3,16 @@ package model
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
-	"path"
 	"slices"
 	"strings"
 	"time"
@@ -22,12 +24,40 @@ var errEmbeddingProbeTimeout = errors.New("上游响应超时")
 
 type embeddingProbeResponse struct {
 	Data []struct {
-		Embedding []float64 `json:"embedding"`
+		Embedding embeddingValues `json:"embedding"`
 	} `json:"data"`
 	Usage struct {
 		PromptTokens int `json:"prompt_tokens"`
 		TotalTokens  int `json:"total_tokens"`
 	} `json:"usage"`
+}
+
+type embeddingValues []float64
+
+func (values *embeddingValues) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 || data[0] != '"' {
+		return json.Unmarshal(data, (*[]float64)(values))
+	}
+	var encoded string
+	if err := json.Unmarshal(data, &encoded); err != nil {
+		return err
+	}
+	if len(encoded) > base64.StdEncoding.EncodedLen(4*maxEmbeddingDimensions) {
+		return errors.New("base64 embedding exceeds maximum dimensions")
+	}
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil || len(raw)%4 != 0 {
+		return errors.New("invalid base64 embedding")
+	}
+	vector := make(embeddingValues, len(raw)/4)
+	for i := range vector {
+		vector[i] = float64(math.Float32frombits(binary.LittleEndian.Uint32(raw[i*4:])))
+		if math.IsNaN(vector[i]) || math.IsInf(vector[i], 0) {
+			return errors.New("invalid base64 embedding value")
+		}
+	}
+	*values = vector
+	return nil
 }
 
 type embeddingProbeResult struct {
@@ -113,12 +143,10 @@ func (s *Service) requestEmbedding(ctx context.Context, item Model, input string
 	if item.APIKey == "" || strings.ContainsAny(item.APIKey, "\r\n") {
 		return embeddingProbeResponse{}, errors.New("模型密钥无效")
 	}
-	base, err := url.Parse(item.BaseURL)
-	if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Hostname() == "" || base.User != nil || base.Fragment != "" {
-		return embeddingProbeResponse{}, errors.New("模型地址无效")
+	base, err := CompatibleEndpoint(item.BaseURL, "embeddings")
+	if err != nil {
+		return embeddingProbeResponse{}, err
 	}
-	base.Path = path.Join(base.Path, "embeddings")
-	base.RawPath = ""
 	requestBody, err := json.Marshal(map[string]any{
 		"model": item.ModelID,
 		"input": input,

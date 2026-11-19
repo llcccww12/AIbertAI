@@ -1,11 +1,10 @@
 {
-  "name": "@monkeyai/desktop",
-  "productName": "MonkeyAI",
+  "name": "@aibertai/desktop",
+  "productName": "AIbertAI",
   "version": "26.1116.2",
   "private": true,
-  "description": "MonkeyAI desktop host (Electron): window, tray, updater, runtime supervisor. UI lives in apps/web.",
-  "author": "Chaitin",
-  "homepage": "https://github.com/chaitin/MonkeyAI",
+  "description": "AIbertAI desktop host",
+  "author": "AIbertAI",
   "desktopName": "monkeyai.desktop",
   "main": "./out/main/index.js",
   "dependencies": {

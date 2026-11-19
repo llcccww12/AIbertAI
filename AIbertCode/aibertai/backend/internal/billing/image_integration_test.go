@@ -96,7 +96,7 @@ VALUES($1,$2,$3,$4,'openai_images','generate','unknown','hash',2,'1K','1:1')`, j
 	if err := s.Finish(ctx, r.ID, Usage{Known: false, Result: "failed", ErrorCode: "status_unknown"}); err != nil {
 		t.Fatal(err)
 	}
-	call := walletAdmin(t, s, user)
+	call := billingAdmin(t, s, user)
 	path := "/billing/transactions/" + r.ID + "/resolve"
 	call("POST", path, map[string]any{"reason": "已核对一张归档图片", "usage": map[string]any{"result": "succeeded", "generated_images": 1}}, 400)
 	if _, err := s.pool.Exec(ctx, `INSERT INTO image_outputs(id,job_id,ordinal,object_key,mime_type,width,height,byte_size,sha256,expires_at)

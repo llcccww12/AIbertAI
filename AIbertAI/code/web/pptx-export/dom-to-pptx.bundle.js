@@ -82359,6 +82359,26 @@
           }
         }
         currentSortKey = parentSortKey.concat([zVal, order]);
+        const chart = globalOptions.nativeChart?.(node);
+        if (chart) {
+          const rect = node.getBoundingClientRect();
+          const factor = PX_TO_INCH * layoutConfig.scale;
+          if (rect.width <= 0 || rect.height <= 0) throw new Error("invalid_pptx_chart_bounds");
+          renderQueue.push({
+            type: "chart",
+            chart,
+            zIndex: currentSortKey,
+            domOrder: order,
+            options: {
+              ...chart.options,
+              x: (rect.x - layoutConfig.rootX) * factor + layoutConfig.offX,
+              y: (rect.y - layoutConfig.rootY) * factor + layoutConfig.offY,
+              w: rect.width * factor,
+              h: rect.height * factor,
+            },
+          });
+          return;
+        }
       }
 
       // Prepare the item. If it needs async work, it returns a 'job'
@@ -82438,6 +82458,7 @@
       if (item.type === "shape") slide.addShape(item.shapeType, item.options);
       if (item.type === "image") slide.addImage(item.options);
       if (item.type === "text") slide.addText(item.textParts, item.options);
+      if (item.type === "chart") slide.addChart(item.chart.type, item.chart.series, item.options);
       if (item.type === "table") {
         slide.addTable(item.tableData.rows, {
           x: item.options.x,

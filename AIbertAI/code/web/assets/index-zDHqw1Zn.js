@@ -29126,9 +29126,7 @@ function Hre(e, t) {
   }
   return a;
 }
-const IGe = "https://hub.monkeycode-ai.com/api/design",
-  Qxe = "https://design-prompt.app.baizhi.cloud/openapi/v1",
-  $C = 8;
+const $C = 8;
 function LGe(e, t, n, r, s) {
   return e.flatMap((i) => {
     const o = Math.max(i.startMs, t),
@@ -31893,8 +31891,6 @@ function gve(e) {
     n("y", 100)
   );
 }
-new URL(IGe).origin;
-new URL(Qxe).origin;
 const YKe = 36,
   pO = "monkeyai.prefs",
   sse = "monkeyai.accounts",
@@ -34387,7 +34383,17 @@ class EYe {
     if (!AYe.has(n)) throw new Error(Se.sessionReadsUnavailable);
     if (n === "_monkeyai/session/queue" && r.action !== "get")
       throw new Error(Se.sessionReadsUnavailable);
-    if (!this.remote) return t.request(n, r);
+    if (!this.remote) {
+      const kind = n === "_monkeyai/session/messages" && !r.cursor && (!r.direction || r.direction === "older")
+        ? "messages" : n === "_monkeyai/session/tool_output" ? "tool_output" : null;
+      if (kind) {
+        const result = await window.monkeyai?.readSessionArchive?.(
+          r.sessionId, kind, kind === "messages" ? r.limit ?? 20 : r.toolCallId,
+        );
+        if (result !== void 0) return result;
+      }
+      return t.request(n, r);
+    }
     const s = this.connection;
     if (!s) throw new Error(Se.sessionReadsUnavailable);
     if (n === "_monkeyai/session/queue" && !s.queue)
@@ -49001,6 +49007,34 @@ async function Jr(e, t, n) {
       if (r !== Tw) throw new Error(Se.deviceTargetChanged);
     },
     i = ts()?.transport === "relay";
+  if (
+    !i &&
+    ["design_catalog", "design_catalog_detail", "design_resource_media"].includes(e) &&
+    window.monkeyai?.privateDesignCatalog
+  ) {
+    const a = await window.monkeyai.privateDesignCatalog(e, t);
+    s();
+    if (a !== null) return a;
+  }
+  if (
+    !i &&
+    [
+      "design_state", "canvas_get", "canvas_apply", "canvas_select", "canvas_create_text",
+      "canvas_create_media_project", "canvas_duplicate", "canvas_export_upload", "canvas_upload_status",
+      "canvas_import_video", "canvas_import_audio", "canvas_import_extracted_media", "canvas_append_media_project",
+      "canvas_import_image", "canvas_import_project_source", "canvas_create_html", "canvas_update_html",
+      "design_style_decision", "design_system_set", "canvas_prepare_pptx",
+    ].includes(e) &&
+    window.monkeyai?.privateDesignWorkspace
+  ) {
+    const a = await window.monkeyai.privateDesignWorkspace(e, t);
+    s();
+    if (a !== null) {
+      BH(a, t.sessionId);
+      if (e === "design_state") FH(a, t.sessionId);
+      return a;
+    }
+  }
   if (i && !A2()) throw new Error(Se.remoteHostUnsupported);
   const o = DVe.tools[e];
   if (o?.mode !== "operation" || !bp.available()) {
@@ -49133,6 +49167,20 @@ async function Iet(e, t, n, r, s) {
     };
   if (ts()?.transport === "relay") throw new Error(Se.remoteHostUnsupported);
   s.throwIfAborted();
+  if (window.monkeyai?.privateDesignWorkspace) {
+    const bytes = new Uint8Array(await r.arrayBuffer());
+    o();
+    s.throwIfAborted();
+    const result = await window.monkeyai.privateDesignWorkspace("canvas_upload_append", {
+      sessionId: e, uploadId: t, offset: n, bytes,
+    });
+    o();
+    s.throwIfAborted();
+    if (result !== null) {
+      if (result.receivedBytes !== n + r.size) throw new Error("上传进度确认不一致，请重新上传");
+      return;
+    }
+  }
   const a = await et.getRuntimeEndpoint();
   if ((o(), s.throwIfAborted(), !a)) throw new Error(Se.runtimeUnavailable);
   const c = async () => {
@@ -49175,7 +49223,12 @@ async function Iet(e, t, n, r, s) {
   }
 }
 function cK(e) {
-  return lK(
+  const removeLocal = window.monkeyai?.onPrivateCanvasChanged?.((id) => {
+    if (ts()?.transport !== "relay" && zn.getState().documents[id]) {
+      void zn.getState().resync(id).catch(() => {});
+    }
+  });
+  const removeMcp = lK(
     e1,
     (t, n) => {
       (t === Tre && BH(n, n.sessionId),
@@ -49190,6 +49243,10 @@ function cK(e) {
     },
     e.resync ? { resync: () => e.resync?.() } : {},
   );
+  return () => {
+    removeLocal?.();
+    removeMcp();
+  };
 }
 async function Let(e, t, n, r, s) {
   if (ts()?.transport !== "relay") return null;
@@ -52517,6 +52574,11 @@ const zO = 20,
         if (!p.current(te)) throw new Error("Account changed");
         const be = me.sessionId,
           Ce = me._meta ?? {};
+        if (se && pe && !Ce.capabilities?.design && ts()?.transport !== "relay" && window.monkeyai?.privateDesignWorkspace) {
+          const design = await window.monkeyai.privateDesignWorkspace("design_session_open", { sessionId: be, selection: se });
+          if (!p.current(te)) throw new Error("Account changed");
+          if (design) Ce.capabilities = { ...Ce.capabilities, design };
+        }
         Ce.skippedCapabilities?.includes("design") &&
           rn.warning(Uo.t("capabilities.designSkipped"));
         const xe = Ce.cwd ?? P,
@@ -108990,6 +109052,7 @@ async function Kvt(e) {
 }
 const rL = "https://www.century-albert.com/",
   A7 = rL;
+const mobileAppReleased = false;
 const Mue = "/assets/aibertai-wechat.jpg";
 const salesPhone = "0592-2626666";
 function JU({ icon: e }) {
@@ -110952,7 +111015,7 @@ const bZ = [
 function Hwt(e, t, n = !1) {
   return bZ.filter(
     (r) =>
-      (r.id !== "storage" || (e === "win32" && !n)) &&
+      (r.id !== "storage" || ((e === "win32" || e === "darwin") && !n)) &&
       (r.id !== "browser" || t?.browserControl !== !1),
   );
 }
@@ -111730,7 +111793,7 @@ const qwt = {
     balanceAfterHint:
       "Balance of the account period for this record; it may differ from your current balance.",
     mode: "Billing method",
-    modes: { local: "Team credits", remote: "Baizhiyun billing" },
+    modes: { local: "Team credits", remote: "Historical external billing" },
     transaction: "Transaction ID",
     copyTransaction: "Copy transaction ID",
     copied: "Transaction ID copied",
@@ -112048,6 +112111,7 @@ const qwt = {
   },
   tkt = {
     title: "AIbertAI手机 APP (开发中)",
+    downloadUnavailable: "AIbertAI 手机端 · 暂未开放下载",
     downloadTitle: "下载 APP",
     downloadBrowserPrefix: "手机浏览器访问",
     downloadBrowserOr: "或",
@@ -112076,6 +112140,7 @@ const qwt = {
   },
   nkt = {
     title: "AIbertAI mobile app (In development)",
+    downloadUnavailable: "AIbertAI mobile app · Downloads not yet available",
     downloadTitle: "Download app",
     downloadBrowserPrefix: "Visit",
     downloadBrowserOr: "in your phone’s browser, or",
@@ -113700,6 +113765,8 @@ const qwt = {
     },
     storage: {
       hint: "账号、对话、工作区、技能包和浏览器数据都保存在这里。系统盘空间不足时，可以把数据迁到其他磁盘。",
+      adoptHint: "可以选用旧版的数据文件夹，继续使用原有账号、对话和工作区。请先退出旧版应用。",
+      chooseExisting: "选择已有数据文件夹…",
       current: "数据文件夹",
       usage: "占用空间",
       measuring: "正在统计…",
@@ -116681,6 +116748,8 @@ Start with the conclusion, then explain the reasoning.`,
     },
     storage: {
       hint: "Accounts, conversations, workspaces, skill packages and browser data are stored here. If the system drive is running out of space, move the data to another drive.",
+      adoptHint: "Choose an existing data folder to keep using its accounts, conversations and workspaces. Quit the previous version first.",
+      chooseExisting: "Choose Existing Data Folder…",
       current: "Data folder",
       usage: "Space used",
       measuring: "Calculating…",
@@ -135053,7 +135122,12 @@ function QAt() {
                 }),
             ],
           }),
-          et.pairing && l.jsx(VAt, {}),
+          mobileAppReleased
+            ? et.pairing && l.jsx(VAt, {})
+            : l.jsx("h3", {
+                className: "text-xs font-medium text-muted-foreground",
+                children: e("settings.pairing.downloadUnavailable"),
+              }),
           u &&
             l.jsx(
               JAt,
@@ -147554,7 +147628,7 @@ function U_t() {
         children: [
           l.jsx("p", {
             className: "text-sm leading-relaxed text-muted-foreground",
-            children: e("settings.storage.hint"),
+            children: e(et.platform === "darwin" ? "settings.storage.adoptHint" : "settings.storage.hint"),
           }),
           l.jsx(Kv, {
             label: e("settings.storage.current"),
@@ -147601,7 +147675,7 @@ function U_t() {
               onClick: () => {
                 b();
               },
-              children: e("settings.storage.change"),
+              children: e(et.platform === "darwin" ? "settings.storage.chooseExisting" : "settings.storage.change"),
             }),
           }),
         ],
@@ -160110,7 +160184,7 @@ function M0({
   });
 }
 const aTt = JSON.parse(
-    '{"profile:kimi-k3":{"thinking_control":"effort","thinking_efforts":["low","high","max"],"protocols":{"openai-chat":{},"anthropic":{"thinking_control":"binary"},"openai-responses":{}}},"profile:kimi-k2.6":{"thinking_control":"binary","protocols":{"openai-chat":{},"anthropic":{"thinking_efforts":[]}}},"profile:minimax-m3":{"supports_images":true,"thinking_control":"binary","protocols":{"openai-chat":{},"anthropic":{},"openai-responses":{}}},"profile:minimax-m3.1":{"supports_images":true,"thinking_control":"always","thinking_efforts":["low","medium","high","xhigh","max"],"protocols":{"openai-chat":{},"anthropic":{},"openai-responses":{}}},"profile:alibaba":{"thinking_control":"binary","thinking_efforts":["low","medium","xhigh"],"protocols":{"openai-chat":{},"anthropic":{},"openai-responses":{}}},"gpt-4o":{"context_window":128000,"max_output":16384,"supports_images":true,"protocols":{"anthropic":{}}},"gpt-4o-mini":{"context_window":128000,"max_output":16384,"supports_images":true,"protocols":{"anthropic":{}}},"gpt-4.1":{"context_window":1047576,"max_output":32768,"supports_images":true,"protocols":{"anthropic":{}}},"gpt-4.1-mini":{"context_window":1047576,"max_output":32768,"supports_images":true,"protocols":{"anthropic":{}}},"gpt-4.1-nano":{"context_window":1047576,"max_output":32768,"supports_images":true,"protocols":{"anthropic":{}}},"model:*gpt-6-astra*":{"context_window":1050000,"max_output":128000,"supports_images":true,"thinking_control":"always","thinking_efforts":["low","medium","high","xhigh","max"],"protocols":{"openai-chat":{},"anthropic":{}}},"model:*gpt-6.1-sol*":{"context_window":1050000,"max_output":128000,"supports_images":true,"thinking_control":"always","thinking_efforts":["low","medium","high","xhigh","max"],"protocols":{"anthropic":{},"openai-responses":{}}},"model:*gpt-6.1-terra*":{"context_window":1050000,"max_output":128000,"supports_images":true,"thinking_control":"binary","thinking_efforts":["low","medium","high","xhigh","max"],"protocols":{"anthropic":{}}},"model:*gpt-6-luna*":{"context_window":1050000,"max_output":128000,"supports_images":true,"thinking_control":"binary","thinking_efforts":["low","medium","high","xhigh","max"],"protocols":{"anthropic":{}}},"o3":{"context_window":200000,"max_output":100000,"supports_images":true,"protocols":{"anthropic":{},"openai-responses":{}}},"o3-mini":{"context_window":200000,"max_output":100000,"supports_images":false,"protocols":{"anthropic":{},"openai-responses":{}}},"o4-mini":{"context_window":200000,"max_output":100000,"supports_images":true,"protocols":{"anthropic":{},"openai-responses":{}}},"claude-sonnet-4-20250514":{"context_window":200000,"max_output":16384,"supports_images":true},"claude-opus-4-20250514":{"context_window":200000,"max_output":16384,"supports_images":true},"claude-haiku-3-5-20241022":{"context_window":200000,"max_output":8192,"supports_images":true},"model:*claude-opus-5-5*":{"context_window":1000000,"max_output":128000,"supports_images":true,"thinking_control":"always","thinking_efforts":["low","medium","high","xhigh","max"],"protocols":{"openai-chat":{},"anthropic":{}}},"model:*claude-fable-5-2*":{"context_window":1000000,"max_output":128000,"supports_images":true,"thinking_control":"always","thinking_efforts":["low","medium","high","xhigh","max"],"protocols":{"openai-chat":{},"anthropic":{}}},"model:*claude-fable-5-1*":{"context_window":1000000,"max_output":128000,"supports_images":true,"thinking_control":"always","thinking_efforts":["low","medium","high","xhigh","max"],"protocols":{"openai-chat":{},"anthropic":{}}},"model:*claude-mythos-5-2*":{"context_window":1000000,"max_output":128000,"supports_images":true,"thinking_control":"always","thinking_efforts":["low","medium","high","xhigh","max"],"protocols":{"openai-chat":{},"anthropic":{}}},"model:*claude-mythos-5-1*":{"context_window":1000000,"max_output":128000,"supports_images":true,"thinking_control":"always","thinking_efforts":["low","medium","high","xhigh","max"],"protocols":{"openai-chat":{},"anthropic":{}}},"model:*claude-sonnet-5-5*":{"context_window":1000000,"max_output":128000,"supports_images":true,"thinking_control":"binary","thinking_efforts":["low","medium","high","xhigh","max"],"protocols":{"openai-chat":{},"anthropic":{}}},"model:*claude-haiku-5-5*":{"context_window":1000000,"max_output":128000,"supports_images":true,"thinking_control":"binary","thinking_efforts":["low","medium","high","xhigh","max"],"protocols":{"openai-chat":{},"anthropic":{}}},"host:token-plan.maas.qianwenaiapi.com":{"protocols":{"openai-chat":{},"openai-responses":{},"anthropic":{}}},"host:dashscope.aliyuncs.com":{"protocols":{"openai-chat":{"thinking_efforts":["low","medium","xhigh"]},"openai-responses":{"thinking_efforts":["low","medium","xhigh"]},"anthropic":{"thinking_efforts":["low","medium","xhigh"]}}},"host:dashscope-intl.aliyuncs.com":{"protocols":{"openai-chat":{"thinking_efforts":["low","medium","xhigh"]},"openai-responses":{"thinking_efforts":["low","medium","xhigh"]},"anthropic":{"thinking_efforts":["low","medium","xhigh"]}}},"host:*.cn-beijing.maas.aliyuncs.com":{"protocols":{"openai-chat":{"thinking_efforts":["low","medium","xhigh"]},"openai-responses":{"thinking_efforts":["low","medium","xhigh"]},"anthropic":{"thinking_efforts":["low","medium","xhigh"]}}},"host:*.ap-southeast-1.maas.aliyuncs.com":{"protocols":{"openai-chat":{"thinking_efforts":["low","medium","xhigh"]},"openai-responses":{"thinking_efforts":["low","medium","xhigh"]},"anthropic":{"thinking_efforts":["low","medium","xhigh"]}}},"host:ai-api-gateway.app.baizhi.cloud":{"protocols":{"openai-responses":{}}},"host:api.openai.com":{"protocols":{"openai-responses":{}}},"host:api.anthropic.com":{"protocols":{"anthropic":{}}},"host:api.x.ai":{"protocols":{"openai-responses":{}}},"host:us.api.x.ai":{"protocols":{"openai-responses":{}}},"host:open.bigmodel.cn":{"protocols":{"openai-chat":{},"openai-responses":{"thinking_efforts":["low","high","max"]}}},"deepseek-v4-flash":{"context_window":1048576,"max_output":393216,"supports_images":true,"thinking_control":"binary","thinking_efforts":["minimal","low","medium","high","xhigh"],"protocols":{"anthropic":{},"openai-responses":{}}},"deepseek-chat":{"context_window":65536,"max_output":8192,"supports_images":false,"thinking_control":"binary","thinking_efforts":["minimal","low","medium","high","xhigh"],"protocols":{"anthropic":{},"openai-responses":{}}},"deepseek-coder":{"context_window":65536,"max_output":8192,"supports_images":false,"thinking_control":"binary","thinking_efforts":["minimal","low","medium","high","xhigh"],"protocols":{"anthropic":{},"openai-responses":{}}},"deepseek-reasoner":{"context_window":65536,"max_output":8192,"supports_images":false,"thinking_control":"binary","thinking_efforts":["minimal","low","medium","high","xhigh"],"protocols":{"anthropic":{},"openai-responses":{}}},"model:*deepseek-v4.1-flash*":{"context_window":1048576,"max_output":393216,"supports_images":true,"thinking_control":"binary","thinking_efforts":["minimal","low","medium","high","xhigh"],"protocols":{"anthropic":{},"openai-responses":{}}},"model:*deepseek-v4-flash-vision-exp*":{"context_window":1048576,"max_output":393216,"supports_images":true,"thinking_control":"binary","thinking_efforts":["minimal","low","medium","high","xhigh"],"protocols":{"anthropic":{},"openai-responses":{}}},"model:*deepseek-v4-flash*":{"context_window":1048576,"max_output":393216,"supports_images":true,"thinking_control":"binary","thinking_efforts":["minimal","low","medium","high","xhigh"],"protocols":{"anthropic":{},"openai-responses":{}}},"model:*deepseek-flash*":{"context_window":1048576,"max_output":393216,"supports_images":true,"thinking_control":"binary","thinking_efforts":["minimal","low","medium","high","xhigh"],"protocols":{"anthropic":{},"openai-responses":{}}},"model:*deepseek*":{"thinking_control":"binary","thinking_efforts":["minimal","low","medium","high","xhigh"],"protocols":{"anthropic":{},"openai-responses":{}}},"host:api.deepseek.com":{"thinking_control":"binary","thinking_efforts":["minimal","low","medium","high","xhigh"],"protocols":{"anthropic":{},"openai-responses":{}}},"profile:deepseek":{"protocols":{"openai-chat":{"thinking_control":"binary","thinking_efforts":["low","high","max"]},"openai-responses":{"thinking_control":"binary","thinking_efforts":["low","high","max"]},"anthropic":{"thinking_control":"binary","thinking_efforts":["low","high","max"]}}},"model:*kimi-k3*":{"context_window":1048576,"max_output":131072,"supports_images":true,"thinking_control":"effort","thinking_efforts":["low","high","max"],"protocols":{"openai-chat":{},"anthropic":{},"openai-responses":{}}},"model:*kimi-k2.7-code*":{"context_window":262144,"supports_images":true,"thinking_control":"always","protocols":{"anthropic":{},"openai-responses":{}}},"model:*kimi-k2.6*":{"context_window":262144,"supports_images":true,"thinking_control":"binary","protocols":{"anthropic":{"thinking_control":"effort","thinking_efforts":["low","medium","high","xhigh","max"]},"openai-responses":{}}},"model:*kimi-k2.5*":{"thinking_control":"binary","protocols":{"anthropic":{}}},"model:*mimo-v2.6*":{"context_window":1048576,"max_output":131072,"supports_images":true,"thinking_control":"binary","protocols":{"openai-chat":{},"openai-responses":{},"anthropic":{}}},"model:*agnes-3.0-flash*":{"context_window":512000,"max_output":65536,"supports_images":true,"thinking_control":"binary","protocols":{"openai-chat":{},"anthropic":{},"openai-responses":{}}},"model:*grok-*":{"protocols":{"anthropic":{},"openai-chat":{},"openai-responses":{}}},"model:*mimo-v2.5-pro*":{"context_window":1048576,"max_output":131072,"supports_images":false,"thinking_control":"binary","protocols":{"anthropic":{}}},"model:*mimo-v2.5*":{"context_window":1048576,"max_output":131072,"supports_images":true,"thinking_control":"binary","protocols":{"anthropic":{}}},"host:api.minimaxi.com":{"protocols":{"openai-chat":{},"openai-responses":{},"anthropic":{}}},"host:api.minimax.io":{"protocols":{"openai-chat":{},"openai-responses":{},"anthropic":{}}},"model:*minimax-m3.1-flash*":{"context_window":1000000,"max_output":524288,"supports_images":true,"thinking_control":"always","thinking_efforts":["low","medium","high","xhigh","max"],"protocols":{"openai-responses":{},"anthropic":{},"openai-chat":{}}},"model:*minimax-m3*":{"context_window":1000000,"supports_images":true,"thinking_control":"binary","protocols":{"openai-responses":{},"anthropic":{},"openai-chat":{}}},"model:*minimax-m2.7*":{"thinking_control":"always","protocols":{"anthropic":{},"openai-chat":{}}},"model:*minimax-m2.5*":{"thinking_control":"always","protocols":{"anthropic":{},"openai-chat":{}}},"model:*qwen4-max-preview*":{"supports_images":true,"thinking_control":"binary","thinking_efforts":["low","medium","xhigh"],"protocols":{"openai-chat":{},"anthropic":{},"openai-responses":{}}},"model:*qwen4.0-max-preview*":{"supports_images":true,"thinking_control":"binary","thinking_efforts":["low","medium","xhigh"],"protocols":{"openai-chat":{},"anthropic":{},"openai-responses":{}}},"model:*qwen3.8-max*":{"context_window":1000000,"max_output":131072,"supports_images":true,"thinking_efforts":["minimal","low","medium","high","xhigh","max"],"protocols":{"anthropic":{},"openai-responses":{}}},"model:*qwen3.8-27b*":{"context_window":1000000,"max_output":131072,"supports_images":true,"thinking_efforts":["minimal","low","medium","high","xhigh","max"],"protocols":{"anthropic":{},"openai-responses":{}}},"model:*qwen3.8-2.4t-a95b*":{"context_window":1000000,"max_output":131072,"supports_images":true,"thinking_control":"always","thinking_efforts":["minimal","low","medium","high","xhigh","max"],"protocols":{"anthropic":{},"openai-responses":{}}},"model:*qwen3.8*":{"context_window":1000000,"max_output":131072,"supports_images":true,"thinking_efforts":["minimal","low","medium","high","xhigh","max"],"protocols":{"anthropic":{},"openai-responses":{}}},"model:*qwen3.7-max*":{"supports_images":false,"protocols":{"anthropic":{},"openai-responses":{}}},"model:*qwen3.7*":{"supports_images":true,"protocols":{"anthropic":{},"openai-responses":{}}},"model:*qwen3.6*":{"supports_images":true,"protocols":{"anthropic":{},"openai-responses":{}}},"model:*qwen3.5*":{"thinking_control":"binary","protocols":{"anthropic":{}}},"model:*glm-5.3-flash*":{"context_window":1000000,"max_output":131072,"supports_images":true,"thinking_control":"always","thinking_efforts":["low","high","max"],"protocols":{"openai-chat":{},"anthropic":{},"openai-responses":{}}},"model:*glm-5.3*":{"context_window":1000000,"max_output":131072,"supports_images":false,"thinking_control":"always","thinking_efforts":["low","high","max"],"protocols":{"openai-chat":{},"anthropic":{},"openai-responses":{}}},"model:*glm-5.2*":{"thinking_control":"binary","thinking_efforts":["minimal","low","medium","high","xhigh","max"],"protocols":{"openai-chat":{},"anthropic":{},"openai-responses":{}}},"model:*glm-5*":{"thinking_control":"binary","protocols":{"anthropic":{},"openai-responses":{}}},"model:*hy4*":{"context_window":1048576,"max_output":65536,"supports_images":true,"thinking_control":"binary","thinking_efforts":["high"],"protocols":{"openai-chat":{},"openai-responses":{},"anthropic":{}}},"hy4-preview":{"context_window":1048576,"max_output":65536,"supports_images":true,"thinking_control":"binary","thinking_efforts":["high"],"protocols":{"openai-chat":{},"openai-responses":{},"anthropic":{}}},"model:*hy3*":{"thinking_control":"binary","protocols":{"openai-chat":{},"openai-responses":{},"anthropic":{}}},"MiniMax-Text-01":{"context_window":1000000,"max_output":16384,"supports_images":false},"MiniMax-M1":{"context_window":1000000,"max_output":16384,"supports_images":false,"protocols":{"anthropic":{},"openai-chat":{}}},"moonshot-v1-8k":{"context_window":8192,"max_output":4096,"supports_images":false},"moonshot-v1-32k":{"context_window":32768,"max_output":4096,"supports_images":false},"moonshot-v1-128k":{"context_window":131072,"max_output":4096,"supports_images":false},"glm-4-plus":{"context_window":128000,"max_output":4096,"supports_images":true},"glm-4-flash":{"context_window":128000,"max_output":4096,"supports_images":true},"qwen-max":{"context_window":32768,"max_output":8192,"supports_images":false},"qwen-plus":{"context_window":131072,"max_output":8192,"supports_images":false},"qwen-turbo":{"context_window":131072,"max_output":8192,"supports_images":false},"gemini-4-carbon":{"context_window":1048576,"max_output":65536,"supports_images":true,"protocols":{"anthropic":{},"gemini":{"thinking_control":"always","thinking_efforts":["low","medium","high"]}}},"gemini-4-argon":{"context_window":1048576,"max_output":65536,"supports_images":true,"protocols":{"anthropic":{},"gemini":{"thinking_control":"always","thinking_efforts":["low","medium","high"]}}},"gemini-3.8-flash":{"context_window":1048576,"max_output":65536,"supports_images":true,"protocols":{"anthropic":{},"gemini":{"thinking_control":"always","thinking_efforts":["low","medium","high"]}}},"gemini-3.6-flash":{"context_window":1048576,"max_output":65536,"supports_images":true,"protocols":{"anthropic":{},"gemini":{"thinking_control":"always","thinking_efforts":["minimal","low","medium","high"]}}},"gemini-3.5-flash-lite":{"context_window":1048576,"max_output":65536,"supports_images":true,"protocols":{"anthropic":{},"gemini":{"thinking_control":"always","thinking_efforts":["minimal","low","medium","high"]}}},"gemini-3.1-pro-preview":{"context_window":1048576,"max_output":65536,"supports_images":true,"protocols":{"anthropic":{},"gemini":{"thinking_control":"always","thinking_efforts":["low","medium","high"]}}},"gemini-3.1-flash-lite":{"context_window":1048576,"max_output":65536,"supports_images":true,"protocols":{"anthropic":{},"gemini":{"thinking_control":"always","thinking_efforts":["minimal","low","medium","high"]}}},"gemini-3-flash-preview":{"context_window":1048576,"max_output":65536,"supports_images":true,"protocols":{"anthropic":{},"gemini":{"thinking_control":"always","thinking_efforts":["minimal","low","medium","high"]}}},"gemini-2.5-pro":{"context_window":1048576,"max_output":65536,"supports_images":true,"protocols":{"anthropic":{},"gemini":{"thinking_control":"always","thinking_efforts":["low","medium","high"]}}},"gemini-2.5-flash":{"context_window":1048576,"max_output":65536,"supports_images":true,"protocols":{"anthropic":{},"gemini":{"thinking_control":"always","thinking_efforts":["low","medium","high"]}}},"gemini-2.5-flash-lite":{"context_window":1048576,"max_output":65536,"supports_images":true,"protocols":{"anthropic":{},"gemini":{"thinking_control":"binary","thinking_efforts":["low","medium","high"]}}},"yi-large":{"context_window":32768,"max_output":4096,"supports_images":false}}',
+    '{"profile:kimi-k3":{"thinking_control":"effort","thinking_efforts":["low","high","max"],"protocols":{"openai-chat":{},"anthropic":{"thinking_control":"binary"},"openai-responses":{}}},"profile:kimi-k2.6":{"thinking_control":"binary","protocols":{"openai-chat":{},"anthropic":{"thinking_efforts":[]}}},"profile:minimax-m3":{"supports_images":true,"thinking_control":"binary","protocols":{"openai-chat":{},"anthropic":{},"openai-responses":{}}},"profile:minimax-m3.1":{"supports_images":true,"thinking_control":"always","thinking_efforts":["low","medium","high","xhigh","max"],"protocols":{"openai-chat":{},"anthropic":{},"openai-responses":{}}},"profile:alibaba":{"thinking_control":"binary","thinking_efforts":["low","medium","xhigh"],"protocols":{"openai-chat":{},"anthropic":{},"openai-responses":{}}},"gpt-4o":{"context_window":128000,"max_output":16384,"supports_images":true,"protocols":{"anthropic":{}}},"gpt-4o-mini":{"context_window":128000,"max_output":16384,"supports_images":true,"protocols":{"anthropic":{}}},"gpt-4.1":{"context_window":1047576,"max_output":32768,"supports_images":true,"protocols":{"anthropic":{}}},"gpt-4.1-mini":{"context_window":1047576,"max_output":32768,"supports_images":true,"protocols":{"anthropic":{}}},"gpt-4.1-nano":{"context_window":1047576,"max_output":32768,"supports_images":true,"protocols":{"anthropic":{}}},"model:*gpt-6-astra*":{"context_window":1050000,"max_output":128000,"supports_images":true,"thinking_control":"always","thinking_efforts":["low","medium","high","xhigh","max"],"protocols":{"openai-chat":{},"anthropic":{}}},"model:*gpt-6.1-sol*":{"context_window":1050000,"max_output":128000,"supports_images":true,"thinking_control":"always","thinking_efforts":["low","medium","high","xhigh","max"],"protocols":{"anthropic":{},"openai-responses":{}}},"model:*gpt-6.1-terra*":{"context_window":1050000,"max_output":128000,"supports_images":true,"thinking_control":"binary","thinking_efforts":["low","medium","high","xhigh","max"],"protocols":{"anthropic":{}}},"model:*gpt-6-luna*":{"context_window":1050000,"max_output":128000,"supports_images":true,"thinking_control":"binary","thinking_efforts":["low","medium","high","xhigh","max"],"protocols":{"anthropic":{}}},"o3":{"context_window":200000,"max_output":100000,"supports_images":true,"protocols":{"anthropic":{},"openai-responses":{}}},"o3-mini":{"context_window":200000,"max_output":100000,"supports_images":false,"protocols":{"anthropic":{},"openai-responses":{}}},"o4-mini":{"context_window":200000,"max_output":100000,"supports_images":true,"protocols":{"anthropic":{},"openai-responses":{}}},"claude-sonnet-4-20250514":{"context_window":200000,"max_output":16384,"supports_images":true},"claude-opus-4-20250514":{"context_window":200000,"max_output":16384,"supports_images":true},"claude-haiku-3-5-20241022":{"context_window":200000,"max_output":8192,"supports_images":true},"model:*claude-opus-5-5*":{"context_window":1000000,"max_output":128000,"supports_images":true,"thinking_control":"always","thinking_efforts":["low","medium","high","xhigh","max"],"protocols":{"openai-chat":{},"anthropic":{}}},"model:*claude-fable-5-2*":{"context_window":1000000,"max_output":128000,"supports_images":true,"thinking_control":"always","thinking_efforts":["low","medium","high","xhigh","max"],"protocols":{"openai-chat":{},"anthropic":{}}},"model:*claude-fable-5-1*":{"context_window":1000000,"max_output":128000,"supports_images":true,"thinking_control":"always","thinking_efforts":["low","medium","high","xhigh","max"],"protocols":{"openai-chat":{},"anthropic":{}}},"model:*claude-mythos-5-2*":{"context_window":1000000,"max_output":128000,"supports_images":true,"thinking_control":"always","thinking_efforts":["low","medium","high","xhigh","max"],"protocols":{"openai-chat":{},"anthropic":{}}},"model:*claude-mythos-5-1*":{"context_window":1000000,"max_output":128000,"supports_images":true,"thinking_control":"always","thinking_efforts":["low","medium","high","xhigh","max"],"protocols":{"openai-chat":{},"anthropic":{}}},"model:*claude-sonnet-5-5*":{"context_window":1000000,"max_output":128000,"supports_images":true,"thinking_control":"binary","thinking_efforts":["low","medium","high","xhigh","max"],"protocols":{"openai-chat":{},"anthropic":{}}},"model:*claude-haiku-5-5*":{"context_window":1000000,"max_output":128000,"supports_images":true,"thinking_control":"binary","thinking_efforts":["low","medium","high","xhigh","max"],"protocols":{"openai-chat":{},"anthropic":{}}},"host:token-plan.maas.qianwenaiapi.com":{"protocols":{"openai-chat":{},"openai-responses":{},"anthropic":{}}},"host:dashscope.aliyuncs.com":{"protocols":{"openai-chat":{"thinking_efforts":["low","medium","xhigh"]},"openai-responses":{"thinking_efforts":["low","medium","xhigh"]},"anthropic":{"thinking_efforts":["low","medium","xhigh"]}}},"host:dashscope-intl.aliyuncs.com":{"protocols":{"openai-chat":{"thinking_efforts":["low","medium","xhigh"]},"openai-responses":{"thinking_efforts":["low","medium","xhigh"]},"anthropic":{"thinking_efforts":["low","medium","xhigh"]}}},"host:*.cn-beijing.maas.aliyuncs.com":{"protocols":{"openai-chat":{"thinking_efforts":["low","medium","xhigh"]},"openai-responses":{"thinking_efforts":["low","medium","xhigh"]},"anthropic":{"thinking_efforts":["low","medium","xhigh"]}}},"host:*.ap-southeast-1.maas.aliyuncs.com":{"protocols":{"openai-chat":{"thinking_efforts":["low","medium","xhigh"]},"openai-responses":{"thinking_efforts":["low","medium","xhigh"]},"anthropic":{"thinking_efforts":["low","medium","xhigh"]}}},"host:api.openai.com":{"protocols":{"openai-responses":{}}},"host:api.anthropic.com":{"protocols":{"anthropic":{}}},"host:api.x.ai":{"protocols":{"openai-responses":{}}},"host:us.api.x.ai":{"protocols":{"openai-responses":{}}},"host:open.bigmodel.cn":{"protocols":{"openai-chat":{},"openai-responses":{"thinking_efforts":["low","high","max"]}}},"deepseek-v4-flash":{"context_window":1048576,"max_output":393216,"supports_images":true,"thinking_control":"binary","thinking_efforts":["minimal","low","medium","high","xhigh"],"protocols":{"anthropic":{},"openai-responses":{}}},"deepseek-chat":{"context_window":65536,"max_output":8192,"supports_images":false,"thinking_control":"binary","thinking_efforts":["minimal","low","medium","high","xhigh"],"protocols":{"anthropic":{},"openai-responses":{}}},"deepseek-coder":{"context_window":65536,"max_output":8192,"supports_images":false,"thinking_control":"binary","thinking_efforts":["minimal","low","medium","high","xhigh"],"protocols":{"anthropic":{},"openai-responses":{}}},"deepseek-reasoner":{"context_window":65536,"max_output":8192,"supports_images":false,"thinking_control":"binary","thinking_efforts":["minimal","low","medium","high","xhigh"],"protocols":{"anthropic":{},"openai-responses":{}}},"model:*deepseek-v4.1-flash*":{"context_window":1048576,"max_output":393216,"supports_images":true,"thinking_control":"binary","thinking_efforts":["minimal","low","medium","high","xhigh"],"protocols":{"anthropic":{},"openai-responses":{}}},"model:*deepseek-v4-flash-vision-exp*":{"context_window":1048576,"max_output":393216,"supports_images":true,"thinking_control":"binary","thinking_efforts":["minimal","low","medium","high","xhigh"],"protocols":{"anthropic":{},"openai-responses":{}}},"model:*deepseek-v4-flash*":{"context_window":1048576,"max_output":393216,"supports_images":true,"thinking_control":"binary","thinking_efforts":["minimal","low","medium","high","xhigh"],"protocols":{"anthropic":{},"openai-responses":{}}},"model:*deepseek-flash*":{"context_window":1048576,"max_output":393216,"supports_images":true,"thinking_control":"binary","thinking_efforts":["minimal","low","medium","high","xhigh"],"protocols":{"anthropic":{},"openai-responses":{}}},"model:*deepseek*":{"thinking_control":"binary","thinking_efforts":["minimal","low","medium","high","xhigh"],"protocols":{"anthropic":{},"openai-responses":{}}},"host:api.deepseek.com":{"thinking_control":"binary","thinking_efforts":["minimal","low","medium","high","xhigh"],"protocols":{"anthropic":{},"openai-responses":{}}},"profile:deepseek":{"protocols":{"openai-chat":{"thinking_control":"binary","thinking_efforts":["low","high","max"]},"openai-responses":{"thinking_control":"binary","thinking_efforts":["low","high","max"]},"anthropic":{"thinking_control":"binary","thinking_efforts":["low","high","max"]}}},"model:*kimi-k3*":{"context_window":1048576,"max_output":131072,"supports_images":true,"thinking_control":"effort","thinking_efforts":["low","high","max"],"protocols":{"openai-chat":{},"anthropic":{},"openai-responses":{}}},"model:*kimi-k2.7-code*":{"context_window":262144,"supports_images":true,"thinking_control":"always","protocols":{"anthropic":{},"openai-responses":{}}},"model:*kimi-k2.6*":{"context_window":262144,"supports_images":true,"thinking_control":"binary","protocols":{"anthropic":{"thinking_control":"effort","thinking_efforts":["low","medium","high","xhigh","max"]},"openai-responses":{}}},"model:*kimi-k2.5*":{"thinking_control":"binary","protocols":{"anthropic":{}}},"model:*mimo-v2.6*":{"context_window":1048576,"max_output":131072,"supports_images":true,"thinking_control":"binary","protocols":{"openai-chat":{},"openai-responses":{},"anthropic":{}}},"model:*agnes-3.0-flash*":{"context_window":512000,"max_output":65536,"supports_images":true,"thinking_control":"binary","protocols":{"openai-chat":{},"anthropic":{},"openai-responses":{}}},"model:*grok-*":{"protocols":{"anthropic":{},"openai-chat":{},"openai-responses":{}}},"model:*mimo-v2.5-pro*":{"context_window":1048576,"max_output":131072,"supports_images":false,"thinking_control":"binary","protocols":{"anthropic":{}}},"model:*mimo-v2.5*":{"context_window":1048576,"max_output":131072,"supports_images":true,"thinking_control":"binary","protocols":{"anthropic":{}}},"host:api.minimaxi.com":{"protocols":{"openai-chat":{},"openai-responses":{},"anthropic":{}}},"host:api.minimax.io":{"protocols":{"openai-chat":{},"openai-responses":{},"anthropic":{}}},"model:*minimax-m3.1-flash*":{"context_window":1000000,"max_output":524288,"supports_images":true,"thinking_control":"always","thinking_efforts":["low","medium","high","xhigh","max"],"protocols":{"openai-responses":{},"anthropic":{},"openai-chat":{}}},"model:*minimax-m3*":{"context_window":1000000,"supports_images":true,"thinking_control":"binary","protocols":{"openai-responses":{},"anthropic":{},"openai-chat":{}}},"model:*minimax-m2.7*":{"thinking_control":"always","protocols":{"anthropic":{},"openai-chat":{}}},"model:*minimax-m2.5*":{"thinking_control":"always","protocols":{"anthropic":{},"openai-chat":{}}},"model:*qwen4-max-preview*":{"supports_images":true,"thinking_control":"binary","thinking_efforts":["low","medium","xhigh"],"protocols":{"openai-chat":{},"anthropic":{},"openai-responses":{}}},"model:*qwen4.0-max-preview*":{"supports_images":true,"thinking_control":"binary","thinking_efforts":["low","medium","xhigh"],"protocols":{"openai-chat":{},"anthropic":{},"openai-responses":{}}},"model:*qwen3.8-max*":{"context_window":1000000,"max_output":131072,"supports_images":true,"thinking_efforts":["minimal","low","medium","high","xhigh","max"],"protocols":{"anthropic":{},"openai-responses":{}}},"model:*qwen3.8-27b*":{"context_window":1000000,"max_output":131072,"supports_images":true,"thinking_efforts":["minimal","low","medium","high","xhigh","max"],"protocols":{"anthropic":{},"openai-responses":{}}},"model:*qwen3.8-2.4t-a95b*":{"context_window":1000000,"max_output":131072,"supports_images":true,"thinking_control":"always","thinking_efforts":["minimal","low","medium","high","xhigh","max"],"protocols":{"anthropic":{},"openai-responses":{}}},"model:*qwen3.8*":{"context_window":1000000,"max_output":131072,"supports_images":true,"thinking_efforts":["minimal","low","medium","high","xhigh","max"],"protocols":{"anthropic":{},"openai-responses":{}}},"model:*qwen3.7-max*":{"supports_images":false,"protocols":{"anthropic":{},"openai-responses":{}}},"model:*qwen3.7*":{"supports_images":true,"protocols":{"anthropic":{},"openai-responses":{}}},"model:*qwen3.6*":{"supports_images":true,"protocols":{"anthropic":{},"openai-responses":{}}},"model:*qwen3.5*":{"thinking_control":"binary","protocols":{"anthropic":{}}},"model:*glm-5.3-flash*":{"context_window":1000000,"max_output":131072,"supports_images":true,"thinking_control":"always","thinking_efforts":["low","high","max"],"protocols":{"openai-chat":{},"anthropic":{},"openai-responses":{}}},"model:*glm-5.3*":{"context_window":1000000,"max_output":131072,"supports_images":false,"thinking_control":"always","thinking_efforts":["low","high","max"],"protocols":{"openai-chat":{},"anthropic":{},"openai-responses":{}}},"model:*glm-5.2*":{"thinking_control":"binary","thinking_efforts":["minimal","low","medium","high","xhigh","max"],"protocols":{"openai-chat":{},"anthropic":{},"openai-responses":{}}},"model:*glm-5*":{"thinking_control":"binary","protocols":{"anthropic":{},"openai-responses":{}}},"model:*hy4*":{"context_window":1048576,"max_output":65536,"supports_images":true,"thinking_control":"binary","thinking_efforts":["high"],"protocols":{"openai-chat":{},"openai-responses":{},"anthropic":{}}},"hy4-preview":{"context_window":1048576,"max_output":65536,"supports_images":true,"thinking_control":"binary","thinking_efforts":["high"],"protocols":{"openai-chat":{},"openai-responses":{},"anthropic":{}}},"model:*hy3*":{"thinking_control":"binary","protocols":{"openai-chat":{},"openai-responses":{},"anthropic":{}}},"MiniMax-Text-01":{"context_window":1000000,"max_output":16384,"supports_images":false},"MiniMax-M1":{"context_window":1000000,"max_output":16384,"supports_images":false,"protocols":{"anthropic":{},"openai-chat":{}}},"moonshot-v1-8k":{"context_window":8192,"max_output":4096,"supports_images":false},"moonshot-v1-32k":{"context_window":32768,"max_output":4096,"supports_images":false},"moonshot-v1-128k":{"context_window":131072,"max_output":4096,"supports_images":false},"glm-4-plus":{"context_window":128000,"max_output":4096,"supports_images":true},"glm-4-flash":{"context_window":128000,"max_output":4096,"supports_images":true},"qwen-max":{"context_window":32768,"max_output":8192,"supports_images":false},"qwen-plus":{"context_window":131072,"max_output":8192,"supports_images":false},"qwen-turbo":{"context_window":131072,"max_output":8192,"supports_images":false},"gemini-4-carbon":{"context_window":1048576,"max_output":65536,"supports_images":true,"protocols":{"anthropic":{},"gemini":{"thinking_control":"always","thinking_efforts":["low","medium","high"]}}},"gemini-4-argon":{"context_window":1048576,"max_output":65536,"supports_images":true,"protocols":{"anthropic":{},"gemini":{"thinking_control":"always","thinking_efforts":["low","medium","high"]}}},"gemini-3.8-flash":{"context_window":1048576,"max_output":65536,"supports_images":true,"protocols":{"anthropic":{},"gemini":{"thinking_control":"always","thinking_efforts":["low","medium","high"]}}},"gemini-3.6-flash":{"context_window":1048576,"max_output":65536,"supports_images":true,"protocols":{"anthropic":{},"gemini":{"thinking_control":"always","thinking_efforts":["minimal","low","medium","high"]}}},"gemini-3.5-flash-lite":{"context_window":1048576,"max_output":65536,"supports_images":true,"protocols":{"anthropic":{},"gemini":{"thinking_control":"always","thinking_efforts":["minimal","low","medium","high"]}}},"gemini-3.1-pro-preview":{"context_window":1048576,"max_output":65536,"supports_images":true,"protocols":{"anthropic":{},"gemini":{"thinking_control":"always","thinking_efforts":["low","medium","high"]}}},"gemini-3.1-flash-lite":{"context_window":1048576,"max_output":65536,"supports_images":true,"protocols":{"anthropic":{},"gemini":{"thinking_control":"always","thinking_efforts":["minimal","low","medium","high"]}}},"gemini-3-flash-preview":{"context_window":1048576,"max_output":65536,"supports_images":true,"protocols":{"anthropic":{},"gemini":{"thinking_control":"always","thinking_efforts":["minimal","low","medium","high"]}}},"gemini-2.5-pro":{"context_window":1048576,"max_output":65536,"supports_images":true,"protocols":{"anthropic":{},"gemini":{"thinking_control":"always","thinking_efforts":["low","medium","high"]}}},"gemini-2.5-flash":{"context_window":1048576,"max_output":65536,"supports_images":true,"protocols":{"anthropic":{},"gemini":{"thinking_control":"always","thinking_efforts":["low","medium","high"]}}},"gemini-2.5-flash-lite":{"context_window":1048576,"max_output":65536,"supports_images":true,"protocols":{"anthropic":{},"gemini":{"thinking_control":"binary","thinking_efforts":["low","medium","high"]}}},"yi-large":{"context_window":32768,"max_output":4096,"supports_images":false}}',
   ),
   lTt = { models: aTt },
   M5 = lTt.models;
@@ -163270,14 +163344,15 @@ function Q2(e, t = !0) {
   const [n, r] = y.useState(),
     [s, i] = y.useState(!1),
     [o, a] = y.useState(0),
-    c = e && e.includes("token=") ? e : void 0;
+    bundledPreview = e && /^\/design-styles\/[a-z0-9-]+\.webp$/.test(e),
+    c = e && (bundledPreview || e.includes("token=")) ? e : void 0;
   return (
     y.useEffect(() => {
       if ((i(!1), !e)) {
         r(void 0);
         return;
       }
-      if (e.includes("token=")) {
+      if (c) {
         r(void 0);
         return;
       }
@@ -163294,12 +163369,12 @@ function Q2(e, t = !0) {
           u = !1;
         }
       );
-    }, [e, o]),
+    }, [e, c, o]),
     {
       ...(c ? { src: c } : n ? { src: n.src } : {}),
       failed: s,
       retry() {
-        if (!t || o > 0) {
+        if (!t || bundledPreview || o > 0) {
           i(!0);
           return;
         }
@@ -163375,23 +163450,48 @@ function zTt(e) {
       });
     });
 }
+let bundledStyleCatalog;
+function loadBundledStyleCatalog() {
+  return bundledStyleCatalog ??= fetch("/design-styles/catalog.json")
+    .then((response) => {
+      if (!response.ok) throw new Error("bundled_style_catalog_unavailable");
+      return response.json();
+    })
+    .then((styles) => {
+      const encoder = new TextEncoder();
+      return Promise.all(styles.map(async (style) => {
+        const bytes = await crypto.subtle.digest("SHA-256", encoder.encode(JSON.stringify(style)));
+        const hash = Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
+        return {
+          ref: { kind: "style", id: style.id, version: `catalog-${hash.slice(0, 12)}`, digest: `sha256:${hash}` },
+          name: style.title,
+          description: style.description,
+          category: style.category,
+          context: style.context,
+          recommended: style.recommended,
+          previewUrl: `/design-styles/${style.id}.webp`,
+        };
+      }));
+    })
+    .catch((error) => {
+      bundledStyleCatalog = void 0;
+      throw error;
+    });
+}
 async function $Tt(e, t) {
   if (t === "design-system") {
     const i = await e({ resource: "design-system" });
     return { items: i.designSystems, error: i.error ?? "" };
   }
-  const n = await Promise.all(
-      UX.map((i) =>
-        e({ designType: "prototype", resource: "style", context: i }),
-      ),
-    ),
-    r = new Set(),
-    s = n
-      .flatMap((i) => i.styles ?? [])
-      .filter((i) => (r.has(i.ref.id) ? !1 : (r.add(i.ref.id), !0)));
+  const bundled = et.kind === "electron" && ts()?.transport !== "relay"
+    ? await loadBundledStyleCatalog().catch(() => void 0)
+    : void 0;
+  const n = bundled ? { styles: bundled } : await e({ designType: "prototype", resource: "style" }),
+    r = n.styles ?? [],
+    s = UX.flatMap((i) => r.filter((o) => o.context === i));
   return {
     items: s,
-    error: s.length ? "" : (n.map((i) => i.error).find(Boolean) ?? ""),
+    error: s.length ? "" : (n.error ?? ""),
   };
 }
 function M_e({ item: e }) {
@@ -163405,6 +163505,8 @@ function M_e({ item: e }) {
         className: "design-resource-thumb",
         src: t.src,
         alt: "",
+        loading: "lazy",
+        decoding: "async",
         onError: t.retry,
       });
 }
@@ -164627,17 +164729,9 @@ const sjt = {
     prototype: { mode: "prototype", query: "" },
     pptx: { mode: "deck", query: "" },
     video: { mode: "video", query: "" },
-  },
-  ijt = new URL("/catalog/templates", Qxe).href;
+  };
 function uhe() {
-  const { t: e } = Xe();
-  return l.jsx("a", {
-    className: "design-examples-more",
-    href: ijt,
-    target: "_blank",
-    rel: "noreferrer",
-    children: e("design.moreTemplates"),
-  });
+  return null;
 }
 function ojt(e, t) {
   const n = Jt((u) => u.designCatalog),
@@ -197151,7 +197245,10 @@ function VS({
                       }),
                     ],
                   });
-                  return c && dOt.test(E.name)
+                  const p = !i && (E.employeeAttachment === !0 ||
+                    typeof E.uri === "string" && /^file:\/\/[^?#]*\/source-runtime\/attachments\/[a-f0-9-]{36}\/[^/?#]+$/.test(E.uri)) &&
+                    typeof et.saveEmployeeAttachment === "function";
+                  return p || c && (E.fileRef || dOt.test(E.name))
                     ? l.jsx(
                         "button",
                         {
@@ -197161,8 +197258,9 @@ function VS({
                             " cursor-pointer appearance-none hover:bg-accent/40",
                           title: E.name,
                           "aria-label": E.name,
-                          onClick: () =>
-                            c(E.uri, { label: E.name, fileRef: E.fileRef }),
+                          onClick: () => p
+                            ? et.saveEmployeeAttachment(e, E.uri).catch((error) => ln(wn(error)))
+                            : c(E.uri ?? E.fileRef?.path, { label: E.name, fileRef: E.fileRef }),
                           children: M,
                         },
                         `${E.uri}-${T}`,
@@ -201542,11 +201640,15 @@ function ZBt(e) {
     )
     .replace(/\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "");
 }
-async function XBt(e, t) {
+async function XBt(e, t, privateExport = !1) {
   const n = dTe();
   try {
     const r = fTe(n);
-    ((n.srcdoc = ZBt(e)), document.body.append(n), await r);
+    if (privateExport) n.setAttribute("sandbox", "allow-same-origin");
+    const policy = privateExport
+      ? '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\' data: blob:; img-src data: blob:; font-src data: blob:">'
+      : "";
+    ((n.srcdoc = policy + ZBt(e)), document.body.append(n), await r);
     const s = n.contentDocument,
       i = n.contentWindow;
     if (!s || !i) throw new Error("pptx_render_unavailable");
@@ -201569,7 +201671,8 @@ async function XBt(e, t) {
       s.querySelector("[data-ppt-slide]") ??
       s.querySelector(".slide") ??
       s.body;
-    if (!o.textContent?.trim())
+    const chartSelector = "[data-ppt-chart-spec]";
+    if (!o.textContent?.trim() && !(privateExport && (o.matches(chartSelector) || o.querySelector(chartSelector))))
       throw new Error(`slide_${t}_has_no_editable_text`);
     const a = o.cloneNode(!0),
       c = [o, ...o.querySelectorAll("*")],
@@ -201587,7 +201690,9 @@ async function XBt(e, t) {
           "EMBED",
           "LINK",
           "FORM",
-        ].includes(g.tagName)
+          "META",
+          "BASE",
+        ].includes(g.tagName.toUpperCase())
       ) {
         b.remove();
         continue;
@@ -201676,8 +201781,57 @@ async function XBt(e, t) {
     n.remove();
   }
 }
-async function QBt(e) {
+function nativePptxChart(element) {
+  const data = element.getAttribute("data-ppt-chart-spec");
+  if (data === null) return null;
+  const invalid = () => { throw new Error("invalid_pptx_chart_data"); };
+  if (!data || data.length > 32 * 1024) return invalid();
+  let chart;
+  try {
+    chart = JSON.parse(data);
+  } catch {
+    return invalid();
+  }
+  const types = new Map([
+    ["column", "bar"], ["bar", "bar"], ["line", "line"],
+    ["area", "area"], ["pie", "pie"], ["doughnut", "doughnut"],
+  ]);
+  const type = types.get(chart?.type);
+  const categories = chart?.categories;
+  const series = chart?.series;
+  const label = (value) => typeof value === "string" && value.trim() && value.length <= 160;
+  if (!type || !Array.isArray(categories) || !categories.length || categories.length > 200 ||
+      !categories.every(label) || !Array.isArray(series) || !series.length || series.length > 16 ||
+      series.some((item) => !label(item?.name) || !Array.isArray(item.values) ||
+        item.values.length !== categories.length || !item.values.every(Number.isFinite)) ||
+      (["pie", "doughnut"].includes(type) &&
+        (series.length !== 1 || series[0].values.some((v) => v < 0) || !series[0].values.some((v) => v > 0)))) {
+    return invalid();
+  }
+  const options = {
+    ...(type === "bar" ? { barDir: chart.type === "column" ? "col" : "bar" } : {}),
+    showLegend: chart.showLegend ?? (series.length > 1 || type === "pie" || type === "doughnut"),
+    showValue: chart.showValue ?? false,
+    showTitle: Boolean(chart.title),
+    ...(label(chart.title) ? { title: chart.title } : {}),
+  };
+  if (typeof options.showLegend !== "boolean" || typeof options.showValue !== "boolean" ||
+      chart.title !== void 0 && !label(chart.title)) return invalid();
+  if (chart.colors !== void 0) {
+    if (!Array.isArray(chart.colors) || !chart.colors.length ||
+        chart.colors.some((value) => typeof value !== "string" || !/^#?[0-9A-Fa-f]{6}$/.test(value))) return invalid();
+    options.chartColors = chart.colors.map((value) => value.replace(/^#/, ""));
+  }
+  if (chart.valueFormat !== void 0) {
+    if (!label(chart.valueFormat)) return invalid();
+    options.valAxisLabelFormatCode = chart.valueFormat;
+    options.dataLabelFormatCode = chart.valueFormat;
+  }
+  return { type, options, series: series.map((item) => ({ name: item.name, labels: categories, values: item.values })) };
+}
+async function QBt(e, nativeCharts = !1) {
   for (const t of [...e.querySelectorAll("svg")]) {
+    if (nativeCharts && t.closest("[data-ppt-chart-spec]")) continue;
     const n = t.getBoundingClientRect(),
       r = Math.max(
         1,
@@ -201800,7 +201954,7 @@ async function tFt(e) {
       const S = await r(C);
       if (S.kind !== "html" || !S.content)
         throw new Error("pptx_slide_not_committed");
-      u.push(await XBt(await zk(C, S.content, r, o), v + 1));
+      u.push(await XBt(await zk(C, S.content, r, o), v + 1, !!e.persist));
     }
     (e.onProgress?.({
       phase: "packaging",
@@ -201809,7 +201963,10 @@ async function tFt(e) {
     }),
       (d = dTe()));
     const f = fTe(d);
-    ((d.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;width:1920px;height:1080px;overflow:hidden}</style></head><body>${u.join("")}</body></html>`),
+    const exportPolicy = e.persist
+      ? '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'self\'; style-src \'unsafe-inline\'; img-src data: blob:; font-src data: blob:">'
+      : "";
+    ((d.srcdoc = `<!doctype html><html><head><meta charset="utf-8">${exportPolicy}<style>html,body{margin:0;width:1920px;height:1080px;overflow:hidden}</style></head><body>${u.join("")}</body></html>`),
       document.body.append(d),
       await f);
     const h = d.contentWindow,
@@ -201832,18 +201989,20 @@ async function tFt(e) {
     }
     if ([...p.images].some((v) => !v.complete || v.naturalWidth === 0))
       throw new Error("pptx_slide_preview_unavailable");
-    e.mode === "editable" && (await QBt(p));
+    e.mode === "editable" && (await QBt(p, !!e.persist));
     const b = await h.domToPptx.exportToPptx(
       [...p.querySelectorAll("body > section.slide")],
       {
         fileName: e.fileName,
         skipDownload: !0,
-        autoEmbedFonts: !0,
+        autoEmbedFonts: !e.persist,
         svgAsVector: !0,
+        ...(e.persist ? { nativeChart: nativePptxChart } : {}),
       },
     );
     if (!b || typeof b.size != "number" || b.size < 1e3)
       throw new Error("invalid_pptx_result");
+    if (e.persist) return await e.persist(b, t.length);
     return (eFt(b, e.fileName), { saved: !0, slideCount: t.length });
   } finally {
     ((i = !0), s.forEach((f) => Jn.releaseResource(f)), d?.remove());
@@ -201896,6 +202055,8 @@ const OT = {
   pptx_export_bundle_unavailable: "PPTX 导出组件加载失败，请刷新后重试",
   pptx_export_engine_unavailable: "PPTX 导出组件启动失败，请刷新后重试",
   pptx_slide_preview_unavailable: "页面预览图尚未生成，请等待页面完成后重试",
+  invalid_pptx_chart_data: "图表数据不完整或格式无效，无法导出为可编辑图表",
+  invalid_pptx_chart_bounds: "图表尺寸无效，请调整页面后重新导出",
   pptx_slide_render_failed: "页面截图连续失败，请重试导出",
 };
 function Tz(e) {
@@ -201945,6 +202106,21 @@ async function jz(e) {
     throw new Error("pptx_layout_validation_unavailable");
   const r = ir.getState().account?.id;
   if (!r) throw new Error("account_unavailable");
+  if (window.monkeyai?.storePrivateSlideDeck && (await et.getRuntimeEndpoint())?.sourcePreview) {
+    const { manifestPath, slideCount } = await Jr("canvas_prepare_pptx", { sessionId: e.sessionId });
+    return tFt({
+      ...e, fileName: t,
+      persist: async (blob, count) => {
+        if (count !== slideCount) throw new Error("invalid_pptx_slide_order");
+        return window.monkeyai.storePrivateSlideDeck(
+          { accountId: r, sessionId: e.sessionId },
+          new Uint8Array(await blob.arrayBuffer()),
+          count,
+          manifestPath,
+        );
+      },
+    });
+  }
   const s = await Jr("canvas_prepare_pptx", { sessionId: e.sessionId });
   e.onProgress?.({
     phase: e.reuseExisting && e.saveDialog === !1 ? "preparing" : "validating",
@@ -245614,8 +245790,7 @@ async function qRe(e, t, n, r, s, i) {
   (h.start(u, m, Math.min(a.originalDuration, Math.max(0, f.duration - m))),
     h.stop(u + c));
 }
-const fJt =
-    "https://cdn.hailuoai.com/public_assets/minimax-hub/plugins/video-editor/0.2.3/vendor",
+const fJt = "/assets/media-vendor",
   WJ = {
     Popular: [
       "Inter",
@@ -245701,7 +245876,7 @@ function YRe() {
           i = () => {
             (s(),
               n.remove(),
-              t(new Error("无法加载内置字体资源，请检查网络后重试")));
+              t(new Error("无法加载内置字体资源，请检查安装包是否完整")));
           };
         ((n.onload = () => {
           (s(), e());
@@ -245999,6 +246174,8 @@ function xJt(e, t) {
 <fcpxml version="1.10"><resources><format id="${i}" name="FFVideoFormat${t.width}x${t.height}p30" frameDuration="${s}" width="${t.width}" height="${t.height}" />${c}${h}</resources><library><event name="${Lb(t.title)}"><project name="${Lb(t.title)}"><sequence format="${i}" duration="${$f(r)}" tcStart="0s" tcFormat="NDF"><spine>${f}</spine></sequence></project></event></library></fcpxml>`;
 }
 async function GJ(e, t, n, r, s) {
+  lo(r);
+  if (!n.length) return new Map();
   const i = await sd(Qn(), r);
   let o = !1;
   try {
@@ -258212,6 +258389,13 @@ function ctn({
         (_i(!0), hr(null));
         try {
           if (U === "editable") {
+            if (ts()?.transport !== "relay" && window.monkeyai?.storePrivateSlideDeck && (await et.getRuntimeEndpoint())?.sourcePreview) {
+              await jz({
+                sessionId: e, designPath: n, nodes: Xp(), title: J?.title,
+                mode: "editable", saveDialog: !1, onProgress: hr,
+              });
+              if (Pi.current !== e) return;
+            }
             hr({ phase: "saving", completed: 0, total: 0 });
             const de = await pTe({ sessionId: e, title: J?.title });
             if (Pi.current !== e) return;

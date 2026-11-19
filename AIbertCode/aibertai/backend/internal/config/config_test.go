@@ -100,6 +100,18 @@ func TestLoadRequiresPprofAddr(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsNonLoopbackPprof(t *testing.T) {
+	t.Setenv("MONKEYAI_DATABASE_URL", "postgres://localhost/monkeyai")
+	for _, address := range []string{":6060", "0.0.0.0:6060", "[::]:6060", "192.0.2.10:6060"} {
+		t.Run(address, func(t *testing.T) {
+			t.Setenv("MONKEYAI_PPROF_ADDR", address)
+			if _, err := Load(nil); err == nil {
+				t.Fatal("期望拒绝非回环调试监听地址")
+			}
+		})
+	}
+}
+
 func TestLoadRejectsInvalidPublicURL(t *testing.T) {
 	t.Setenv("MONKEYAI_DATABASE_URL", "postgres://localhost/monkeyai")
 	t.Setenv("MONKEYAI_PUBLIC_URL", "javascript:alert(1)")

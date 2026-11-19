@@ -80,8 +80,7 @@ SELECT
             g.credits, sqlc.arg(root_credits)::numeric)::text,
         'available_credits', COALESCE(a.balance,
             g.credits, sqlc.arg(root_credits)::numeric)::text,
-        'inherited_from', COALESCE(g.source, sqlc.arg(root_group)::text),
-        'external_user_id', wb.external_user_id)
+        'inherited_from', COALESCE(g.source, sqlc.arg(root_group)::text))
 FROM
     users u
     LEFT JOIN LATERAL (
@@ -98,7 +97,6 @@ FROM
             AND period_start_at = sqlc.arg(period_start_at)
         LIMIT 1
     ) a ON TRUE
-    LEFT JOIN wallet_user_bindings wb ON wb.user_id = u.id
 WHERE
     u.deleted_at IS NULL
 ORDER BY
@@ -190,24 +188,6 @@ UPDATE credit_accounts
 SET period_end_at = sqlc.arg(period_end_at), updated_at = now()
 WHERE period_start_at = sqlc.arg(period_start_at)
     AND period_end_at <> sqlc.arg(period_end_at);
-
--- name: WalletUser :one
-SELECT min(i.provider_subject)::text AS external_user_id
-FROM user_identities i
-JOIN users u ON u.id = i.user_id AND u.status = 'active' AND u.deleted_at IS NULL
-LEFT JOIN wallet_user_bindings wb ON wb.user_id = i.user_id
-WHERE i.user_id = $1 AND i.provider = 'baizhiyun' AND i.deleted_at IS NULL
-    AND (wb.user_id IS NULL OR wb.external_user_id = i.provider_subject)
-GROUP BY i.user_id
-HAVING count(DISTINCT i.provider_subject) = 1;
-
--- name: HasWalletIdentity :one
-SELECT EXISTS (
-    SELECT 1 FROM user_identities i
-    JOIN users u ON u.id = i.user_id AND u.status = 'active' AND u.deleted_at IS NULL
-    WHERE i.user_id = $1 AND i.provider_subject = $2
-        AND i.provider = 'baizhiyun' AND i.deleted_at IS NULL
-)::boolean;
 
 -- name: GetAdjustment :one
 WITH locations AS MATERIALIZED (
@@ -555,14 +535,6 @@ SET status = sqlc.arg(status)::text,
     completed_at = now()
 WHERE billing_transaction_id = sqlc.arg(billing_transaction_id)::uuid AND status = 'unknown';
 
--- name: WalletStatus :one
-SELECT
-    status
-FROM
-    wallet_billing_records
-WHERE
-    transaction_id = $1;
-
 -- name: InitializePolicy :execresult
 INSERT INTO settings (KEY, value, updated_by_user_id)
 SELECT
@@ -894,11 +866,6 @@ INSERT INTO billing_transactions (id, user_id, account_id, session_id, category,
 	sqlc.arg(user_email), NULLIF (sqlc.arg(group_id)::text, '')::UUID,sqlc.arg(mode),sqlc.arg(status),sqlc.arg(reserve),sqlc.arg(pricing),NULLIF(sqlc.arg(idempotency_key)::text,''), sqlc.arg(request_hash),
 	sqlc.arg(started_at));
 
--- name: CreateWalletRecord :execresult
-INSERT INTO wallet_billing_records (biz_id, transaction_id, external_user_id, team_slug, base_url, app_id, status,
-    frozen_amount_quota)
-    VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7);
-
 -- name: StartTransaction :execresult
 UPDATE
     billing_transactions
@@ -907,7 +874,7 @@ SET
     updated_at = now()
 WHERE
     id = $1 AND started_at = (SELECT billing_activity_time('billing_transactions',$1::uuid))
-    AND status = 'reserved';
+    AND mode = 'local' AND status = 'reserved';
 
 -- name: LockUsage :one
 SELECT
@@ -1085,7 +1052,7 @@ SET
     error_code = 'execution_interrupted',
     updated_at = now()
 WHERE
-    status IN ('running', 'reserved', 'created')
+    mode = 'local' AND status IN ('running', 'reserved', 'created')
     AND updated_at < now() - interval '30 minutes';
 
 -- name: TransactionsToRetry :many
@@ -1094,7 +1061,7 @@ SELECT
 FROM
     billing_transactions
 WHERE
-    status = 'settling'
+    mode = 'local' AND status = 'settling'
     AND (next_retry_at IS NULL
         OR next_retry_at <= now())
 ORDER BY
@@ -1122,7 +1089,7 @@ SELECT
 FROM
     billing_transactions
 WHERE
-    status = 'unknown'
+    mode = 'local' AND status = 'unknown'
     AND category = 'model'
     AND request_id <> ''
     AND next_retry_at IS NOT NULL
@@ -1169,145 +1136,8 @@ ORDER BY
     id
 LIMIT 100;
 
--- name: WalletReservation :one
-SELECT
-    biz_id,
-    external_user_id,
-    base_url,
-    app_id,
-    frozen_amount_quota
-FROM
-    wallet_billing_records
-WHERE
-    transaction_id = $1;
-
--- name: SetWalletTeam :execresult
-UPDATE
-    wallet_billing_records
-SET
-    team_slug = $2
-WHERE
-    transaction_id = $1;
-
--- name: SetWalletStatus :execresult
-UPDATE
-    wallet_billing_records
-SET
-    status = $2,
-    error_code = $3,
-    trace_id = $4,
-    updated_at = now()
-WHERE
-    transaction_id = $1;
-
--- name: SetTransactionStatus :execresult
-UPDATE
-    billing_transactions
-SET
-    status = $2,
-    error_code = $3,
-    updated_at = now()
-WHERE
-    id = $1 AND started_at = (SELECT billing_activity_time('billing_transactions',$1::uuid));
-
--- name: MarkWalletReserved :execresult
-UPDATE
-    wallet_billing_records
-SET
-    status = 'reserved',
-    updated_at = now()
-WHERE
-    transaction_id = $1;
-
--- name: MarkReserved :execresult
-UPDATE
-    billing_transactions
-SET
-    status = 'reserved',
-    updated_at = now()
-WHERE
-    id = $1 AND started_at = (SELECT billing_activity_time('billing_transactions',$1::uuid))
-    AND status = 'created';
-
--- name: WalletConfirmation :one
-SELECT
-    w.biz_id,
-    w.external_user_id,
-    w.team_slug,
-    w.base_url,
-    w.app_id,
-    w.status,
-    t.item_name,
-    t.amount::text
-FROM
-    wallet_billing_records w
-    JOIN billing_transactions t ON t.id = w.transaction_id
-WHERE
-    t.id = $1 AND t.started_at = (SELECT billing_activity_time('billing_transactions',$1::uuid));
-
--- name: MarkWalletConfirming :execresult
-UPDATE
-    wallet_billing_records
-SET
-    status = 'confirming',
-    actual_amount_quota = $2,
-    confirmation_status = 'success',
-    updated_at = now()
-WHERE
-    transaction_id = $1;
-
--- name: SetWalletError :execresult
-UPDATE
-    wallet_billing_records
-SET
-    error_code = $2,
-    trace_id = $3,
-    updated_at = now()
-WHERE
-    transaction_id = $1;
-
--- name: SetTransactionError :execresult
-UPDATE
-    billing_transactions
-SET
-    error_code = $2
-WHERE
-    id = $1 AND started_at = (SELECT billing_activity_time('billing_transactions',$1::uuid));
-
--- name: MarkWalletConfirmed :execresult
-UPDATE
-    wallet_billing_records
-SET
-    status = 'confirmed',
-    error_code = '',
-    confirmed_at = now(),
-    updated_at = now()
-WHERE
-    transaction_id = $1;
-
--- name: HasPendingWalletTransactions :one
-SELECT
-    EXISTS (
-        SELECT
-            1
-        FROM
-            billing_transactions
-        WHERE
-            user_id = $1
-            AND MODE = 'remote'
-            AND status NOT IN ('settled', 'released', 'rejected'));
-
--- name: BindWalletUser :execresult
-INSERT INTO wallet_user_bindings (user_id, external_user_id, verified_at, updated_by_user_id)
-    VALUES ($1, $2, now(), $3)
-ON CONFLICT (user_id)
-    DO UPDATE SET
-        external_user_id = EXCLUDED.external_user_id,
-        verified_at = now(),
-        updated_by_user_id = EXCLUDED.updated_by_user_id;
-
 -- name: GetPolicy :one
--- 预留事务持有共享锁，避免连接切换漏查尚未提交的远程交易。
+-- 预留事务持有共享锁，确保同一次请求使用一致的计费策略。
 SELECT
     *
 FROM
@@ -1324,20 +1154,6 @@ FROM
 WHERE
     KEY = 'billing'
 FOR UPDATE;
-
--- name: SaveWalletConfig :execresult
-UPDATE settings
-SET value = jsonb_set(value, '{wallet}', $1::jsonb)
-WHERE key = 'billing';
-
--- name: HasOtherWalletTransactions :one
-SELECT EXISTS (
-    SELECT 1
-    FROM wallet_billing_records w
-    JOIN billing_transactions t ON t.id = w.transaction_id
-    WHERE t.status NOT IN ('settled', 'released', 'rejected')
-        AND (w.base_url <> $1 OR w.app_id <> $2)
-);
 
 -- name: EnsureActivityWeeks :one
 SELECT billing_ensure_activity_weeks(sqlc.arg(table_name)::text,sqlc.arg(at_time)::timestamptz)::boolean;

@@ -72,10 +72,6 @@ import { api } from "@/lib/api"
 import { CONSOLE_ROUTES } from "@/lib/routes"
 import { cn } from "@/lib/utils"
 import {
-  WalletSettings,
-  type WalletInput,
-} from "@/components/billing/wallet-settings"
-import {
   credits,
   cycleNames,
   dateTime,
@@ -121,12 +117,10 @@ export function BillingSettingsPage() {
     userIds: [],
   })
   const [resetRequestID, setResetRequestID] = useState("")
-  const [mode, setMode] = useState("local")
   const [enabled, setEnabled] = useState(true)
   const [busy, setBusy] = useState("")
   const [settingsLoadFailed, setSettingsLoadFailed] = useState(false)
   const [quotasLoadFailed, setQuotasLoadFailed] = useState(false)
-  const [walletVersion, setWalletVersion] = useState(0)
   const [query, setQuery] = useState("")
   const [memberSort, setMemberSort] = useState<QuotaMemberSort>("name-asc")
   const [memberViewport, setMemberViewport] = useState<HTMLDivElement | null>(
@@ -195,9 +189,7 @@ export function BillingSettingsPage() {
           setCycle(
             result.policy.pending_cycle ?? result.policy.quota_refresh_cycle
           )
-          setMode(result.policy.charging_mode)
           setEnabled(result.policy.enabled)
-          setWalletVersion((value) => value + 1)
         })
         .catch((error: Error) => {
           if (signal?.aborted) return
@@ -290,8 +282,7 @@ export function BillingSettingsPage() {
     }
   }
   const save = async (
-    section: string,
-    wallet?: WalletInput,
+    section: "environment" | "pricing" | "cycle" | "mode",
     pricingOverride?: PricingSettings,
     cycleOverride?: string
   ): Promise<boolean> => {
@@ -301,13 +292,11 @@ export function BillingSettingsPage() {
       const values =
         section === "environment"
           ? environment
-          : section === "wallet"
-            ? wallet
-            : section === "pricing"
-              ? (pricingOverride ?? pricing)
-              : section === "cycle"
-                ? { quota_refresh_cycle: cycleOverride ?? cycle }
-                : { charging_mode: mode, enabled }
+          : section === "pricing"
+            ? (pricingOverride ?? pricing)
+            : section === "cycle"
+              ? { quota_refresh_cycle: cycleOverride ?? cycle }
+              : { charging_mode: "local", enabled }
       const result = await api<BillingSettings>(
         `/api/admin/v1/billing/settings/${section}`,
         {
@@ -325,19 +314,14 @@ export function BillingSettingsPage() {
       showToast({
         status: "success",
         title:
-          section === "wallet"
-            ? result.policy.charging_mode === "remote" && result.policy.enabled
-              ? "百智云连接配置已保存，无需重启。"
-              : "百智云连接配置已保存，无需重启；请保存计费方式以启用远程计费。"
-            : section === "cycle"
-              ? `重置设置已保存，将于 ${dateTime(result.next_refresh_at)} 重置，当前余额不变。`
-              : section === "environment"
-                ? "云电脑计费已保存，新单价在下次预付时生效，已付费小时不变。"
-                : "设置已保存，对新调用生效。",
+          section === "cycle"
+            ? `重置设置已保存，将于 ${dateTime(result.next_refresh_at)} 重置，当前余额不变。`
+            : section === "environment"
+              ? "云电脑计费已保存，新单价在下次预付时生效，已付费小时不变。"
+              : "设置已保存，对新调用生效。",
       })
     } catch (e) {
       showToast({ status: "error", title: (e as Error).message })
-      if (section === "wallet") throw e
       return false
     } finally {
       setBusy("")
@@ -383,15 +367,9 @@ export function BillingSettingsPage() {
   const refreshQuotas = () => {
     void loadQuotas()
   }
-  const dirtyMode =
-    settings &&
-    (mode !== settings.policy.charging_mode ||
-      enabled !== settings.policy.enabled)
-  const savedLocalBilling =
-    settings?.policy.enabled && settings.policy.charging_mode === "local"
-  const savedBillingStateLabel = t(
-    `pages.billingSettings.groupQuota.${settings?.policy.enabled ? "remoteBilling" : "billingDisabled"}`
-  )
+  const dirtyMode = settings && enabled !== settings.policy.enabled
+  const savedLocalBilling = settings?.policy.enabled
+  const savedBillingStateLabel = t("pages.billingSettings.groupQuota.billingDisabled")
   const quotaCycleName = t(
     `pages.billingSettings.quotaRefresh.cycleLabels.${cycle}`
   )
@@ -588,10 +566,6 @@ export function BillingSettingsPage() {
       value: "local",
       label: t("pages.billingSettings.chargingMethod.modes.local"),
     },
-    {
-      value: "remote",
-      label: t("pages.billingSettings.chargingMethod.modes.remote"),
-    },
   ]
   const memberSortItems = [
     {
@@ -603,7 +577,7 @@ export function BillingSettingsPage() {
       label: t("pages.billingSettings.groupQuota.creditsAscending"),
     },
   ] satisfies { value: QuotaMemberSort; label: string }[]
-  const selectedMode = enabled ? mode : "disabled"
+  const selectedMode = enabled ? "local" : "disabled"
   return (
     <section className="flex min-h-0 flex-1 flex-col p-4 pt-px lg:h-[calc(100vh-5rem)] lg:flex-none lg:overflow-hidden">
       <div className="grid min-h-0 flex-1 items-start gap-4 lg:grid-cols-2 lg:items-stretch">
@@ -732,12 +706,7 @@ export function BillingSettingsPage() {
                 {(dirtyMode || busy === "mode") && (
                   <CardAction>
                     <Button
-                      disabled={
-                        (enabled &&
-                          mode === "remote" &&
-                          !settings?.wallet.configured) ||
-                        !!busy
-                      }
+                      disabled={!!busy}
                       onClick={() => void save("mode")}
                     >
                       {busy === "mode"
@@ -754,13 +723,7 @@ export function BillingSettingsPage() {
                       items={modeItems}
                       value={selectedMode}
                       onValueChange={(value) => {
-                        if (value === null) return
-                        if (value === "disabled") {
-                          setEnabled(false)
-                          return
-                        }
-                        setMode(value)
-                        setEnabled(true)
+                        if (value !== null) setEnabled(value === "local")
                       }}
                     >
                       <SelectTrigger
@@ -781,7 +744,7 @@ export function BillingSettingsPage() {
                         </SelectGroup>
                       </SelectContent>
                     </Select>
-                    {enabled && mode === "local" && (
+                    {enabled && (
                       <ItemGroup className="gap-2">
                         <Item variant="outline">
                           <ItemContent>
@@ -846,16 +809,6 @@ export function BillingSettingsPage() {
                           {t("pages.billingSettings.quotaRefresh.resetNow")}
                         </Button>
                       </ItemGroup>
-                    )}
-                    {enabled && mode === "remote" && (
-                      <div className="space-y-3">
-                        <WalletSettings
-                          key={walletVersion}
-                          info={settings.wallet}
-                          busy={!!busy}
-                          onSave={(input) => save("wallet", input)}
-                        />
-                      </div>
                     )}
                   </>
                 ) : (
@@ -963,9 +916,7 @@ export function BillingSettingsPage() {
                       <Switch
                         id="environment-billing-enabled"
                         checked={environment.enabled}
-                        disabled={
-                          !!busy || settings?.policy.charging_mode !== "local"
-                        }
+                        disabled={!!busy}
                         onCheckedChange={(enabled) =>
                           setEnvironment({ ...environment, enabled })
                         }
@@ -1122,7 +1073,7 @@ export function BillingSettingsPage() {
             onSubmit={(event) => {
               event.preventDefault()
               if (!cycleNames[cycleValue] || busy === "cycle") return
-              void save("cycle", undefined, undefined, cycleValue).then(
+              void save("cycle", undefined, cycleValue).then(
                 (saved) => {
                   if (!saved) return
                   setCycle(cycleValue)
@@ -1205,7 +1156,7 @@ export function BillingSettingsPage() {
                 ...pricing,
                 [pricingTarget]: pricingValue,
               }
-              void save("pricing", undefined, nextPricing).then((saved) => {
+              void save("pricing", nextPricing).then((saved) => {
                 if (!saved) return
                 setPricing(nextPricing)
                 setPricingTarget(null)

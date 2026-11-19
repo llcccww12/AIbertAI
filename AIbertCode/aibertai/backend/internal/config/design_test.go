@@ -11,8 +11,8 @@ func TestDesignConfigDefaults(t *testing.T) {
 	for _, value := range []string{"", "https://override.example/api/design"} {
 		t.Setenv("MONKEYAI_DESIGN_RESPUB_URL", value)
 		got := loadDesign()
-		if got.DesignRespubURL != "https://hub.monkeycode-ai.com/api/design" {
-			t.Fatalf("Hub 地址必须内置，不受环境变量影响: %q", got.DesignRespubURL)
+		if got.DesignRespubURL != value {
+			t.Fatalf("发布源必须由部署方显式配置: %q", got.DesignRespubURL)
 		}
 		if got.DesignMediaJWTSecret != "" {
 			t.Fatal("显式空环境变量未覆盖编译默认密钥")

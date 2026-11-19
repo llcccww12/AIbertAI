@@ -35,7 +35,11 @@ class B {
   #a = {};
   #o = [];
   #n = [];
+  #threaded;
   loaded = !1;
+  constructor(threaded) {
+    this.#threaded = threaded;
+  }
   #s = () => {
     this.#e &&
       (this.#e.onmessage = ({ data: { id: t, type: e, data: r } }) => {
@@ -103,8 +107,16 @@ class B {
       this.#s()),
     this.#t({ type: s.LOAD, data: e }, void 0, r)
   );
-  exec = (t, e = -1, { signal: r } = {}) =>
-    this.#t({ type: s.EXEC, data: { args: t, timeout: e } }, void 0, r);
+  exec = (args, timeout = -1, { signal } = {}) => {
+    if (this.#threaded) {
+      // Cap decoding, filters and encoding so they can share the WASM worker pool.
+      args = [
+        "-filter_threads", "2", "-filter_complex_threads", "2", "-threads", "2",
+        ...args.slice(0, -1), "-threads", "2", args.at(-1),
+      ];
+    }
+    return this.#t({ type: s.EXEC, data: { args, timeout } }, void 0, signal);
+  };
   ffprobe = (t, e = -1, { signal: r } = {}) =>
     this.#t({ type: s.FFPROBE, data: { args: t, timeout: e } }, void 0, r);
   terminate = () => {
@@ -152,85 +164,39 @@ var U;
     (a.WORKERFS = "WORKERFS"),
     (a.PROXYFS = "PROXYFS"));
 })(U || (U = {}));
-const j = "/assets/worker-BAOIWoxA.js",
-  $ = new Error("failed to get response body reader"),
-  W = new Error("failed to complete download"),
-  C = "Content-Length",
-  F = async (a, t) => {
-    const e = await fetch(a);
-    let r;
-    try {
-      const o = parseInt(e.headers.get(C) || "-1"),
-        i = e.body?.getReader();
-      if (!i) throw $;
-      const c = [];
-      let n = 0;
-      for (;;) {
-        const { done: f, value: u } = await i.read(),
-          h = u ? u.length : 0;
-        if (f) {
-          if (o != -1 && o !== n) throw W;
-          t && t({ url: a, total: o, received: n, delta: h, done: f });
-          break;
-        }
-        (c.push(u),
-          (n += h),
-          t && t({ url: a, total: o, received: n, delta: h, done: f }));
-      }
-      const l = new Uint8Array(n);
-      let d = 0;
-      for (const f of c) (l.set(f, d), (d += f.length));
-      r = l.buffer;
-    } catch (o) {
-      (console.log("failed to send download progress event: ", o),
-        (r = await e.arrayBuffer()));
-    }
-    return r;
-  },
-  g = async (a, t, e = !1, r) => {
-    const o = e ? await F(a, r) : await (await fetch(a)).arrayBuffer(),
-      i = new Blob([o], { type: t });
-    return URL.createObjectURL(i);
-  };
+const j = "/assets/worker-BAOIWoxA.js";
+async function loadLocalCore(threaded) {
+  const engine = new B(threaded);
+  const folder = new URL(`${M}/ffmpeg/core-${threaded ? "mt" : "st"}/`, import.meta.url);
+  const asset = (name) => new URL(name, folder).href;
+  try {
+    await engine.load({
+      classWorkerURL: j,
+      coreURL: asset("ffmpeg-core.js"),
+      wasmURL: asset("ffmpeg-core.wasm"),
+      ...(threaded ? { workerURL: asset("ffmpeg-core.worker.js") } : {}),
+    }, { signal: AbortSignal.timeout(20000) });
+    return engine;
+  } catch (error) {
+    engine.terminate();
+    throw error;
+  }
+}
 let w,
   b = Promise.resolve();
 async function O(a) {
-  return (
-    w ||
-      (w = (async () => {
-        a?.({ stage: "downloading", progress: 0 });
-        const t = new B(),
-          e = typeof crossOriginIsolated < "u" && crossOriginIsolated,
-          r = `${M}/ffmpeg/core-${e ? "mt" : "st"}`,
-          o = [];
-        try {
-          const [i, c, n] = await Promise.all([
-            g(`${r}/ffmpeg-core.js`, "text/javascript"),
-            g(`${r}/ffmpeg-core.wasm`, "application/wasm"),
-            e ? g(`${r}/ffmpeg-core.worker.js`, "text/javascript") : void 0,
-          ]);
-          return (
-            o.push(i, c, ...(n ? [n] : [])),
-            a?.({ stage: "downloading", progress: 0.9 }),
-            await t.load({
-              classWorkerURL: j,
-              coreURL: i,
-              wasmURL: c,
-              ...(n ? { workerURL: n } : {}),
-            }),
-            a?.({ stage: "downloading", progress: 1 }),
-            t
-          );
-        } catch (i) {
-          throw (t.terminate(), i);
-        } finally {
-          t.loaded || o.forEach((i) => URL.revokeObjectURL(i));
-        }
-      })().catch((t) => {
-        throw ((w = void 0), t);
-      })),
-    w
-  );
+  w ??= (async () => {
+    a?.({ stage: "downloading", progress: 0 });
+    const engine = globalThis.crossOriginIsolated
+      ? await loadLocalCore(true).catch(() => loadLocalCore(false))
+      : await loadLocalCore(false);
+    a?.({ stage: "downloading", progress: 1 });
+    return engine;
+  })().catch((error) => {
+    w = undefined;
+    throw error;
+  });
+  return w;
 }
 function L(a) {
   const t = b.then(a);

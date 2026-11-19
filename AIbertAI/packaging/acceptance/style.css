@@ -1,0 +1,15 @@
+:root {
+  color-scheme: light dark;
+  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+main { max-width: 620px; margin: 32px auto; padding: 0 24px 24px; }
+h1 { font-size: 26px; margin-bottom: 14px; }
+h2 { font-size: 16px; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 16px; margin-bottom: 24px; }
+dd { margin: 0; overflow-wrap: anywhere; }
+label { display: block; font-weight: 600; margin-bottom: 6px; }
+textarea { box-sizing: border-box; width: 100%; padding: 10px; resize: vertical; font: inherit; }
+.actions { display: flex; gap: 10px; margin-top: 10px; }
+button { padding: 7px 15px; font: inherit; cursor: pointer; }
+button:focus-visible, textarea:focus-visible { outline: 2px solid #3189d3; outline-offset: 2px; }
+pre { font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }

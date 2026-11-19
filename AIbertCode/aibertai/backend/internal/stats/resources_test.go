@@ -198,3 +198,21 @@ func TestResourceUsageUsers(t *testing.T) {
 	}
 	number(t, local["items"].([]any)[0].(map[string]any), "calls", 3)
 }
+
+func TestResourceUsageIncludesModelGatewayCalls(t *testing.T) {
+	s, user, model := fixture(t)
+	at := s.now().Add(-time.Minute)
+	id := resourceSession(t, s, user, at, 1, 0, false)
+	for _, status := range []string{"succeeded", "failed", "running"} {
+		exec(t, s, "INSERT INTO model_calls(session_id,user_id,model_id,status,started_at) VALUES($1,$2,$3,$4,$5)", id, user, model, status, at)
+	}
+	out := request(t, s, resourceUsagePath+"?kind=model&resource_id="+model, 200)
+	items := out["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("expected one model row, got %v", items)
+	}
+	row := items[0].(map[string]any)
+	if row["calls"] != 2.0 || row["failed"] != 1.0 || row["used_sessions"] != 1.0 {
+		t.Fatalf("incorrect model counts: %v", row)
+	}
+}

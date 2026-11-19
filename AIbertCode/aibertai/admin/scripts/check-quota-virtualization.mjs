@@ -49,7 +49,6 @@ try {
       cached_input_credits_per_million_tokens: "100",
       output_credits_per_million_tokens: "2000",
     },
-    wallet: { configured: false, credentials_configured: false },
     timezone: "Asia/Shanghai",
     next_refresh_at: "2026-10-19T00:00:00Z",
   }
@@ -122,7 +121,6 @@ try {
           },
           user_name: user.name,
           user_email: user.email,
-          wallet: { configured: false, credentials_configured: false },
           external_user_id: "",
         })
       }

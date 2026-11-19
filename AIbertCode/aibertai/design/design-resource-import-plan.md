@@ -142,7 +142,7 @@ type ImportSections struct {
 
 ```text
 instance_id                          由Pro统计扩展注入，复用pro_statistics_identity的持久化UUIDv7
-respub base                          二进制固定内置https://hub.monkeycode-ai.com/api/design
+respub base                          二进制固定内置https://design.example.test/api/design
 MONKEYAI_DESIGN_PUBLISHER_ID           预期发布者身份
 MONKEYAI_DESIGN_RESPUB_JWT_SECRET      与respub验证密钥一致
 MONKEYAI_DESIGN_MEDIA_JWT_SECRET       本地媒体专用，与respub密钥分离
@@ -157,7 +157,7 @@ MONKEYAI_DESIGN_MEDIA_JWT_SECRET       本地媒体专用，与respub密钥分�
 {
   "schema_version": 1,
   "publisher_id": "发布者稳定ID",
-  "respub": {"base_url": "https://hub.monkeycode-ai.com/api/design"},
+  "respub": {"base_url": "https://design.example.test/api/design"},
   "monkeyai": {"base_url": "https://当前服务端/api/v1/design-resources", "available": true,
     "snapshot": {"publisher_id":"发布者稳定ID","release_id":"源ReleaseID",
       "schema_version":1,"digest_schema":"design-content-v1"}}
@@ -267,7 +267,7 @@ go build -trimpath -o monkeyai-server \
 | MonkeyAI 本地资源 | `https://<server>/api/v1/design-resources` | 导入快照的离线目录；后缀与 hub 相同 |
 | MonkeyAI 控制面 | `https://<server>/api/v1/design-resources` | `config`、`token` 是 catalog 的兄弟路径，不属于资源契约 |
 
-- Hub base 固定内置为 `https://hub.monkeycode-ai.com/api/design`，不得由客户端或服务端按域名补 `/api/design`。Desktop 只用“完整 base + 相对后缀”拼 URL。
+- Hub base 固定内置为 `https://design.example.test/api/design`，不得由客户端或服务端按域名补 `/api/design`。Desktop 只用“完整 base + 相对后缀”拼 URL。
 - JSON、snapshot、ZIP：`Authorization: Bearer <token>`。
 - 媒体 GET/HEAD：允许 `?token=`；同时存在 Authorization 时以它为准，失败不降级到 query token。
 - 管理控制面（`config`/`token`）走 MonkeyAI 现有登录/Agent 认证，不复用 hub JWT。
@@ -1076,7 +1076,7 @@ type SnapshotRef struct {
 示例：
 
 ```json
-{"schema_version":1,"publisher_id":"2de5ff13-0471-430e-9b95-0f0c89899408","respub":{"base_url":"https://hub.monkeycode-ai.com/api/design"},"monkeyai":{"base_url":"https://monkeyai.example.com/api/v1/design-resources","available":true,"snapshot":{"publisher_id":"2de5ff13-0471-430e-9b95-0f0c89899408","release_id":"70000000-0000-0000-0000-000000000001","schema_version":1,"digest_schema":"design-content-v1"}}}
+{"schema_version":1,"publisher_id":"2de5ff13-0471-430e-9b95-0f0c89899408","respub":{"base_url":"https://design.example.test/api/design"},"monkeyai":{"base_url":"https://monkeyai.example.com/api/v1/design-resources","available":true,"snapshot":{"publisher_id":"2de5ff13-0471-430e-9b95-0f0c89899408","release_id":"70000000-0000-0000-0000-000000000001","schema_version":1,"digest_schema":"design-content-v1"}}}
 ```
 
 **错误**：401、403、503。

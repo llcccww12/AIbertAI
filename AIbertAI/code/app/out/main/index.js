@@ -21,7 +21,6 @@ const promises$1 = require("node:stream/promises");
 const promises$2 = require("node:timers/promises");
 const https = require("node:https");
 const electronUpdater = require("electron-updater");
-const jsYaml = require("js-yaml");
 const semver = require("semver");
 const Provider = require("electron-updater/out/providers/Provider");
 function _interopNamespaceDefault(e) {
@@ -821,8 +820,6 @@ function parseFeedbackImage(dataUrl2) {
   const byteSize = base642.length / 4 * 3 - padding;
   return byteSize > 0 ? { mimeType: match[1], base64: base642, byteSize } : null;
 }
-const DEFAULT_DESIGN_RESPUB_BASE_URL = "https://hub.monkeycode-ai.com/api/design";
-const DEFAULT_DESIGN_OHMYINSPIRE_BASE_URL = "https://design-prompt.app.baizhi.cloud/openapi/v1";
 const CHAT_PROTOCOLS = ["openai_chat_completions", "openai_responses", "anthropic"];
 const isHigh = (unit) => unit >= 55296 && unit <= 56319;
 const isLow = (unit) => unit >= 56320 && unit <= 57343;
@@ -1515,6 +1512,31 @@ function bundled(name) {
 function override(name) {
   return electron.app.isPackaged ? void 0 : process.env[name] || void 0;
 }
+let packagedSourceEmployee;
+function sourceEmployeeRuntime() {
+  if (electron.app.isPackaged) {
+    if (packagedSourceEmployee !== void 0) return packagedSourceEmployee;
+    let config;
+    try {
+      config = JSON.parse(node_fs.readFileSync(node_path.join(resourcesDir, "employee-source.json"), "utf8"));
+    } catch {
+      throw new Error("invalid_source_employee_configuration");
+    }
+    if (config?.version !== 1) throw new Error("invalid_source_employee_configuration");
+    const executable = bundled("aibertai-native");
+    if (!node_fs.lstatSync(executable, { throwIfNoEntry: false })?.isFile()) throw new Error("source_runtime_executable_required");
+    const fixture = node_path.join(resourcesDir, "employee-acceptance.txt");
+    return packagedSourceEmployee = Object.freeze({
+      executable,
+      file: node_fs.existsSync(fixture) ? fixture : ""
+    });
+  }
+  const file = override("AIBERTAI_SOURCE_WORKSPACE_FILE");
+  if (!file && process.env.AIBERTAI_SOURCE_EMPLOYEE !== "1") return null;
+  const executable = override("AIBERTAI_KNOWLEDGE_RUNTIME_BIN");
+  if (!executable) throw new Error("source_runtime_executable_required");
+  return { executable, file: file ?? "" };
+}
 function engineBin() {
   const custom = override("MONKEYAI_OHMYAGENT_BIN");
   if (custom) return custom;
@@ -1525,6 +1547,14 @@ function runtimeBin() {
   const candidate = override("MONKEYAI_RUNTIME_BIN") ?? bundled("monkeyai-runtime");
   if (!node_fs.existsSync(candidate)) throw new Error(`runtime binary is missing: ${candidate} (run pnpm runtime:go)`);
   return candidate;
+}
+function loginRuntimeBin() {
+  const configured = process.env.AIBERTAI_LOGIN_RUNTIME_BIN;
+  if (configured) return configured;
+  const runtime = runtimeBin();
+  const filename = process.platform === "win32" ? "monkeyai-runtime-login.exe" : "monkeyai-runtime-login";
+  const branded = node_path.join(node_path.dirname(runtime), filename);
+  return node_fs.existsSync(branded) ? branded : runtime;
 }
 function officePreviewBin() {
   return override("MONKEYAI_OFFICE_PREVIEW_BIN") ?? bundled("office-preview-server");
@@ -1585,6 +1615,15 @@ function serverOrigin(value) {
     return url2.protocol === "https:" && !url2.username && !url2.password ? url2 : void 0;
   } catch {
     return void 0;
+  }
+}
+function matchesPrivateBackendOrigin(address, origin) {
+  try {
+    const target = new URL(address);
+    return (target.protocol === "http:" || target.protocol === "https:") && target.origin === origin &&
+      !target.username && !target.password;
+  } catch {
+    return false;
   }
 }
 const hostname$1 = (value) => value.toLowerCase().replace(/^\[|\]$/g, "");
@@ -2211,8 +2250,6 @@ function isCustomBackground(value) {
   const bounded = (key2, max) => typeof entry[key2] === "number" && Number.isFinite(entry[key2]) && entry[key2] >= 0 && entry[key2] <= max;
   return Object.keys(entry).length === 5 && typeof entry.image === "string" && entry.image.length <= BACKGROUND_IMAGE_MAX_LENGTH && (STATIC_IMAGE.test(entry.image) || parseWallpaperRef(entry.image) !== null) && bounded("opacity", 100) && bounded("blur", 20) && bounded("x", 100) && bounded("y", 100);
 }
-const DEFAULT_DESIGN_ORIGIN = new URL(DEFAULT_DESIGN_RESPUB_BASE_URL).origin;
-const ANONYMOUS_DESIGN_ORIGIN = new URL(DEFAULT_DESIGN_OHMYINSPIRE_BASE_URL).origin;
 function designMediaCsp(origins) {
   const extra = /* @__PURE__ */ new Set();
   for (const value of origins) {
@@ -2225,11 +2262,11 @@ function designMediaCsp(origins) {
   const base = {
     "default-src": ["'self'"],
     "script-src": ["'self'"],
-    "style-src": ["'self'", "'unsafe-inline'", "https://cdn.hailuoai.com"],
-    "font-src": ["'self'", "data:", "https://cdn.hailuoai.com"],
-    "img-src": ["'self'", "data:", "blob:", "http://localhost:*", "http://127.0.0.1:*", "https://cdn.hailuoai.com", "https://storage.baizhi.cloud", DEFAULT_DESIGN_ORIGIN, ANONYMOUS_DESIGN_ORIGIN],
-    "media-src": ["'self'", "blob:", "http://localhost:*", "http://127.0.0.1:*", "https://storage.baizhi.cloud", DEFAULT_DESIGN_ORIGIN, ANONYMOUS_DESIGN_ORIGIN],
-    "connect-src": ["'self'", "blob:", "http://localhost:*", "http://127.0.0.1:*", "ws://localhost:*", "ws://127.0.0.1:*", "https://cdn.hailuoai.com", DEFAULT_DESIGN_ORIGIN]
+    "style-src": ["'self'", "'unsafe-inline'"],
+    "font-src": ["'self'", "data:"],
+    "img-src": ["'self'", "data:", "blob:", "http://localhost:*", "http://127.0.0.1:*"],
+    "media-src": ["'self'", "blob:", "http://localhost:*", "http://127.0.0.1:*"],
+    "connect-src": ["'self'", "blob:", "http://localhost:*", "http://127.0.0.1:*", "ws://localhost:*", "ws://127.0.0.1:*"]
   };
   return Object.entries(base).map(([directive, sources]) => {
     const dynamic = directive === "img-src" || directive === "media-src" || directive === "connect-src" ? [...extra].filter((origin) => !sources.includes(origin)) : [];
@@ -2969,7 +3006,8 @@ function runLogin(options2) {
     }
     let proc;
     try {
-      proc = launch(["login", "--server", options2.server, "--no-browser", "--lang", options2.lang, ...options2.desktopReturn ? ["--desktop-return", options2.desktopReturn] : []], process.env.AIBERTAI_LOGIN_RUNTIME_BIN);
+      const source = sourceEmployeeRuntime();
+      proc = source ? launch(["desktop-source-login", options2.server], source.executable) : launch(["login", "--server", options2.server, "--no-browser", "--lang", options2.lang, ...options2.desktopReturn ? ["--desktop-return", options2.desktopReturn] : []], loginRuntimeBin());
     } catch (error) {
       console.error(`[main] runtime login could not start: ${error.message}`);
       reject(new LoginError(ErrorCode.runtimeUnavailable));
@@ -3045,13 +3083,16 @@ function runLogin(options2) {
     proc.stdin?.write(JSON.stringify({ type: "init" }) + "\n");
   });
 }
-function runLogout(profileDir2, dataKey, server) {
-  return new Promise((resolve) => {
+function runLogout(profileDir2, dataKey, server, userId) {
+  return new Promise((resolve, reject) => {
     let proc;
+    let source;
     try {
-      proc = launch(["logout", "--profile-dir", profileDir2, ...server ? ["--server", server] : []]);
+      source = sourceEmployeeRuntime();
+      proc = source ? launch(["desktop-source-logout", profileDir2, server, userId], source.executable) : launch(["logout", "--profile-dir", profileDir2, ...server ? ["--server", server] : []]);
     } catch (error) {
       console.warn(`[main] runtime logout could not start: ${error.message}`);
+      if (source) return reject(error);
       resolve();
       return;
     }
@@ -3061,13 +3102,17 @@ function runLogout(profileDir2, dataKey, server) {
       if (done) return;
       done = true;
       clearTimeout(timer2);
-      if (note2) console.warn(`[main] runtime logout ${note2}`);
+      if (note2) {
+        console.warn(`[main] runtime logout ${note2}`);
+        if (source) return reject(new Error("source_runtime_logout_failed"));
+      }
       resolve();
     };
     const timer2 = setTimeout(() => {
       proc.kill("SIGKILL");
       finish("timed out");
     }, LOGOUT_TIMEOUT_MS$1);
+    proc.on("error", (error) => finish(`could not start: ${error.message}`));
     proc.on("error", (error) => finish(`could not start: ${error.message}`));
     proc.on("close", (code) => {
       stdout.flush();
@@ -3327,7 +3372,7 @@ async function completeLogin(server, signal, onAuthorize) {
       chosen.id = id22;
       const existing = before.accounts.find((account2) => account2.id === id22);
       signal.throwIfAborted();
-      if (existing && existing.server.url !== normalized.url) {
+      if (existing && (existing.server.url !== normalized.url || (sourceEmployeeRuntime() && currentAccount()?.id === id22))) {
         await beforeAccountUpdate(id22);
         if (signal.aborted) notifyAccountChanged();
       }
@@ -3354,31 +3399,39 @@ async function logout() {
   if (current) {
     const confirmed = await beforeLogout().catch(() => false);
     const file2 = readAuth(current.id);
-    writeAuth(current.id, { ...file2?.dataKey ? { dataKey: file2.dataKey } : {}, loggedIn: false, user: current.user, server: current.server });
-    if (!confirmed) await revokeRuntimeCredentials(current.id, current.server.url);
-    node_fs.rmSync(runtimeCredentialsFile(current.id), { force: true });
+    if (sourceEmployeeRuntime()) {
+      await revokeRuntimeCredentials(current.id, current.server.url);
+      writeAuth(current.id, { ...file2?.dataKey ? { dataKey: file2.dataKey } : {}, loggedIn: false, user: current.user, server: current.server });
+    } else {
+      writeAuth(current.id, { ...file2?.dataKey ? { dataKey: file2.dataKey } : {}, loggedIn: false, user: current.user, server: current.server });
+      if (!confirmed) await revokeRuntimeCredentials(current.id, current.server.url);
+      node_fs.rmSync(runtimeCredentialsFile(current.id), { force: true });
+    }
   }
   const latest = accountsState();
   if (!current || latest.currentId === current.id) writeAccounts({ ...latest, currentId: null });
   return statusOf(accountsState());
 }
 async function revokeRuntimeCredentials(accountId, server) {
-  const dataKey = openString(readAuth(accountId)?.dataKey);
+  const stored = readAuth(accountId);
+  const dataKey = openString(stored?.dataKey);
   if (!dataKey) {
+    if (sourceEmployeeRuntime()) throw new Error(ErrorCode.credentialsLocked);
     console.warn("[main] cannot open the data key; deleting the runtime credentials without revoking them");
     return;
   }
-  await runLogout(profileDir(accountId), dataKey, server);
+  await runLogout(profileDir(accountId), dataKey, server, stored?.user?.id);
 }
 const encryptedProfileFiles = [
   "credentials.enc.json",
+  "source-credentials.enc.json",
   "device.enc.json",
   "mcp.enc.json",
   "gateway.enc.json",
+  "source-runtime",
   node_path.join("runtime", "ohmyagent", "connectors", "user", "local.enc.json")
 ];
-function hasEncryptedProfileData(accountId) {
-  const root = profileDir(accountId);
+function hasEncryptedProfileData(accountId, root = profileDir(accountId)) {
   for (const relative of encryptedProfileFiles) {
     try {
       node_fs.lstatSync(node_path.join(root, relative));
@@ -3400,17 +3453,18 @@ function getDataKey(accountId) {
   writeAuth(accountId, { ...file2, dataKey: sealString(key2) });
   return key2;
 }
-function dataKeysReadable() {
+function dataKeysReadable(root = profilesRoot()) {
   let ids;
   try {
-    ids = node_fs.readdirSync(profilesRoot(), { withFileTypes: true }).filter((entry) => entry.isDirectory() && isAccountId(entry.name)).map((entry) => entry.name);
+    ids = node_fs.readdirSync(root, { withFileTypes: true }).filter((entry) => entry.isDirectory() && isAccountId(entry.name)).map((entry) => entry.name);
   } catch (error) {
     return error.code === "ENOENT";
   }
   return ids.every((id2) => {
     try {
-      const file2 = readAuthFile(authFile(id2), false);
-      return file2?.dataKey ? Boolean(openString(file2.dataKey)) : !hasEncryptedProfileData(id2);
+      const profile = node_path.join(root, id2);
+      const file2 = readAuthFile(node_path.join(profile, "auth.json"), false);
+      return file2?.dataKey ? Boolean(openString(file2.dataKey)) : !hasEncryptedProfileData(id2, profile);
     } catch {
       return false;
     }
@@ -11855,7 +11909,7 @@ class CapabilityHost {
   /** 能力的清单变了（凭据轮换、可用性变化）：按新清单重新注册，或者注销 */
   refresh(id2) {
     const ready2 = this.ready, connection = this.connection;
-    if (!ready2 || !connection) return;
+    if (!ready2 || !connection || this.endpoint?.sourcePreview) return;
     void ready2.then(() => this.sync(connection, id2)).catch((error) => this.options.log(`[capabilities] refresh failed: ${String(error)}`));
   }
   open() {
@@ -11891,7 +11945,7 @@ class CapabilityHost {
       });
       if (generation !== this.generation) return;
       this.failures = 0;
-      await this.sync(connection);
+      if (!endpoint2.sourcePreview) await this.sync(connection);
       if (generation === this.generation) this.options.onDeviceRemoteChanged?.();
     })();
     this.ready.catch((error) => this.options.log(`[capabilities] runtime connection failed: ${String(error)}`));
@@ -14795,7 +14849,7 @@ function runtimeEndpoint(port, token) {
   if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535) return null;
   return { httpBase: `http://127.0.0.1:${port}`, token };
 }
-function onStdoutLine(proc, token, raw, logger) {
+function onStdoutLine(proc, token, raw, logger, authorizationServer) {
   const line = raw.trim();
   if (!line) return;
   let event = null;
@@ -14805,6 +14859,29 @@ function onStdoutLine(proc, token, raw, logger) {
     } catch {
       event = null;
     }
+  }
+  if (authorizationServer && event?.event === "source_authorize") {
+    if (child$2 !== proc || typeof event.url !== "string") return;
+    try {
+      const target = new URL(event.url);
+      if (target.origin !== new URL(authorizationServer).origin || target.pathname !== "/oauth/authorize" || target.username || target.password || target.hash) throw new Error("invalid_runtime_authorization_url");
+      void electron.shell.openExternal(target.href).catch(() => {
+        console.error("[main] could not open the source runtime authorization page");
+        proc.stdin?.end();
+      });
+    } catch {
+      console.error("[main] invalid source runtime authorization URL");
+      proc.stdin?.end();
+    }
+    return;
+  }
+  if (event?.event === "remote_changed" && authorizationServer) {
+    if (child$2 === proc) void refreshDeviceRemoteStatus();
+    return;
+  }
+  if (event?.event === "design_tool" && authorizationServer) {
+    if (child$2 === proc) void answerRuntimeDesignTool(proc, authorizationServer, event);
+    return;
   }
   if (!event || event.event !== "ready") {
     if (event?.event === "error" && child$2 === proc) console.error(`[main] runtime refused to start: ${typeof event.reason === "string" ? event.reason : "unknown"}`);
@@ -14819,6 +14896,7 @@ function onStdoutLine(proc, token, raw, logger) {
     return;
   }
   status$1 = "ready";
+  if (authorizationServer) ready2.sourcePreview = true;
   endpoint$2 = ready2;
   restart$2 = recordReady();
   if (handoff !== null) {
@@ -14847,10 +14925,18 @@ async function start$2(account) {
     activeProfile = null;
     activeServerUrl = null;
   };
-  let bin, engine, dataKey;
+  let sourceRuntime;
+  let bin, runtimeArgs, dataKey;
   try {
-    bin = runtimeBin();
-    engine = engineBin();
+    sourceRuntime = sourceEmployeeRuntime();
+    if (sourceRuntime) {
+      bin = sourceRuntime.executable;
+      runtimeArgs = ["desktop-source-runtime", profile2, sourceRuntime.file];
+    } else {
+      bin = runtimeBin();
+      const engine = engineBin();
+      runtimeArgs = ["serve", "--profile-dir", profile2, ...engine ? ["--engine-bin", engine] : []];
+    }
     dataKey = getDataKey(account.id);
     await activateBrowserRuntime(account.id);
   } catch (error) {
@@ -14863,9 +14949,9 @@ async function start$2(account) {
     return;
   }
   const token = node_crypto.randomBytes(32).toString("base64url");
-  const legacy = legacyCredentials(account.id);
+  const legacy = sourceRuntime ? null : legacyCredentials(account.id);
   handoff = legacy ? account.id : null;
-  const init = { type: "init", machineId: installationId(), device: {
+  const init = { type: "init", designBridge: Boolean(sourceRuntime && desktopPlatform().features.design), machineId: installationId(), device: {
     ...deviceIdentity(),
     arch: process.arch,
     locale: typeof readPrefs().locale === "string" ? readPrefs().locale : electron.app.getLocale(),
@@ -14873,7 +14959,7 @@ async function start$2(account) {
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     electron_version: process.versions.electron
   }, serverUrl: account.server.url, userId: account.user.id, deviceName: deviceName(), dataKey, token, clientVersion: electron.app.isPackaged ? electron.app.getVersion() : "dev", platform: "desktop", webOrigin: webOrigin$1, ...legacy ? { credentials: { server: account.server.url, ...legacy } } : {} };
-  const proc = node_child_process.spawn(bin, ["serve", "--profile-dir", profile2, ...engine ? ["--engine-bin", engine] : []], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true, ...runtimeSpawnEnv() });
+  const proc = node_child_process.spawn(bin, runtimeArgs, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true, ...runtimeSpawnEnv() });
   child$2 = proc;
   const stdout = runtimeOutputLogger("stdout");
   const stderr = runtimeOutputLogger("stderr");
@@ -14885,7 +14971,7 @@ async function start$2(account) {
     pending2 += String(chunk);
     let newline;
     while ((newline = pending2.indexOf("\n")) !== -1) {
-      onStdoutLine(proc, token, pending2.slice(0, newline), stdout);
+      onStdoutLine(proc, token, pending2.slice(0, newline), stdout, sourceRuntime ? account.server.url : void 0);
       pending2 = pending2.slice(newline + 1);
     }
   });
@@ -15020,6 +15106,16 @@ function whenReady() {
   });
 }
 async function logoutRuntime() {
+  if (endpoint$2?.sourcePreview) {
+    try {
+      const remote = await runtimeRequest(MONKEYAI_METHODS.deviceRemoteStatus.name, {});
+      if (remote?.device?.enabled) await runtimeRequest(MONKEYAI_METHODS.deviceRemoteSet.name, { enabled: false });
+    } catch {
+      writeLog("warn", "main", "could not save the remote access preference before logout");
+    }
+    await stop();
+    return false;
+  }
   if (!capabilities || status$1 !== "ready") {
     cancelBackoff();
     transition = transition.catch(() => {
@@ -15095,7 +15191,25 @@ let serverIdentity = null;
 const deviceConnections = new DeviceConnections(async (target, connectionId) => {
   const account = deviceAccount();
   if (!account || account.userId !== target.userId || account.serverId !== target.serverId) throw new Error(ErrorCode.deviceTargetChanged);
-  const result = await runtimeRequest(MONKEYAI_METHODS.devicesConnect.name, { serverId: target.serverId, machineId: target.machineId, ...connectionId ? { connectionId } : {} });
+  const params = { serverId: target.serverId, machineId: target.machineId, ...connectionId ? { connectionId } : {} };
+  let result;
+  if (!sourceEmployeeRuntime() && !electron.app.isPackaged && process.env.AIBERTAI_REMOTE_CONNECTION_RUNTIME === "1" && process.env.AIBERTAI_KNOWLEDGE_RUNTIME_BIN) {
+    let dataKey;
+    try {
+      dataKey = getDataKey(account.accountId);
+    } catch {
+      // Use the existing credential provider when the local profile is locked.
+    }
+    if (dataKey) result = await desktopKnowledge.request(process.env.AIBERTAI_KNOWLEDGE_RUNTIME_BIN, {
+      server: account.serverUrl,
+      userId: account.userId,
+      profileDir: profileDir(account.accountId),
+      dataKey
+    }, MONKEYAI_METHODS.devicesConnect.name, params);
+  }
+  const beforeFallback = deviceAccount();
+  if (!beforeFallback || beforeFallback.accountId !== account.accountId || beforeFallback.serverUrl !== account.serverUrl || beforeFallback.serverId !== account.serverId) throw new Error(ErrorCode.deviceTargetChanged);
+  if (result === void 0) result = await runtimeRequest(MONKEYAI_METHODS.devicesConnect.name, params);
   const after = deviceAccount();
   if (!after || after.accountId !== account.accountId || after.serverUrl !== account.serverUrl || after.serverId !== account.serverId) throw new Error(ErrorCode.deviceTargetChanged);
   return result;
@@ -15198,7 +15312,7 @@ async function captureLocalRuntime(sender) {
     if (!mainFrameAlive(sender, frame2) || child$2 !== runtimeProcess || endpoint$2 !== selected) throw new Error(ErrorCode.deviceTargetChanged);
   };
   assertCurrent();
-  return { assertCurrent, request: async (method2, params) => {
+  return { httpBase: selected.httpBase, assertCurrent, request: async (method2, params) => {
     assertCurrent();
     const result = await runtimeRequest(method2, params);
     assertCurrent();
@@ -15220,6 +15334,23 @@ async function localRuntimeRequest(sender, method2, params) {
   if (child$2 !== runtimeProcess || endpoint$2 !== selected) throw new Error(ErrorCode.deviceTargetChanged);
   return result;
 }
+const desktopKnowledge = require("./desktop-knowledge.cjs");
+const desktopSessionArchive = require("./desktop-session-archive.cjs");
+async function localSessionArchive(sender, sessionId, kind, parameter) {
+  const account = deviceAccount(), frame2 = captureMainFrame(sender);
+  if (!account) return;
+  if (kind === "messages" && sourceEmployeeRuntime()) return;
+  const binding = deviceWindows.capture(sender, account);
+  if (binding.target?.transport === "relay") return;
+  const executable = electron.app.isPackaged ? bundled("aibertai-native") : process.env.AIBERTAI_KNOWLEDGE_RUNTIME_BIN;
+  const result = await desktopSessionArchive.read(executable, profileDir(account.accountId), sessionId, kind, parameter);
+  deviceWindows.assertCurrent(sender, binding, deviceAccount());
+  if (!mainFrameAlive(sender, frame2)) throw new Error(ErrorCode.deviceTargetChanged);
+  if (result !== void 0 && !electron.app.isPackaged && process.env.AIBERTAI_TRACE_SESSION_ARCHIVE === "1") {
+    writeLog("info", "main", `[session-archive] ${kind}`);
+  }
+  return result;
+}
 async function accountRuntimeRequest(sender, method2, params) {
   const account = currentAccount(), frame2 = captureMainFrame(sender);
   if (!account) throw new Error(ErrorCode.noActiveAccount);
@@ -15227,6 +15358,48 @@ async function accountRuntimeRequest(sender, method2, params) {
     const current = currentAccount();
     if (current !== account || !mainFrameAlive(sender, frame2)) throw new Error(ErrorCode.deviceTargetChanged);
   };
+  if (desktopKnowledge.handles(method2)) {
+    if (method2.startsWith("_monkeyai/kb/") && (params?.serverUrl !== account.server.url || params?.userId !== account.user.id)) {
+      throw new Error(ErrorCode.deviceTargetChanged);
+    }
+    if (sourceEmployeeRuntime()) {
+      await syncRuntimeToAccount();
+      await whenReady();
+      assertCurrent();
+      const result = await runtimeRequest(method2, params);
+      assertCurrent();
+      return result;
+    }
+    const executable = electron.app.isPackaged ? bundled("aibertai-native") : process.env.AIBERTAI_KNOWLEDGE_RUNTIME_BIN;
+    if (executable) {
+      let dataKey;
+      try {
+        dataKey = getDataKey(account.id);
+      } catch {
+        // The existing request path handles credentials it has already loaded.
+      }
+      if (dataKey) {
+        try {
+          const result = await desktopKnowledge.request(executable, {
+            server: account.server.url,
+            userId: account.user.id,
+            profileDir: profileDir(account.id),
+            dataKey
+          }, method2, params);
+          assertCurrent();
+          if (result !== void 0) {
+            if (!electron.app.isPackaged && process.env.AIBERTAI_TRACE_KNOWLEDGE_RUNTIME === "1") {
+              writeLog("info", "main", `[account-runtime] ${method2}`);
+            }
+            return result;
+          }
+        } catch (error) {
+          assertCurrent();
+          throw error;
+        }
+      }
+    }
+  }
   await syncRuntimeToAccount();
   assertCurrent();
   if (!child$2) throw new Error(runtimeFailed() ? ErrorCode.runtimeFailed : ErrorCode.runtimeUnavailable);
@@ -15278,6 +15451,12 @@ function setupRuntime(options2) {
   setLogoutHook(logoutRuntime);
   setReloadCredentialsHook(reloadRuntimeCredentials);
   handle("runtime:endpoint", (args) => [args[0] === void 0 ? void 0 : text(args[0], ErrorCode.invalidDeviceTicket, 256)], (event, rejectedToken) => readyRuntime(event.sender, rejectedToken));
+  handle("runtime:session-archive", (args) => {
+    const sessionId = text(args[0], ErrorCode.invalidRequest, 36);
+    if (args[1] === "messages") return [sessionId, args[1], integer$1(args[2], ErrorCode.invalidRequest, 1, 100)];
+    if (args[1] === "tool_output") return [sessionId, args[1], text(args[2], ErrorCode.invalidRequest, 256)];
+    throw new Error(ErrorCode.invalidRequest);
+  }, (event, ...args) => localSessionArchive(event.sender, ...args));
   let waitingForQuit = false;
   electron.app.on("before-quit", (event) => {
     quitting$1 = true;
@@ -15731,6 +15910,17 @@ class UploadTransfer {
     await Promise.allSettled([...this.sources.keys()].map((id2) => this.release(id2)));
   }
 }
+const desktopFileTransfer = require("./desktop-file-transfer.cjs");
+function remoteTransferFetch(scope, input, init, filesOrigin) {
+  const source = sourceEmployeeRuntime();
+  const executable = source?.executable ?? process.env.AIBERTAI_KNOWLEDGE_RUNTIME_BIN;
+  if (executable && (source || !electron.app.isPackaged && process.env.AIBERTAI_REMOTE_FILE_RUNTIME === "1")) {
+    return desktopFileTransfer.request(executable, {
+      serverUrl: scope.serverUrl, machineId: scope.target.machineId, filesOrigin
+    }, input, init);
+  }
+  return fetchWithServerCertificate(input, init, scope.serverUrl);
+}
 const selections = /* @__PURE__ */ new Map();
 const transfers = /* @__PURE__ */ new Map();
 function selectionStore(profile2) {
@@ -15741,8 +15931,61 @@ function selectionStore(profile2) {
   }
   return store;
 }
+const employeeAttachmentLimit = 32 * 1024 * 1024;
+async function stageEmployeeAttachments(profile, files, assertCurrent) {
+  if (files.length > 4 || files.reduce((total, file) => total + file.size, 0) > employeeAttachmentLimit) {
+    throw new Error("employee_attachment_too_large");
+  }
+  const root = node_path.join(profile, "source-runtime", "attachments");
+  const staging = [];
+  try {
+    await promises.mkdir(root, { recursive: true, mode: 0o700 });
+    const attachments = [];
+    for (const file of files) {
+      assertCurrent();
+      if (/[\\/\0\r\n]/.test(file.name) || file.name === "." || file.name === "..") throw new Error(ErrorCode.attachmentInvalidPaths);
+      const handle = await promises.open(node_url.fileURLToPath(file.uri), node_fs.constants.O_RDONLY | node_fs.constants.O_NONBLOCK);
+      let content;
+      try {
+        const info = await handle.stat();
+        if (!info.isFile() || info.size !== file.size) throw new Error(ErrorCode.attachmentUnavailable);
+        const buffer = Buffer.alloc(file.size + 1);
+        let offset = 0;
+        while (offset < buffer.length) {
+          const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset);
+          if (bytesRead === 0) break;
+          offset += bytesRead;
+        }
+        if (offset !== file.size) throw new Error(ErrorCode.attachmentUnavailable);
+        content = buffer.subarray(0, offset);
+      } finally {
+        await handle.close();
+      }
+      assertCurrent();
+      const directory = node_path.join(root, node_crypto.randomUUID());
+      await promises.mkdir(directory, { mode: 0o700 });
+      staging.push(directory);
+      const path = node_path.join(directory, file.name);
+      await promises.writeFile(path, content, { mode: 0o600, flag: "wx" });
+      attachments.push({ ...file, uri: node_url.pathToFileURL(path).href });
+    }
+    assertCurrent();
+    return attachments;
+  } catch (error) {
+    await Promise.allSettled(staging.map((directory) => promises.rm(directory, { recursive: true, force: true })));
+    throw error;
+  }
+}
 function attachmentDestination(sender) {
-  if (runtimeTarget(sender)?.transport !== "relay") return async (files2) => files2;
+  if (runtimeTarget(sender)?.transport !== "relay") {
+    if (!sourceEmployeeRuntime()) return async (files2) => files2;
+    const account = currentAccount(), frame = captureMainFrame(sender);
+    if (!account) throw new Error(ErrorCode.noActiveAccount);
+    const assertCurrent = () => {
+      if (currentAccount() !== account || !mainFrameAlive(sender, frame)) throw new Error(ErrorCode.deviceTargetChanged);
+    };
+    return (files) => stageEmployeeAttachments(profileDir(account.id), files, assertCurrent);
+  }
   const scope2 = captureRemoteRuntime(sender), store = selectionStore(scope2.profile);
   return (files2) => store.remember(scope2.target, files2, scope2.assertCurrent);
 }
@@ -15765,7 +16008,7 @@ function transfer(sender) {
   const service2 = new UploadTransfer({
     ...scope2,
     selections: selectionStore(scope2.profile),
-    fetch: (input, init) => fetchWithServerCertificate(input, init, scope2.serverUrl),
+    fetch: (input, init, filesOrigin) => remoteTransferFetch(scope2, input, init, filesOrigin),
     progress: (event) => {
       if (!sender.isDestroyed()) sender.send("uploads:progress", event);
     }
@@ -15874,7 +16117,7 @@ class RemoteFiles {
     };
     let response;
     try {
-      response = await this.options.fetch(checked.url, { method: method2, redirect: "error", credentials: "omit", cache: "no-store", signal: requestSignal, headers: { Authorization: `Bearer ${endpoint2.token}`, "Accept-Encoding": "identity", ...range ? { Range: range } : {} } });
+      response = await this.options.fetch(checked.url, { method: method2, redirect: "error", credentials: "omit", cache: "no-store", signal: requestSignal, headers: { Authorization: `Bearer ${endpoint2.token}`, "Accept-Encoding": "identity", ...range ? { Range: range } : {} } }, endpoint2.filesOrigin);
     } catch (error) {
       this.current();
       report("request", error);
@@ -16355,6 +16598,10 @@ const types = {
 };
 function htmlResource(entry, encodedRelativePath) {
   const artifact = parseDeviceFileRef(entry);
+  const { path, contentType } = htmlResourcePath(artifact.path, encodedRelativePath);
+  return { fileRef: parseDeviceFileRef({ ...artifact, path }), contentType };
+}
+function htmlResourcePath(entryPath, encodedRelativePath) {
   let parts;
   try {
     parts = encodedRelativePath.split("/").map((part) => decodeURIComponent(part));
@@ -16362,12 +16609,11 @@ function htmlResource(entry, encodedRelativePath) {
     throw new Error(ErrorCode.invalidDeviceFileRef);
   }
   if (parts.some((part) => !part || part === "." || part === ".." || /[\/\\\u0000-\u001f\u007f]/.test(part))) throw new Error(ErrorCode.invalidDeviceFileRef);
-  const relative = parts.join("/"), directory = node_path.posix.dirname(artifact.path);
+  const relative = parts.join("/"), directory = node_path.posix.dirname(entryPath);
   const path2 = directory === "." ? relative : directory + "/" + relative;
-  const fileRef = parseDeviceFileRef({ ...artifact, path: path2 });
   const contentType = types[node_path.posix.extname(relative).toLowerCase()];
   if (!contentType) throw new Error(ErrorCode.fileAccessDenied);
-  return { fileRef, contentType };
+  return { path: path2, contentType };
 }
 async function saveMediaStream(response, destination, signal, current = () => {
 }) {
@@ -16534,7 +16780,7 @@ function reader(sender) {
   const links = new FileLinkRequests((request2) => sender.send("files:link-request", request2), scope2.assertCurrent);
   const files2 = new RemoteFiles({
     ...scope2,
-    fetch: (input, init) => fetchWithServerCertificate(input, init, scope2.serverUrl),
+    fetch: (input, init, filesOrigin) => remoteTransferFetch(scope2, input, init, filesOrigin),
     log: (message) => writeLog("warn", "main", message),
     renew: (ref2, purpose, signal) => links.request(ref2, true, signal, purpose)
   });
@@ -16591,6 +16837,38 @@ function remoteHtmlResources(sender, entryRef) {
       } catch (error) {
         if (attempt !== 0 || !(error instanceof Error) || error.message !== ErrorCode.fileGrantExpired) throw error;
       }
+    }
+  };
+}
+function localHtmlResources(runtime, sessionId, entryPath) {
+  return async (relative, request, signal) => {
+    const resource = htmlResourcePath(entryPath, relative);
+    const range = request.headers.get("range");
+    if (range && !/^bytes=(?:\d+-\d*|-\d+)$/.test(range)) throw new Error(ErrorCode.fileReadFailed);
+    signal.throwIfAborted();
+    const { url } = await runtime.request(MONKEYAI_METHODS.workspaceLink.name, {
+      sessionId, path: resource.path, purpose: "resource", ttl: 60e3
+    });
+    const address = new URL(url);
+    if (address.origin !== runtime.httpBase || address.pathname !== "/_aibertai/workspace/file" || address.username || address.password) {
+      throw new Error(ErrorCode.invalidFileLink);
+    }
+    const response = await desktopPlatform().fetch(address.href, {
+      method: request.method, signal, redirect: "error", credentials: "omit",
+      ...(range ? { headers: { Range: range } } : {})
+    });
+    try {
+      runtime.assertCurrent();
+      if (!response.ok) throw new Error(ErrorCode.fileUnavailable);
+      const headers = new Headers({ "Content-Type": resource.contentType, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
+      for (const name of ["Content-Length", "Content-Range", "Accept-Ranges"]) {
+        const value = response.headers.get(name);
+        if (value !== null) headers.set(name, value);
+      }
+      return new Response(response.body, { status: response.status, headers });
+    } catch (error) {
+      await response.body?.cancel().catch(() => {});
+      throw error;
     }
   };
 }
@@ -16756,9 +17034,9 @@ async function saveSlideDeck(event, cwdInput, name) {
   if (!(await promises.stat(source)).isFile()) throw new Error(ErrorCode.fileUnavailable);
   return saveFile(event, await promises.readFile(source), name);
 }
-async function saveFile(event, data, name) {
+async function saveFile(event, data, name, assertCurrent) {
   const owner = trustedWindow(event);
-  if (!(data instanceof Uint8Array) || !data.byteLength || typeof name !== "string" || !name.trim() || name.length > 255) throw new Error(ErrorCode.invalidPath);
+  if (!(data instanceof Uint8Array) || (!assertCurrent && !data.byteLength) || typeof name !== "string" || !name.trim() || name.length > 255) throw new Error(ErrorCode.invalidPath);
   const suggested = node_path.basename(name.trim()).replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_");
   if (suggested === "." || suggested === "..") throw new Error(ErrorCode.invalidPath);
   const extension2 = node_path.extname(suggested).slice(1);
@@ -16767,6 +17045,7 @@ async function saveFile(event, data, name) {
     ...extension2 ? { filters: [{ name: extension2.toUpperCase(), extensions: [extension2] }] } : {}
   });
   if (result.canceled || !result.filePath) return { saved: false };
+  assertCurrent?.();
   await promises.writeFile(result.filePath, data);
   return { saved: true, path: result.filePath };
 }
@@ -17724,6 +18003,11 @@ const HTML_PREVIEW_SCHEME = "monkeyai-preview";
 const MAX_RENDER_BYTES = 32 * 1024 * 1024;
 const HTML_PREVIEW_POLICY = `sandbox allow-scripts allow-same-origin; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob: https: ${WORKSPACE_IMAGE_CSP_SOURCES}; font-src data:; media-src data: blob: https:; connect-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'`;
 const RESOURCE_POLICY = "sandbox allow-scripts allow-same-origin; default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; media-src 'self' data: blob: https:; connect-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'; object-src 'none'";
+function htmlPreviewPolicy(resources) {
+  const policy = resources ? RESOURCE_POLICY : HTML_PREVIEW_POLICY;
+  if (!sourceEmployeeRuntime()) return policy;
+  return policy.replaceAll(" https:", "").replace(WORKSPACE_IMAGE_CSP_SOURCES, "http://127.0.0.1:*/_aibertai/workspace/file");
+}
 class HtmlPreviewPages {
   pages = /* @__PURE__ */ new Map();
   create(ownerId, scope2, path2, content, maxBytes = MAX_HTML_PREVIEW_BYTES, resources) {
@@ -17750,7 +18034,7 @@ class HtmlPreviewPages {
     const page = this.pages.get(this.key(request2.url));
     const headers = {
       "Content-Type": "text/html; charset=utf-8",
-      "Content-Security-Policy": page?.resources ? RESOURCE_POLICY : HTML_PREVIEW_POLICY,
+      "Content-Security-Policy": htmlPreviewPolicy(page?.resources),
       "Cache-Control": "no-store",
       "Referrer-Policy": "no-referrer",
       "X-Content-Type-Options": "nosniff"
@@ -17791,7 +18075,9 @@ function getDesignMediaOrigins() {
   return [...designOrigins];
 }
 function webContentCsp() {
-  return designMediaCsp(getDesignMediaOrigins());
+  const source = sourceEmployeeRuntime();
+  const origin = source ? currentAccount()?.server.url : void 0;
+  return designMediaCsp(source ? origin ? [origin] : [] : getDesignMediaOrigins());
 }
 const WEB_SCHEME = "app";
 const WEB_HOST = "monkeyai";
@@ -19660,6 +19946,7 @@ let restart$1 = initialRestartState();
 let timer$1 = null;
 let stopping$1 = false;
 const readyWaiters = [];
+let privateOfficeStart;
 function officePreviewEndpoint() {
   return endpoint$1;
 }
@@ -19668,6 +19955,24 @@ function settleReadyWaiters(error) {
 }
 function ensureOfficePreview() {
   if (endpoint$1) return Promise.resolve(endpoint$1);
+  const source = sourceEmployeeRuntime();
+  if (source) {
+    if (stopping$1) return Promise.reject(new Error(ErrorCode.officePreviewUnavailable));
+    privateOfficeStart ??= require("./private-office-preview.cjs").startPrivateOfficePreview({
+      token: node_crypto.randomBytes(24).toString("hex"),
+      converter: process.env.AIBERTAI_OFFICE_CONVERTER || "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+      temp: electron.app.getPath("temp"),
+      vendor: node_path.join(webDir, "office-preview"),
+      validate: (bytes, format) => runNativePptxCheck(source.executable, ["verify-office-preview", format], bytes)
+    }).then((ready) => {
+      if (stopping$1) {
+        ready.close();
+        throw new Error(ErrorCode.officePreviewUnavailable);
+      }
+      return endpoint$1 = ready;
+    }).finally(() => { privateOfficeStart = void 0; });
+    return privateOfficeStart;
+  }
   if (isCircuitOpen(restart$1, Date.now())) return Promise.reject(new Error(ErrorCode.officePreviewUnavailable));
   return new Promise((resolve, reject) => {
     const waiter = {
@@ -19790,6 +20095,7 @@ function stopOfficePreview() {
   settleReadyWaiters(new Error(ErrorCode.officePreviewUnavailable));
   const proc = child$1;
   child$1 = null;
+  endpoint$1?.close?.();
   endpoint$1 = null;
   try {
     proc?.kill();
@@ -19886,6 +20192,29 @@ function releaseSession(baseUrl, token, id2) {
     request2.end();
   });
 }
+async function localOfficeWorkspaceStat(scope, path) {
+  const params = { sessionId: scope.sessionId, path };
+  if (sourceEmployeeRuntime()) return runtimeRequest(MONKEYAI_METHODS.workspaceStat.name, params);
+  const executable = electron.app.isPackaged ? bundled("aibertai-native") : process.env.AIBERTAI_KNOWLEDGE_RUNTIME_BIN;
+  const account = currentAccount(), runtime = child$2;
+  const assertCurrent = () => {
+    if (!account || currentAccount() !== account || child$2 !== runtime || activeAccountId !== account.id) {
+      throw new Error(ErrorCode.deviceTargetChanged);
+    }
+  };
+  if (executable && runtime && account && activeAccountId === account.id) {
+    const workspace = await runtimeRequest(MONKEYAI_METHODS.sessionWorkspace.name, { sessionId: scope.sessionId }).catch(() => null);
+    assertCurrent();
+    if (typeof workspace?.cwd === "string" && node_path.isAbsolute(workspace.cwd)) {
+      const result = await desktopKnowledge.request(executable, {}, MONKEYAI_METHODS.workspaceStat.name, {
+        workspaceRoot: workspace.cwd, path
+      });
+      assertCurrent();
+      if (result !== void 0) return result;
+    }
+  }
+  return runtimeRequest(MONKEYAI_METHODS.workspaceStat.name, params);
+}
 class OfficePreviewHost {
   views = /* @__PURE__ */ new Map();
   partitions = /* @__PURE__ */ new Set();
@@ -19933,7 +20262,7 @@ class OfficePreviewHost {
     this.evict(owner);
     if (scope2.device && !remoteSource) throw new Error(ErrorCode.remoteFilesUnavailable);
     remoteSource?.assertCurrent();
-    const stat = remoteSource ? { exists: true, size: remoteSource.size, mtimeMs: 0 } : await runtimeRequest(MONKEYAI_METHODS.workspaceStat.name, { sessionId: scope2.sessionId, path: path2 });
+    const stat = remoteSource ? { exists: true, size: remoteSource.size, mtimeMs: 0 } : await localOfficeWorkspaceStat(scope2, path2);
     if (!stat?.exists) throw new Error(ErrorCode.invalidPath);
     if ((stat.size ?? 0) > MAX_OFFICE_PREVIEW_BYTES) throw new Error(ErrorCode.previewTooLarge);
     const fingerprint = remoteSource?.fingerprint ?? `${stat.size}:${stat.mtimeMs}`;
@@ -19961,7 +20290,7 @@ class OfficePreviewHost {
     remoteSource?.assertCurrent();
     const id2 = node_crypto.randomUUID().replace(/-/g, "");
     const url2 = `${baseUrl}/p/${id2}?t=${token}`;
-    if (!electron.app.isPackaged) console.log(`[office-preview] ${url2}`);
+    if (!electron.app.isPackaged) console.log(`[office-preview] session ${id2}`);
     const origin = new URL(baseUrl).origin;
     const view = desktopPlatform().createView(owner.id, this.isolated(scope2.accountId));
     followUiScale(view.webContents);
@@ -20721,14 +21050,15 @@ async function sourceLayout() {
   const bounds2 = root.getBoundingClientRect();
   if (bounds2.width <= 0 || bounds2.height <= 0 || bounds2.left < 0 || bounds2.top < 0 || bounds2.right > innerWidth + 1 || bounds2.bottom > innerHeight + 1) throw new Error("Source slide bounds exceed the validation viewport");
   const rect = (value) => ({ x: value.left - bounds2.left, y: value.top - bounds2.top, width: value.width, height: value.height });
-  const masks = [...root.querySelectorAll("[data-ppt-chart]")].map((element) => rect(element.getBoundingClientRect()));
+  const chartSelector = "[data-ppt-chart], [data-ppt-chart-spec]";
+  const masks = [...root.querySelectorAll(chartSelector)].map((element) => rect(element.getBoundingClientRect()));
   const texts = [];
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   let node;
   while (node = walker.nextNode()) {
     const parent = node.parentElement;
     const text2 = node.textContent ?? "";
-    if (!text2.trim() || !parent || parent.closest("script,style,[data-ppt-chart]")) continue;
+    if (!text2.trim() || !parent || parent.closest("script,style," + chartSelector)) continue;
     let visible = true;
     for (let element = parent; element; element = element.parentElement) {
       const style = getComputedStyle(element);
@@ -20763,13 +21093,17 @@ async function loadPdf(id2, token) {
       events.close();
       reject(new Error("Office render event stream failed"));
     });
+    events.addEventListener("failed", () => {
+      events.close();
+      reject(new Error("Office render unavailable"));
+    });
   });
   const [url2, library] = await Promise.all([ready2, import(
     /* @vite-ignore */
     new URL("/vendor/pdf.js", location.origin).href
   )]);
   library.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.js";
-  const pdf = await library.getDocument({ url: url2, isEvalSupported: false, maxImageSize: 16e6, stopAtErrors: true }).promise;
+  const pdf = await library.getDocument({ url: url2, isEvalSupported: false, useWasm: false, maxImageSize: 16e6, stopAtErrors: true }).promise;
   window.__pptxLayout = { pdf, library };
   return pdf.numPages;
 }
@@ -21021,6 +21355,50 @@ function exportSlideDeckToWorkspace(cwd, request2) {
   const job = tail.then(run2, run2);
   tail = job.then(() => void 0, () => void 0);
   return job;
+}
+function runNativePptxCheck(executable, args, bytes) {
+  return new Promise((resolve, reject) => {
+    const proc = node_child_process.execFile(executable, args, {
+      timeout: 3e4, maxBuffer: 16 * 1024, windowsHide: true
+    }, (error, _stdout, stderr) => {
+      if (!error) return resolve();
+      const reason = stderr.trim();
+      reject(new Error(/^slide_[1-9]\d*_lost_editable_text$/.test(reason) || reason === "invalid_pptx_chart_data" ? reason : "invalid_pptx_result"));
+    });
+    proc.stdin.on("error", reject);
+    proc.stdin.end(bytes);
+  });
+}
+async function storePrivateEditableDeck(runtime, cwdInput, bytes, slideCount, manifestPath) {
+  if (!(bytes instanceof Uint8Array) || !bytes.byteLength || bytes.byteLength > 128 * 1024 * 1024) throw new Error("invalid_pptx_result");
+  const executable = sourceEmployeeRuntime()?.executable;
+  if (!executable) throw new Error("pptx_export_unavailable");
+  await runNativePptxCheck(executable, ["verify-editable-pptx", String(slideCount)], bytes);
+  runtime.assertCurrent();
+  const cwd = await promises.realpath(cwdInput);
+  const manifestFile = await promises.realpath(workspaceFile(cwd, manifestPath));
+  if (!inside(cwd, manifestFile)) throw new Error(ErrorCode.invalidPath);
+  const output = node_path.join(cwd, OUTPUT);
+  const temporary = node_path.join(cwd, `.aibert-pptx-${node_crypto.randomUUID()}.tmp`);
+  const directory = await promises.stat(cwd);
+  try {
+    await promises.writeFile(temporary, bytes, { mode: 0o600, flag: "wx" });
+    runtime.assertCurrent();
+    const target = await promises.stat(cwd);
+    if (target.dev !== directory.dev || target.ino !== directory.ino) throw new Error(ErrorCode.invalidPath);
+    await promises.rename(temporary, output);
+  } finally {
+    await promises.rm(temporary, { force: true }).catch(() => {});
+  }
+  const validation = await checkExportedPptx({
+    cwd, manifestFile, outputFile: output,
+    neutralize: (html) => '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\' file:; img-src data: file:; font-src data: file:">' + html,
+    openSourcePage: async () => createPage([cwd], false, async (file) => {
+      if (!inside(cwd, await promises.realpath(file))) throw new Error(ErrorCode.invalidPath);
+    })
+  }, slideCount);
+  runtime.assertCurrent();
+  return { saved: false, slideCount, workspacePath: OUTPUT, validation, validationAccepted: validation.status === "passed" };
 }
 async function exportSlideDeckNow(owner, cwdInput, request2) {
   const workspace = { cwd: cwdInput };
@@ -21346,6 +21724,20 @@ function setupWorkspaceHost(features) {
       }
     }
     const workspace = await sessionWorkspace(value);
+    if (sourceEmployeeRuntime()) {
+      const relative = node_path.isAbsolute(path2) ? node_path.relative(workspace.cwd, path2) : path2;
+      const entry = relative.split(node_path.sep).join("/");
+      if (!entry || entry === ".." || entry.startsWith("../") || node_path.isAbsolute(entry)) throw new Error(ErrorCode.invalidHtmlPreview);
+      const runtime = await captureLocalRuntime(event.sender);
+      const preview = await previews.create(owner, workspace, entry, content, localHtmlResources(runtime, workspace.sessionId, entry));
+      try {
+        runtime.assertCurrent();
+        return preview;
+      } catch (error) {
+        previews.revoke(owner, preview);
+        throw error;
+      }
+    }
     return previews.create(owner, workspace, path2, content);
   });
   handle("workspace:html-preview:show", (args) => [url(args[0]), bounds(args[1]), args[2] === void 0 ? false : flag(args[2], ErrorCode.invalidHtmlPreview)], (event, target, area, pageTurns) => previews.show(ownerOf(event), target, area, pageTurns));
@@ -21383,6 +21775,24 @@ function setupWorkspaceHost(features) {
       }
     }
     const workspace = await sessionWorkspace(value);
+    if (sourceEmployeeRuntime()) {
+      const runtime = await captureLocalRuntime(event.sender);
+      const request = { sessionId: workspace.sessionId, path: path2 };
+      const stat = await runtime.request(MONKEYAI_METHODS.workspaceStat.name, request);
+      if (!stat?.exists) throw new Error(ErrorCode.invalidPath);
+      return office.create(owner, workspace, path2, {
+        size: stat.size,
+        fingerprint: `${stat.size}:${stat.mtimeMs}`,
+        assertCurrent: runtime.assertCurrent,
+        download: async (destination) => {
+          const { url } = await runtime.request(MONKEYAI_METHODS.workspaceLink.name, { ...request, purpose: "resource", ttl: 60e3 });
+          const target = new URL(url);
+          if (target.origin !== runtime.httpBase || target.pathname !== "/_aibertai/workspace/file") throw new Error(ErrorCode.invalidFileLink);
+          await downloadToFile(target, destination);
+          runtime.assertCurrent();
+        }
+      });
+    }
     return office.create(owner, workspace, path2);
   });
   handle("workspace:office-preview:show", (args) => [officeUrl(args[0]), bounds(args[1])], (event, target, area) => office.show(ownerOf(event), target, area));
@@ -21401,6 +21811,22 @@ function setupWorkspaceHost(features) {
     if (request2.acceptedWarningDigest !== void 0 && (typeof request2.acceptedWarningDigest !== "string" || !/^[a-f0-9]{64}$/.test(request2.acceptedWarningDigest))) throw new Error(ErrorCode.pptxValidationStale);
     return [scope$1(args[0]), { manifestPath: request2.manifestPath, outputPath: request2.outputPath, fileName: request2.fileName, ...request2.saveDialog === false ? { saveDialog: false } : {}, ...request2.reuseExisting === true ? { reuseExisting: true } : {}, ...request2.acceptedWarningDigest !== void 0 ? { acceptedWarningDigest: request2.acceptedWarningDigest } : {} }];
   }, async (event, value, request2) => exportSlideDeck(event, (await sessionWorkspace(value)).cwd, request2));
+  handle("workspace:store-private-pptx", (args) => [
+    scope$1(args[0]), args[1], integer$1(args[2], ErrorCode.invalidPath, 1, 512), text(args[3], ErrorCode.invalidPath, 120)
+  ], async (event, value, bytes, slideCount, manifestPath) => {
+    const runtime = await captureLocalRuntime(event.sender);
+    const workspace = await sessionWorkspace(value);
+    const state = await runtime.request(MONKEYAI_METHODS.sessionWorkspace.name, { sessionId: workspace.sessionId });
+    const design = state.capabilities?.design;
+    if (!design || !MANIFEST.test(manifestPath) || manifestPath !== `${design.localDesignPath}/slide-manifest.json`) throw new Error(ErrorCode.invalidPath);
+    const run = () => {
+      runtime.assertCurrent();
+      return storePrivateEditableDeck(runtime, workspace.cwd, bytes, slideCount, manifestPath);
+    };
+    const job = tail.then(run, run);
+    tail = job.then(() => void 0, () => void 0);
+    return job;
+  });
   const browserScope = async (event, value) => {
     const owner = ownerOf(event), active = browserTarget(value);
     if (!browser.has(owner, active)) await sessionWorkspace(active);
@@ -22252,9 +22678,8 @@ function validateInstallServer(raw, target) {
   const value = object(raw), runtime = object(value.monkeyai_runtime), features = object(runtime.features);
   if (typeof value.issuer !== "string" || value.issuer.replace(/\/$/, "") !== target.server.replace(/\/$/, "") || runtime.server_id !== target.serverId || features.device_grant !== true || features.runtime_relay !== true || !Array.isArray(value.grant_types_supported) || !value.grant_types_supported.includes("urn:ietf:params:oauth:grant-type:device_code") || typeof value.device_authorization_endpoint !== "string" || new URL(value.device_authorization_endpoint).origin !== new URL(target.server).origin) throw new RuntimeInstallError("server_unsupported");
 }
-var define_MONKEYAI_RUNTIME_DISTRIBUTION_default = { base: "https://release.monkeycode-ai.com/public/monkeyai/desktop/runtime/", keys: { "runtime-v1": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA8wW9ReONiW0yK/qFH0R14CoK4PkqmCx1faaLQl7YB/w=\n-----END PUBLIC KEY-----\n" } };
 function distribution() {
-  return typeof define_MONKEYAI_RUNTIME_DISTRIBUTION_default === "undefined" ? { base: "", keys: {} } : define_MONKEYAI_RUNTIME_DISTRIBUTION_default;
+  return { base: "", keys: {} };
 }
 function scope(event) {
   const account = currentAccount(), frame2 = captureMainFrame(event.sender);
@@ -22415,6 +22840,7 @@ const remoteHostChannels = /* @__PURE__ */ new Set([
   "attachments:resolve",
   "attachments:paste",
   "attachments:preview",
+  "attachments:save-employee",
   "uploads:stageBegin",
   "uploads:stageAppend",
   "uploads:stageFinish",
@@ -22722,22 +23148,33 @@ let serverUrl;
 let restart = initialRestartState();
 let timer = null;
 let stopping = false;
+let catalogOrigin;
+const catalogRequests = new Map();
 function start() {
-  if (!options$1 || child || stopping) return;
+  if (!options$1 || child || stopping || options$1.privateCatalog && !catalogOrigin) return;
   const proc = electron.utilityProcess.fork(options$1.entry, [], { serviceName: "monkeyai-design", stdio: ["ignore", "pipe", "pipe"] });
   child = proc;
   const stdout = runtimeOutputLogger("stdout", "design");
   const stderr = runtimeOutputLogger("stderr", "design");
   proc.stdout?.on("data", (data) => stdout.write(data));
   proc.stderr?.on("data", (data) => stderr.write(data));
-  const configuration = { type: "init", version: options$1.version, expertDir: options$1.expertDir, debug: !electron.app.isPackaged };
-  void readBuiltinCertificates().then((ca) => {
-    if (child === proc) proc.postMessage({ ...configuration, ca });
-  }).catch(() => {
-    stderr.write("bundled CA is unavailable\n");
-    proc.kill();
-  });
-  proc.postMessage({ type: "runtime", endpoint, serverUrl });
+  if (options$1.privateCatalog) {
+    proc.on("message", (message) => {
+      if (message?.type !== "private-catalog-result") return;
+      const pending = catalogRequests.get(message.id);
+      if (pending?.proc === proc) pending.finish(message.error ? new Error(message.error) : null, message.data);
+    });
+    proc.postMessage({ type: "init-private-catalog", origin: catalogOrigin });
+  } else {
+    const configuration = { type: "init", version: options$1.version, expertDir: options$1.expertDir, debug: !electron.app.isPackaged };
+    void readBuiltinCertificates().then((ca) => {
+      if (child === proc) proc.postMessage({ ...configuration, ca });
+    }).catch(() => {
+      stderr.write("bundled CA is unavailable\n");
+      proc.kill();
+    });
+    proc.postMessage({ type: "runtime", endpoint, serverUrl });
+  }
   void (options$1.imagePreflight ?? Promise.resolve({ state: "failed", reason: "probe_failed" })).then((result) => {
     if (child === proc && !stopping) proc.postMessage({ type: "image-preflight", result });
   }).catch(() => {
@@ -22750,6 +23187,9 @@ function start() {
     clearTimeout(settled);
     stdout.flush();
     stderr.flush();
+    for (const pending of catalogRequests.values()) {
+      if (pending.proc === proc) pending.finish(new Error("design_catalog_unavailable"));
+    }
     if (child !== proc) return;
     child = null;
     if (stopping) return;
@@ -22774,6 +23214,109 @@ function setupDesignProvider(next) {
   options$1 = next;
   start();
   electron.app.on("before-quit", () => void stopDesignProvider());
+}
+function requestPrivateDesignCatalog(origin, tool, args) {
+  if (catalogOrigin !== origin) {
+    catalogOrigin = origin;
+    child?.postMessage({ type: "init-private-catalog", origin });
+  }
+  start();
+  const proc = child;
+  if (!proc || catalogRequests.size >= 64) throw new Error("design_catalog_unavailable");
+  const id = node_crypto.randomUUID();
+  return new Promise((resolve, reject) => {
+    const deadline = setTimeout(() => finish(new Error("design_request_timeout")), tool === "design_session_open" ? 120e3 : 12e3);
+    function finish(error, data) {
+      clearTimeout(deadline);
+      catalogRequests.delete(id);
+      if (error) reject(error);
+      else resolve(data);
+    }
+    catalogRequests.set(id, { proc, finish });
+    try {
+      proc.postMessage({ type: "private-catalog", id, tool, args });
+    } catch (error) {
+      finish(error);
+    }
+  });
+}
+async function answerRuntimeDesignTool(proc, server, event) {
+  const { id, sessionId, cwd, design, name, arguments: args } = event;
+  if (typeof id !== "string" || !UUID$2.test(id)) return;
+  const accountId = activeAccountId;
+  const current = () => {
+    const account = currentAccount();
+    return child$2 === proc && !proc.stdin?.destroyed && account && account.id === accountId && account.server.url === server;
+  };
+  const reply = { type: "design_tool_result", id };
+  try {
+    if (!current() || !["canvas_get_document", "canvas_create_text", "canvas_create_html", "canvas_commit_html"].includes(name) ||
+        typeof sessionId !== "string" || !UUID$2.test(sessionId) ||
+        typeof cwd !== "string" || !node_path.isAbsolute(cwd) ||
+        !design || !args || typeof args !== "object" || Array.isArray(args)) {
+      throw new Error("invalid_design_tool_request");
+    }
+    const result = await requestPrivateDesignCatalog(new URL(server).origin, "design_model_tool", { name, args, cwd, sessionId, design });
+    if (!result || Buffer.byteLength(JSON.stringify(result)) > 48 * 1024) throw new Error("design_tool_result_too_large");
+    reply.result = result;
+  } catch {
+    reply.error = "design_tool_failed";
+  }
+  if (!current()) return;
+  proc.stdin?.write(JSON.stringify(reply) + "\n");
+  if (reply.result && name !== "canvas_get_document") {
+    for (const window of liveWindows()) {
+      const sender = window.webContents;
+      if (runtimeTarget(sender)?.transport !== "relay") sender.send("design:canvas-changed", sessionId);
+    }
+  }
+}
+function privateDesignCatalogArguments(input) {
+  const [tool, value] = input;
+  if (!["design_catalog", "design_catalog_detail", "design_resource_media"].includes(tool) ||
+      !value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("invalid_design_catalog_arguments");
+  }
+  if (tool === "design_catalog_detail") return [tool, { id: text(value.id, "invalid_design_catalog_id", 200) }];
+  if (tool === "design_resource_media") return [tool, { url: text(value.url, "invalid_design_media", 2048) }];
+  const args = {};
+  for (const key of ["designType", "resource", "mode", "category", "context", "query"]) {
+    if (value[key] === void 0) continue;
+    if (typeof value[key] !== "string" || value[key].length > 200) throw new Error("invalid_design_catalog_arguments");
+    args[key] = value[key];
+  }
+  return [tool, args];
+}
+function privateDesignWorkspaceArguments(input) {
+  const [tool, value] = input;
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+      typeof value.sessionId !== "string" || !UUID$2.test(value.sessionId)) {
+    throw new Error("invalid_design_workspace_arguments");
+  }
+  if (tool === "canvas_upload_append") {
+    const { sessionId, uploadId, offset, bytes } = value;
+    if (typeof uploadId !== "string" || !UUID$2.test(uploadId) ||
+        !Number.isSafeInteger(offset) || offset < 0 ||
+        !(bytes instanceof Uint8Array) || !bytes.byteLength || bytes.byteLength > 512 * 1024) {
+      throw new Error("invalid_canvas_export_upload");
+    }
+    return [tool, { sessionId, uploadId, offset, bytes }];
+  }
+  const tools = [
+    "design_session_open", "design_state", "canvas_get", "canvas_apply", "canvas_select", "canvas_create_text",
+    "canvas_create_media_project", "canvas_duplicate", "canvas_export_upload", "canvas_upload_status",
+    "canvas_import_video", "canvas_import_audio", "canvas_import_extracted_media", "canvas_append_media_project",
+    "canvas_import_image", "canvas_import_project_source", "canvas_create_html", "canvas_update_html",
+    "design_style_decision", "design_system_set", "canvas_prepare_pptx"
+  ];
+  const { dataUrl, ...metadata } = value;
+  const image = tool === "canvas_import_image" || tool === "canvas_import_project_source" && value.kind === "image";
+  if (!tools.includes(tool) || JSON.stringify(metadata).length > 1 << 20 ||
+      dataUrl !== void 0 && (!image || typeof dataUrl !== "string" || dataUrl.length > 14 * 1024 * 1024) ||
+      tool === "canvas_export_upload" && value.action !== "begin" && value.action !== "cancel") {
+    throw new Error("invalid_design_workspace_arguments");
+  }
+  return [tool, value];
 }
 function setDesignRuntime(next, server) {
   endpoint = next;
@@ -23367,23 +23910,16 @@ function skipInstallOnQuit() {
 function sessionEnding() {
   suspendForSessionEnd?.();
 }
-function aibertaiUpdateFeed(override) {
-  let endpoint = override;
-  if (!endpoint) {
-    const configPath = node_path.join(process.resourcesPath, "app-update.yml");
-    if (!node_fs.existsSync(configPath)) return null;
-    const config = jsYaml.load(node_fs.readFileSync(configPath, "utf8"));
-    if (config?.provider !== "generic" || typeof config.url !== "string") return null;
-    endpoint = config.url;
-  }
-  const url = new URL(endpoint);
+function aibertaiUpdateFeed(override, privateOrigin) {
+  if (!override) return null;
+  const url = new URL(override);
   const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
   if ((url.protocol !== "https:" && !(loopback && url.protocol === "http:")) || url.username || url.password) {
     throw new Error("更新地址须为 HTTPS URL，且不能包含用户名或密码；本机测试可用回环 HTTP 地址。");
   }
-  const hostname = url.hostname.replace(/\.$/, "");
-  const upstreamDomains = ["monkeycode-ai.com", "baizhi.cloud", "updates.monkeyai.example.com"];
-  if (upstreamDomains.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`))) return null;
+  if (privateOrigin && !matchesPrivateBackendOrigin(url.href, privateOrigin)) {
+    throw new Error("更新地址须与私有后端同源。");
+  }
   return { provider: "generic", url: url.href, useMultipleRangeRequest: false };
 }
 function setupUpdater(onStatus = () => {
@@ -23421,10 +23957,18 @@ function setupUpdater(onStatus = () => {
     } };
   };
   if (!electron.app.isPackaged) return inactive("unsupported");
+  const source = sourceEmployeeRuntime();
+  const privateOrigin = source ? currentAccount()?.server.url : void 0;
+  if (source && !privateOrigin) return inactive("unconfigured");
   let sessionEnded = false;
   try {
-    const feed = aibertaiUpdateFeed(options2.override);
+    const feed = aibertaiUpdateFeed(options2.override, privateOrigin);
     if (!feed) return inactive("unconfigured");
+    if (privateOrigin) {
+      autoUpdater.netSession.webRequest.onBeforeRequest((details, callback) => {
+        callback({ cancel: !matchesPrivateBackendOrigin(details.url, privateOrigin) });
+      });
+    }
     autoUpdater.setFeedURL(feed);
     if (!autoUpdater.isUpdaterActive()) return inactive("unsupported");
   } catch (error) {
@@ -24836,7 +25380,8 @@ function holdsCurrentData(path2) {
 }
 function requireChangeable() {
   if (options.source === "env") throw new CodedError(ErrorCode.dataLocationLocked);
-  if ((options.platform ?? process.platform) !== "win32") throw new CodedError(ErrorCode.invalidRequest);
+  const os = options.platform ?? process.platform;
+  if (os !== "win32" && os !== "darwin") throw new CodedError(ErrorCode.invalidRequest);
   if (options.updateInstalling?.()) throw new CodedError(ErrorCode.updateInProgress);
 }
 function measure() {
@@ -24890,6 +25435,10 @@ async function apply(token, deleteSource, startFresh) {
   const mode = startFresh ? "fresh" : choice.mode;
   const stored = storedRecord();
   checkTarget(choice, targetContext());
+  if ((options.platform ?? process.platform) === "darwin") {
+    if (mode !== "adopt" || deleteSource) throw new CodedError(ErrorCode.invalidRequest);
+    if (!dataKeysReadable(node_path.join(choice.target, "profiles"))) throw new CodedError(ErrorCode.credentialsLocked);
+  }
   if (cleanupRunning && (stored?.cleanup ?? []).some((task) => samePath(task.dir, choice.target))) throw new CodedError(ErrorCode.dataLocationBusy);
   if (mode !== "adopt") {
     const free = freeSpace(choice.target);
@@ -25051,9 +25600,16 @@ function setupDataStorage(next) {
   });
   handle("data-location:pick", none, async (event) => {
     requireChangeable();
-    const result = await electron.dialog.showOpenDialog(trustedWindow(event), { properties: ["openDirectory", "createDirectory"] });
+    const existing = (options.platform ?? process.platform) === "darwin";
+    const result = await electron.dialog.showOpenDialog(trustedWindow(event), { properties: existing ? ["openDirectory", "showHiddenFiles"] : ["openDirectory", "createDirectory"] });
     const picked = result.canceled ? void 0 : result.filePaths[0];
     if (!picked) return null;
+    if (existing) {
+      const context = targetContext();
+      checkPlacement(picked, context);
+      checkExistingData(picked, context.reserved);
+      return plan({ target: canonicalPath(picked), mode: "adopt" });
+    }
     return plan(chooseTarget(picked, targetContext()));
   });
   handle("data-location:apply", (args) => [text(args[0], ErrorCode.invalidRequest, 64), flag(args[1], ErrorCode.invalidRequest), flag(args[2], ErrorCode.invalidRequest)], (_event, token, deleteSource, startFresh) => apply(token, deleteSource, startFresh));
@@ -25545,6 +26101,7 @@ const location$1 = locationPaths({ platform: process.platform, localAppData: pro
 const dataPaths = { defaultDir: defaultDataDir, locationFile: location$1.file, recoveryDir: location$1.recoveryDir };
 function resolveDataStartup() {
   try {
+    if (electron.app.isPackaged) sourceEmployeeRuntime();
     return resolveStartup({ env: process.env[platform.userDataEnvironment], defaultDir: defaultDataDir, ...location$1 });
   } catch (error) {
     electron.dialog.showErrorBox("AIbertAI", `AIbertAI cannot start: ${error instanceof Error ? error.message : String(error)}`);
@@ -25608,6 +26165,35 @@ function onReady() {
   }, (_event, origins) => {
     setDesignMediaOrigins(origins);
   });
+  handle("design:private-catalog", privateDesignCatalogArguments, async (event, tool, args) => {
+    const source = sourceEmployeeRuntime();
+    if (!source) return null;
+    const account = deviceAccount();
+    if (!account) throw new Error(ErrorCode.noActiveAccount);
+    const binding = deviceWindows.capture(event.sender, account), frame = captureMainFrame(event.sender);
+    if (binding.target?.transport === "relay") throw new Error(ErrorCode.remoteHostUnsupported);
+    const origin = new URL(account.serverUrl).origin;
+    const result = await requestPrivateDesignCatalog(origin, tool, args);
+    deviceWindows.assertCurrent(event.sender, binding, deviceAccount());
+    if (!mainFrameAlive(event.sender, frame)) throw new Error(ErrorCode.invalidSender);
+    return result;
+  });
+  handle("design:private-workspace", privateDesignWorkspaceArguments, async (event, tool, params) => {
+    const source = sourceEmployeeRuntime();
+    if (!source) return null;
+    const runtime = await captureLocalRuntime(event.sender);
+    const origin = new URL(deviceAccount().serverUrl).origin;
+    const workspace = await runtime.request("_monkeyai/session/workspace", { sessionId: params.sessionId });
+    if (typeof workspace?.cwd !== "string" || !node_path.isAbsolute(workspace.cwd)) throw new Error("invalid_design_workspace");
+    runtime.assertCurrent();
+    const frame = captureMainFrame(event.sender);
+    const observer = [event.sender.id, frame.processId, frame.routingId].join(":");
+    const result = await requestPrivateDesignCatalog(origin, tool, tool === "design_session_open"
+      ? { sessionId: params.sessionId, cwd: workspace.cwd, selection: params.selection }
+      : { cwd: workspace.cwd, payload: workspace.capabilities?.design ?? {}, params, observer });
+    runtime.assertCurrent();
+    return result;
+  });
   setupOhosTitlebar();
   setupPrefs();
   setupHotkeys();
@@ -25633,17 +26219,21 @@ function onReady() {
   const imageWorker = setupImageWorker(platform.imageWorkerEntry);
   if (platform.features.design) {
     if (!platform.designProviderEntry) throw new Error("Design provider entry is missing");
-    setupDesignProvider({ entry: platform.designProviderEntry, version: electron.app.isPackaged ? electron.app.getVersion() : "dev", expertDir: electron.app.isPackaged ? node_path.join(process.resourcesPath, "design-expert") : node_path.join(electron.app.getAppPath(), "../../packages/design-expert"), imagePreflight: imageWorker.preflight() });
+    setupDesignProvider({ entry: platform.designProviderEntry, version: electron.app.isPackaged ? electron.app.getVersion() : "dev", expertDir: electron.app.isPackaged ? node_path.join(process.resourcesPath, "design-expert") : node_path.join(electron.app.getAppPath(), "../../packages/design-expert"), imagePreflight: imageWorker.preflight(), privateCatalog: Boolean(sourceEmployeeRuntime()) });
   }
   setRuntimeEndpointListener((endpoint2) => {
-    if (platform.features.design) setDesignRuntime(endpoint2, currentAccount()?.server.url);
+    if (platform.features.design && !sourceEmployeeRuntime()) setDesignRuntime(endpoint2, currentAccount()?.server.url);
     if (endpoint2) void restoreProjectAccess();
   });
   workspaceHost = setupWorkspaceHost(platform.features);
   handle("dialog:pickFolder", none, async (event) => {
+    const workspace = sourceEmployeeRuntime() ? await captureLocalRuntime(event.sender) : null;
     const r = await electron.dialog.showOpenDialog(trustedWindow(event), { properties: ["openDirectory", "createDirectory"] });
-    if (!r.canceled) persistFileAccess(r.filePaths);
-    return r.canceled ? null : r.filePaths[0] ?? null;
+    const selected = r.canceled ? null : r.filePaths[0] ?? null;
+    if (!selected) return null;
+    if (workspace) await workspace.request("_aibertai/workspace/authorize", { cwd: selected });
+    persistFileAccess(r.filePaths);
+    return selected;
   });
   handle("dialog:pickFiles", none, async (event) => {
     const destination = attachmentDestination(event.sender);
@@ -25664,6 +26254,23 @@ function onReady() {
     return destination(await pastedAttachments.resolve(sources));
   });
   handle("attachments:preview", raw, (event, uri) => remoteAttachmentPreview(event.sender, text(uri, ErrorCode.attachmentInvalidPaths)));
+  handle("attachments:save-employee", (args) => [
+    text(args[0], ErrorCode.invalidPath, 36),
+    text(args[1], ErrorCode.invalidPath, 4096)
+  ], async (event, sessionId, uri) => {
+    if (!sourceEmployeeRuntime()) throw new Error(ErrorCode.runtimeUnavailable);
+    const local = await captureLocalRuntime(event.sender);
+    const result = await local.request("_aibertai/session/attachment/read", { sessionId, uri });
+    if (typeof result?.name === "string" && typeof result?.base64 === "string" && result.base64.length <= Math.ceil((32 * 1024 * 1024) / 3) * 4) {
+      const data = Buffer.from(result.base64, "base64");
+      if (data.length > 32 * 1024 * 1024) throw new Error(ErrorCode.fileUnavailable);
+      return saveFile(event, data, result.name, local.assertCurrent);
+    }
+    if (typeof result?.content !== "string" || typeof result?.name !== "string" || Buffer.byteLength(result.content) > employeeAttachmentLimit) {
+      throw new Error(ErrorCode.fileUnavailable);
+    }
+    return saveFile(event, Buffer.from(result.content, "utf8"), result.name, local.assertCurrent);
+  });
   handle("images:fetch", raw, (_event, url2) => {
     const server = currentAccount()?.server.url;
     return fetchRemoteImage(url2, (input, init) => fetchWithServerCertificate(input, init, server));

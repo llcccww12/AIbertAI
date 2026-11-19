@@ -273,9 +273,7 @@ flowchart LR
 | `value.cached_input_credits_per_million_tokens` | `number` | 是 | 无 | 每百万缓存命中输入 Token 消耗积分。 |
 | `value.output_credits_per_million_tokens` | `number` | 是 | 无 | 每百万输出 Token 消耗积分。 |
 | `value.quota_refresh_cycle` | `string` | 是 | 无 | 额度刷新周期：`daily`、`weekly`、`monthly`。 |
-| `value.charging_mode` | `string` | 是 | `local` | 计费方式：`local`、`remote`。 |
-| `value.remote_billing_base_url` | `string` | 否 | `null` | 百智云远程计费地址。 |
-| `value.remote_billing_api_key` | `string` | 否 | `null` | 百智云远程计费 API Key，明文保存。 |
+| `value.charging_mode` | `string` | 是 | `local` | 计费方式：`disabled`、`local`。 |
 
 ## 7. 资源访问授权
 

@@ -1,6 +1,12 @@
-# React + TypeScript + Vite + shadcn/ui
+# AIbertAI 管理后台
 
-MonkeyAI 管理端使用 React、TypeScript、Vite 和 Tailwind CSS 3.4。降级前的完整回退基线为提交 `5789bb73`。
+管理后台使用 React、TypeScript、Vite 和 Tailwind CSS。
+
+## 品牌设置
+
+公开首页、登录页、侧栏和设置预览读取同一套品牌配置。管理员从「其他设置」修改团队名称、产品名和 Logo，选图后保存才提交。获取品牌与上传 Logo 的契约以 [API 定义](../backend/api/admin.yaml) 和 [公开认证 API](../backend/api/agent.yaml) 为准。品牌为空或加载失败时，页面使用 AIbertAI 默认 Logo。
+
+本地浏览器回归可用 `CHROME_BIN=/path/to/chrome pnpm test:browser:brand-logo` 验证。
 
 ## Chrome 86 兼容
 

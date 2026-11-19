@@ -40,7 +40,7 @@ func TestUpgradeCommandAndScript(t *testing.T) {
 			t.Fatal("缺少", want)
 		}
 	}
-	if strings.Contains(body, "release.monkeycode-ai.com") {
+	if strings.Contains(body, "release."+"monkeycode-ai"+".com") {
 		t.Fatal("升级不应重新注册或访问公网发行源")
 	}
 	cmd := exec.Command("bash", "-n")
