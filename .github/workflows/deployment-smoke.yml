@@ -1,0 +1,63 @@
+name: Clean server deployment
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/deployment-smoke.yml"
+      - "AIbertCode/aibertai/.dockerignore"
+      - "AIbertCode/aibertai/admin/**"
+      - "AIbertCode/aibertai/backend/**"
+      - "AIbertCode/aibertai/deploy/**"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/deployment-smoke.yml"
+      - "AIbertCode/aibertai/.dockerignore"
+      - "AIbertCode/aibertai/admin/**"
+      - "AIbertCode/aibertai/backend/**"
+      - "AIbertCode/aibertai/deploy/**"
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: AIbertCode/aibertai
+    steps:
+      - uses: actions/checkout@v4
+      - name: Initialize and start isolated deployment
+        run: |
+          bash deploy/stack.sh init http://127.0.0.1:55174 smoke@example.test
+          printf 'LISTEN_HOST=127.0.0.1\nLISTEN_PORT=55174\n' >>deploy/.env
+          bash deploy/stack.sh up
+      - name: Verify gateway, first login, and WebSocket transfer
+        run: |
+          . deploy/.env
+          PUBLIC_URL="$PUBLIC_URL" INITIAL_ADMIN_EMAIL="$INITIAL_ADMIN_EMAIL" \
+            INITIAL_ADMIN_PASSWORD="$INITIAL_ADMIN_PASSWORD" python3 - <<'PY'
+          import json, os, urllib.request
+          base = os.environ["PUBLIC_URL"]
+          def get(path):
+              with urllib.request.urlopen(base + path, timeout=5) as response:
+                  return json.load(response)
+          assert get("/readyz") == {"status": "ok"}
+          assert get("/.well-known/oauth-authorization-server")["issuer"] == base
+          payload = json.dumps({"email": os.environ["INITIAL_ADMIN_EMAIL"],
+                                "password": os.environ["INITIAL_ADMIN_PASSWORD"]}).encode()
+          request = urllib.request.Request(base + "/api/auth/v1/admin/login", data=payload,
+                                           headers={"Content-Type": "application/json", "Origin": base})
+          with urllib.request.urlopen(request, timeout=5) as response:
+              assert json.load(response)["email"] == os.environ["INITIAL_ADMIN_EMAIL"]
+          PY
+          docker run --rm -v "$PWD/admin:/src:ro" node:22.23.3-bookworm-slim \
+            node --test /src/test/serve-admin.test.mjs
+      - name: Collect startup diagnostics
+        if: failure()
+        run: docker compose --env-file deploy/.env -f deploy/compose.yaml ps
+      - name: Remove isolated services
+        if: always()
+        run: docker compose --env-file deploy/.env -f deploy/compose.yaml down -v

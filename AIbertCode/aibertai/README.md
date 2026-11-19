@@ -54,6 +54,39 @@ pnpm exec vite --host 127.0.0.1 --strictPort --port 5173
 
 `AIBERTAI_PUBLIC_URL` 应设置为浏览器和员工端实际访问的根地址。后端使用它生成 OAuth 元数据和回调。员工端登录时填写该地址。Vite 的代理目标由 `AIBERTAI_DEV_BACKEND_URL` 配置。如需为 API 单独指定目标，可设置 `AIBERTAI_DEV_API_URL`。
 
+## 内网服务器部署
+
+新服务器安装 Docker Engine、Docker Compose v2、Bash 和 OpenSSL 后，从本目录执行。把示例地址换成管理员和桌面端实际访问的完整地址，把邮箱换成自己的管理员邮箱。
+
+```bash
+bash deploy/stack.sh init http://192.168.1.20:5173 admin@example.com
+bash deploy/stack.sh up
+```
+
+`init` 首次生成 `deploy/.env` 和独立密码。管理员初始密码在该文件的 `INITIAL_ADMIN_PASSWORD`，只在空库初始化时生效。已有部署保留该文件，拉取更新后直接执行 `up`。该命令构建管理后台和 Go 后端，启动 PostgreSQL、RustFS，完成数据库迁移，再启动支持设备 WebSocket 的统一入口。数据库、对象存储和设备签名密钥各自保存在 Docker 数据卷中。默认只对客户端开放 `5173`。升级迁移失败时，后端保持停止，先检查迁移错误再恢复服务。
+
+外面另有 HTTPS 反向代理时，将 `deploy/.env` 中的 `PUBLIC_URL` 填为外部 HTTPS 地址，按需设置 `LISTEN_HOST=127.0.0.1` 和 `LISTEN_PORT=5173`。外层代理须转发 API 及设备桥接、远程会话的 WebSocket Upgrade。桌面端登录地址、`PUBLIC_URL` 和 OAuth 元数据的 `issuer` 应完全一致。
+
+部署成功后检查以下入口。若任一服务未启动，可从本目录执行 `docker compose --env-file deploy/.env -f deploy/compose.yaml logs --tail=100`。
+
+- 统一入口的 `/readyz` 返回 HTTP 200，`/.well-known/oauth-authorization-server` 返回正确的 `issuer`。
+- 登录管理后台后配置并启用文本模型，授权给桌面账号或所在分组。用桌面端登录，检查「设置 → 模型」并发送一条测试消息。
+- 云电脑按需配备 [Linux 执行宿主](engine/README.md)。使用添加宿主或安装升级功能时，把双架构宿主安装器和运行时发布件放到 `deploy/data/releases`，并在 `deploy/.env` 设置 `ENGINE_RELEASE_DIR`、`ENGINE_VERSION`、`ENVIRONMENT_RUNTIME_DIR` 和 `ENVIRONMENT_RUNTIME_VERSION`。目录变量使用容器内的 `/data/releases/...` 路径。
+
+迁移已有平台前，备份并恢复 PostgreSQL、RustFS、运行时状态目录和部署私密配置。迁移时尽量保留统一域名和端口，以延续原设备身份。更换登录地址时，桌面端会按新地址重新注册设备。首次初始化数据库只能得到一个空团队。若曾使用手工部署的 5173 静态代理，切换到此入口前先为新实例选择独立监听端口，避免和正在运行的服务冲突。保持已有服务运行时，也可优先将代理换成仓库内的 `admin/scripts/serve-admin.mjs`。
+
+### 部署设计案例缓存
+
+在服务器上准备完整的设计缓存目录，将已验收缓存中的 `catalog.json` 和 `assets/` 一起复制过去。也可以在服务器上使用[设计资源同步工具](design/design-resource-import.md#私有后端缓存)，从部署方选定的资源目录生成缓存。
+
+若用上面的 Docker Compose 部署，把缓存放在 `deploy/data/design-cache/`，在 `deploy/.env` 加入 `DESIGN_PUBLIC_CACHE_DIR=/data/design-cache`，再执行 `bash deploy/stack.sh up`。若沿用手工启动，在服务器的 `backend.env` 中加入下面的配置，把路径换成服务器上的实际绝对路径。Go 后端的运行用户须能读取该目录和文件。
+
+```bash
+export AIBERTAI_DESIGN_PUBLIC_CACHE_DIR=/srv/aibertai/design-cache
+```
+
+保存后重启 Go 后端。通过统一入口访问 `/api/v1/design-resources/public-cache/catalog/templates?page_size=1`，应返回 HTTP 200，且 `data.items` 中有案例。再用桌面端登录同一个入口，打开「海报 → 设计案例」，检查案例和缩略图是否显示。升级时复用服务器上的缓存目录和环境配置。
+
 ## 业务和验证入口
 
 - **管理后台**支持成员、模型、知识库、资源和费用设置。在「其他设置 → 知识库设置」中选择已启用的 OpenAI 兼容 Embedding 模型作为默认模型。已有绑定的知识库可在详情页切换模型并重建索引。Reranker 通过兼容的 `/rerank` 接口调用，失败时沿用原排序。文档视觉解析使用支持图片输入的 Chat Completions 模型，解析 PDF 需要服务端 PATH 中的 Poppler `pdftoppm`。界面开发和验证见[管理后台说明](admin/README.md)。

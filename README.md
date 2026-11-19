@@ -45,6 +45,10 @@ GitHub 仓库包含当前后端、管理端、工作台构建文件及品牌资�
 
 按[管理平台启动指南](AIbertCode/aibertai/README.md#本机开发)启动 PostgreSQL、RustFS、Go 后端和 Vite。服务启动后可双击现有 `AIbertAI/AIbertAI.app`，登录时填写该设备可访问的后端地址。开发期间按改动范围运行代码检查与联调，跨设备验收和发布时再构建安装包。
 
+## 服务器部署
+
+新服务器使用仓库的 [Docker Compose 部署入口](AIbertCode/aibertai/README.md#内网服务器部署)。部署文档包含数据库迁移、桌面 WebSocket 代理、设计资源缓存和迁移已有数据所需的配置。
+
 ## 文档入口
 
 - [桌面端构建、升级与回滚](AIbertAI/packaging/README.md)

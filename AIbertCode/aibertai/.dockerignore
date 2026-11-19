@@ -1,0 +1,16 @@
+**
+!admin/
+!admin/**
+!backend/
+!backend/**
+!deploy/
+!deploy/*.Dockerfile
+**/node_modules
+**/dist
+**/.env
+**/.env.*
+**/.git
+**/data
+**/bin
+**/*.log
+backend/testdata

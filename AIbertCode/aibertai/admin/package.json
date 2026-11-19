@@ -8,6 +8,7 @@
     "dev": "vite",
     "dev:environments": "node scripts/environment-fixture.mjs",
     "build": "tsc -b && vite build",
+    "start": "node scripts/serve-admin.mjs",
     "lint": "eslint .",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
     "test": "node --test test/*.test.mjs",
