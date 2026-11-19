@@ -385,7 +385,19 @@ DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION reject_test_tag();`)
 			t.Fatalf("技能目录元数据缺失: %v", item)
 		}
 	}
+	contentPath := "/api/v1/skills/" + skill.String("id") + "/content"
+	content := must("GET", contentPath, nil, "a", "")
+	if content.String("content") != "更新正文" || content.String("package_sha256") != skill.String("package_sha256") || content.Int("file_count") != 2 {
+		t.Fatal("技能正文与同版本安装包元数据未下发")
+	}
+	if code, _, _ := call("GET", contentPath, nil, "b", ""); code != 404 {
+		t.Fatalf("未授权用户读取技能正文: %d", code)
+	}
 	must("PUT", "/api/admin/v1/resources/skill/"+skill.String("id")+"/grants", resource.Object{"grants": []any{}}, "", `"3"`)
+	if code, _, _ := call("GET", contentPath, nil, "a", ""); code != 404 {
+		t.Fatalf("已撤权用户仍能读取技能正文: %d", code)
+	}
+
 	if revoked := must("GET", "/api/v1/skills", nil, "a", ""); len(revoked["skills"].([]any)) != 0 || revoked.String("version") == skills.String("version") {
 		t.Fatal("技能撤权后目录及版本未更新")
 	}

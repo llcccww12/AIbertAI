@@ -175,6 +175,7 @@ func (h *relaySessionHost) localQuery(ctx context.Context, method string, raw js
 		return h.desktopModelSettings(ctx, method, raw)
 	case "_monkeyai/resources/get", "_monkeyai/resources/save", "_monkeyai/resources/delete",
 		"_monkeyai/resources/experts/details", "_monkeyai/resources/experts/tags", "_monkeyai/resources/connectors/tags", "_monkeyai/resources/skills/tags",
+		"_monkeyai/resources/skills/content", "_monkeyai/resources/skills/manifest",
 		"_monkeyai/resources/connectors/test", "_monkeyai/resources/connectors/authorize",
 		"_monkeyai/resources/connectors/authorization", "_monkeyai/resources/connectors/credentials",
 		"_monkeyai/resources/connectors/credentials/get", "_monkeyai/resources/connectors/credentials/create",
@@ -324,7 +325,7 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 			return err
 		}
 	}
-	c, err := newClient(init.ServerURL)
+	c, err := newBackendClient(init.ServerURL, true)
 	if err != nil {
 		return err
 	}

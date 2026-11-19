@@ -4058,6 +4058,33 @@ paths:
           $ref: '#/components/responses/ResourceError500'
         '502':
           $ref: '#/components/responses/ResourceError502'
+  /api/v1/skills/{id}/content:
+    get:
+      summary: 读取当前用户有权限访问的技能正文
+      parameters:
+      - $ref: '#/components/parameters/ResourceID'
+      responses:
+        '200':
+          description: 技能名称、描述、正文、版本和安装包元数据。
+          headers:
+            ETag:
+              $ref: '#/components/headers/RevisionETag'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSkillManifest'
+        '400':
+          $ref: '#/components/responses/ResourceError400'
+        '401':
+          $ref: '#/components/responses/ResourceError401'
+        '404':
+          $ref: '#/components/responses/ResourceError404'
+        '500':
+          $ref: '#/components/responses/ResourceError500'
+        '502':
+          $ref: '#/components/responses/ResourceError502'
   /api/v1/connectors/{id}/credentials:
     parameters:
     - name: id
@@ -5938,6 +5965,8 @@ components:
       - description
       - content
       - revision
+      - package_sha256
+      - file_count
       properties:
         name:
           type: string
@@ -5947,6 +5976,11 @@ components:
           type: string
         revision:
           type: integer
+        package_sha256:
+          type: string
+        file_count:
+          type: integer
+          minimum: 1
     EmailAuthError:
       type: object
       required:

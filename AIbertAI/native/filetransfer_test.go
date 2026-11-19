@@ -32,3 +32,17 @@ func TestFileTransferRejectsWrongTargetAndTraversal(t *testing.T) {
 		t.Fatal("accepted upload to an unrelated origin")
 	}
 }
+
+func TestFileTransferUsesConfiguredHTTPServer(t *testing.T) {
+	const machine = "6bfc669b-55d4-40eb-afb3-6a9df8247430"
+	const server = "http://ai-server.internal:5173"
+	in := fileTransferInput{Server: server, MachineID: machine, Ticket: strings.Repeat("a", 32), Method: http.MethodGet}
+	in.URL = server + "/api/v1/endpoints/" + machine + "/proxy/files/fg1.payload.signature/report.txt"
+	if _, err := fileTransferURL(in); err != nil {
+		t.Fatal(err)
+	}
+	in.URL = strings.Replace(in.URL, "ai-server.internal", "other.internal", 1)
+	if _, err := fileTransferURL(in); err == nil {
+		t.Fatal("accepted a file request for an unrelated HTTP origin")
+	}
+}

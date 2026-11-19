@@ -29,7 +29,7 @@ func transferOrigin(raw string) (*url.URL, bool) {
 	address, err := url.Parse(raw)
 	if err != nil || address.Hostname() == "" || address.User != nil || address.Opaque != "" ||
 		address.RawQuery != "" || address.ForceQuery || address.Fragment != "" ||
-		(address.Scheme != "https" && !(address.Scheme == "http" && address.Hostname() == "127.0.0.1")) {
+		(address.Scheme != "https" && address.Scheme != "http") {
 		return nil, false
 	}
 	return address, true

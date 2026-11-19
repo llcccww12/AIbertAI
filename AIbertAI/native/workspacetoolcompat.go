@@ -54,6 +54,7 @@ type workspaceToolPolicy struct {
 	DesignTools  []desktopDesignTool
 	Instructions string
 	Goal         *desktopGoalRun
+	SkillScript  bool
 }
 
 func (p *workspaceToolPolicy) extraDefinitions() []map[string]any {
@@ -73,6 +74,10 @@ func (p *workspaceToolPolicy) extraDefinitions() []map[string]any {
 		tools = append(tools, map[string]any{"name": name, "description": description, "parameters": json.RawMessage(schema)})
 	}
 	str := func() any { return map[string]string{"type": "string"} }
+	if p.SkillScript {
+		add(skillScriptTool, "Execute a packaged Python, shell, or JavaScript script from the selected skill after approval. The working directory is the session workspace.",
+			map[string]any{"path": str(), "arguments": map[string]any{"type": "array", "items": str()}}, "path")
+	}
 	boolean := map[string]string{"type": "boolean"}
 	integer := map[string]any{"type": "integer", "minimum": 0}
 	add(legacyReadTool, "Read a UTF-8 file in this workspace. Offset counts lines from zero.",

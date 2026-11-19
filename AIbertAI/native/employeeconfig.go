@@ -7,6 +7,7 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strings"
 )
 
 func (h *relaySessionHost) readConfig(w http.ResponseWriter, r *http.Request, auth relayAuthorization) {
@@ -74,6 +75,10 @@ func (h *relaySessionHost) employeeConfig(ctx context.Context) (any, error) {
 		experts = []json.RawMessage{}
 		syncStatus["experts"] = map[string]any{"state": "error", "error": expertErr.Error()}
 	}
+	skills, skillErr := l.client.desktopSkillCatalog(ctx, auth)
+	if skillErr != nil {
+		syncStatus["skills"] = map[string]any{"state": "error", "error": skillErr.Error()}
+	}
 	l.mu.Lock()
 	preferences := l.connectorPrefs.normalized()
 	settings := l.settings
@@ -114,10 +119,45 @@ func (h *relaySessionHost) employeeConfig(ctx context.Context) (any, error) {
 		"expertSummaries": expertSummaries, "expertIssues": map[string]any{}, "expertMissingSkills": map[string]any{},
 		"resourceRules": empty, "resourceSkills": empty, "resourceSyncStatus": syncStatus,
 		"resourcePreferences": preferences,
-		"server":              map[string]any{"connectors": connectors, "experts": experts, "rules": empty, "skills": empty},
+		"server":              map[string]any{"connectors": connectors, "experts": experts, "rules": empty, "skills": skills},
 		"workspace":           map[string]any{"additional_directories": empty, "last_workspace": l.cwd},
 		"capabilities":        map[string]any{}, "display": settings.display(),
 		"goals": map[string]any{"default_token_budget": settings.goalBudget(), "execution_supported": false},
 		"rules": "", "rulesReady": true, "engineDir": "", "skillsDir": "",
 	}, nil
+}
+
+func (c *client) desktopSkillCatalog(ctx context.Context, auth authorization) ([]map[string]any, error) {
+	rows, err := c.desktopCatalog(ctx, auth, "skills")
+	skills := make([]map[string]any, 0, len(rows))
+	if err != nil {
+		return skills, err
+	}
+	for _, raw := range rows {
+		var item map[string]any
+		if json.Unmarshal(raw, &item) != nil {
+			return []map[string]any{}, errors.New("skill_catalog_invalid")
+		}
+		id, _ := item["id"].(string)
+		name, _ := item["name"].(string)
+		if !validUUID(id) || name == "" {
+			return []map[string]any{}, errors.New("skill_catalog_invalid")
+		}
+		item["resourceId"] = id
+		item["version"] = item["package_sha256"]
+		if skillCommandName.MatchString(name) && !strings.EqualFold(name, "goal") {
+			item["command_name"] = name
+			item["invokable"] = true
+		} else {
+			item["invokable"] = false
+		}
+		if _, ok := item["description"].(string); !ok {
+			item["description"] = ""
+		}
+		if _, ok := item["tags"].([]any); !ok {
+			item["tags"] = []any{}
+		}
+		skills = append(skills, item)
+	}
+	return skills, nil
 }

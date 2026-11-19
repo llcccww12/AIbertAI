@@ -151,13 +151,18 @@ func (s *Service) manifest(w http.ResponseWriter, r *http.Request, personal bool
 			return
 		}
 	}
+	s.ServeManifest(w, r, o)
+}
+
+func (s *Service) ServeManifest(w http.ResponseWriter, r *http.Request, o resource.Object) {
+	w.Header().Set("Cache-Control", "private, no-store")
 	p, err := s.read(r.Context(), o)
 	if err != nil {
 		resource.Fail(r.Context(), w, err)
 		return
 	}
 	resource.ETag(w, o)
-	resource.JSON(r.Context(), w, 200, resource.Object{"name": p.Name, "description": p.Description, "content": p.Content, "revision": o["revision"]})
+	resource.JSON(r.Context(), w, 200, resource.Object{"name": p.Name, "description": p.Description, "content": p.Content, "revision": o["revision"], "package_sha256": p.SHA, "file_count": len(p.Files)})
 }
 func (s *Service) upload(w http.ResponseWriter, r *http.Request, personal bool) {
 	r.Body = http.MaxBytesReader(w, r.Body, MaxPackage+(1<<20))

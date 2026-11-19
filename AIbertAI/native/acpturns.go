@@ -9,6 +9,7 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -264,6 +265,9 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 		}
 	}
 	if turn.Failed {
+		if errors.Is(err, errSkillCommandUnavailable) {
+			return nil, errSkillCommandUnavailable
+		}
 		return nil, errors.New("session_turn_failed")
 	}
 	if turn.Interrupted {
@@ -278,7 +282,16 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Conn, request *http.Request, session acpSession, turn *acpTurn, files []acpAttachment) error {
 	live := h.live
 	id := session.ID
-	modelPrompt, attachments, err := h.attachmentPrompt(ctx, id, turn.Prompt, files)
+	task, skillInstructions := turn.Prompt, ""
+	var skillPackage *desktopSkillPackage
+	if live.workspaces != nil {
+		var err error
+		task, skillInstructions, skillPackage, err = h.desktopSkillInstructions(ctx, task)
+		if err != nil {
+			return err
+		}
+	}
+	modelPrompt, attachments, err := h.attachmentPrompt(ctx, id, task, files)
 	if err != nil {
 		return err
 	}
@@ -300,7 +313,7 @@ func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Co
 		approved = nil
 		limit = maxACPToolCalls
 		allowWrite = h.acpScope(request.WithContext(ctx), "files:write") == nil
-		workspace = &workspaceToolPolicy{CanWrite: allowWrite}
+		workspace = &workspaceToolPolicy{CanWrite: allowWrite, SkillScript: skillPackage != nil && h.local != nil && allowWrite}
 		prefs := connectorPreferences{}.normalized()
 		if session.ConnectorPreferences != nil {
 			prefs = session.ConnectorPreferences.normalized()
@@ -366,6 +379,9 @@ func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Co
 					})
 				}
 			}
+		}
+		if skillInstructions != "" {
+			workspace.Instructions = strings.TrimSpace(workspace.Instructions + "\n\n" + skillInstructions)
 		}
 		workspace.Preferences = prefs.builtinTools()
 		if prefs.hasEnabledConnector() && h.acpScope(request.WithContext(ctx), "resources:manage") == nil {
@@ -479,7 +495,12 @@ func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Co
 			}()
 			var permissions reportedPermissions
 			var permissionErr error
-			if tool := args.Connector; tool != nil {
+			if args.SkillScript != nil {
+				if skillPackage == nil || !workspace.SkillScript {
+					return "", errRelayAccess
+				}
+				permissions, permissionErr = h.requestACPToolApproval(ctx, ws, request, id, call.ID, "运行技能脚本 "+skillPackage.Name+" / "+args.SkillScript.Path, call.Function.Name, "execute", args.JSON)
+			} else if tool := args.Connector; tool != nil {
 				title := tool.ConnectorName + " / " + tool.Name
 				permissions, permissionErr = h.requestACPToolApproval(ctx, ws, request, id, call.ID, title, tool.Name, "other",
 					map[string]any{"connector": tool.ConnectorName, "tool": tool.Name, "arguments": args.JSON})
@@ -506,6 +527,18 @@ func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Co
 			turn.Permissions.Denied += permissions.Denied
 			if permissionErr != nil {
 				return "", permissionErr
+			}
+			if args.SkillScript != nil {
+				root, err := live.workspaces.sessionRoot(session)
+				if err != nil {
+					return "", err
+				}
+				defer root.Close()
+				auth, err := live.authorization(ctx)
+				if err != nil {
+					return "", err
+				}
+				return live.client.executeSkillScript(ctx, auth, *skillPackage, *args.SkillScript, root.Name())
 			}
 			if args.Design {
 				return h.designBridge.call(ctx, session, design, call.Function.Name, args.JSON)

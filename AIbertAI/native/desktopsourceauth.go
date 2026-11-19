@@ -193,7 +193,7 @@ func desktopSourceLogin(ctx context.Context, server string, in io.Reader, out io
 	if backendOrigin != "" && server != backendOrigin {
 		return errDesktopCredential
 	}
-	c, err := newClient(server)
+	c, err := newBackendClient(server, true)
 	if err != nil {
 		return err
 	}
@@ -288,7 +288,7 @@ func desktopSourceLogout(ctx context.Context, profile, server, user string, in i
 	if backendOrigin != "" && server != backendOrigin {
 		return errDesktopCredential
 	}
-	c, err := newClient(server)
+	c, err := newBackendClient(server, true)
 	if err != nil {
 		return err
 	}

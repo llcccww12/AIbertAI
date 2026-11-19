@@ -1,10 +1,10 @@
 package agentconfig
 
 import (
+	"aibertai.local/backend/logging"
 	"context"
 	"errors"
 	"fmt"
-	"aibertai.local/backend/logging"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -578,8 +578,11 @@ func (r *Resources) RegisterAgent(router chi.Router) {
 	}
 	router.Get("/experts/{id}/manifest", r.getManifest)
 	router.Post("/resources/resolve", r.resolve)
-	router.Get("/skills/{id}/package", func(w http.ResponseWriter, req *http.Request) { r.download(w, req, false) })
-	router.Get("/experts/{id}/skills/{skillID}/package", func(w http.ResponseWriter, req *http.Request) { r.download(w, req, true) })
+	router.Get("/skills/{id}/content", func(w http.ResponseWriter, req *http.Request) {
+		r.serveSkill(w, req, false, r.skills.ServeManifest)
+	})
+	router.Get("/skills/{id}/package", func(w http.ResponseWriter, req *http.Request) { r.serveSkill(w, req, false, r.skills.ServePackage) })
+	router.Get("/experts/{id}/skills/{skillID}/package", func(w http.ResponseWriter, req *http.Request) { r.serveSkill(w, req, true, r.skills.ServePackage) })
 }
 func (r *Resources) getManifest(w http.ResponseWriter, req *http.Request) {
 	u, _ := identity.UserFromContext(req.Context())
@@ -608,7 +611,7 @@ func (r *Resources) getManifest(w http.ResponseWriter, req *http.Request) {
 	}
 	resource.JSON(req.Context(), w, 200, out)
 }
-func (r *Resources) download(w http.ResponseWriter, req *http.Request, delegated bool) {
+func (r *Resources) serveSkill(w http.ResponseWriter, req *http.Request, delegated bool, serve func(http.ResponseWriter, *http.Request, resource.Object)) {
 	u, _ := identity.UserFromContext(req.Context())
 	tx, err := r.transaction(req.Context())
 	if err != nil {
@@ -645,7 +648,7 @@ func (r *Resources) download(w http.ResponseWriter, req *http.Request, delegated
 		resource.Fail(req.Context(), w, err)
 		return
 	}
-	r.skills.ServePackage(w, req, c.skills[id])
+	serve(w, req, c.skills[id])
 }
 func (r *Resources) resolve(w http.ResponseWriter, req *http.Request) {
 	var in resource.Object

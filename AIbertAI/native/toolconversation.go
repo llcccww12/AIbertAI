@@ -49,11 +49,12 @@ type workspaceToolArguments struct {
 }
 
 type toolArguments struct {
-	Workspace workspaceToolArguments
-	Connector *connectorTool
-	Compat    *workspaceCompatCall
-	Design    bool
-	JSON      json.RawMessage
+	Workspace   workspaceToolArguments
+	Connector   *connectorTool
+	Compat      *workspaceCompatCall
+	Design      bool
+	SkillScript *skillScriptCall
+	JSON        json.RawMessage
 }
 
 type workspaceToolRun struct {
@@ -294,6 +295,14 @@ func parseModelToolArguments(invocation modelToolUse, approved []string, allowWr
 	}
 	if !builtins[invocation.Function.Name] {
 		return toolArguments{}, invalid
+	}
+	if invocation.Function.Name == skillScriptTool {
+		raw := json.RawMessage(invocation.Function.Arguments)
+		var script skillScriptCall
+		if len(raw) > 16<<10 || decodeWorkspaceTool(raw, &script) != nil || !validSkillScript(script) {
+			return toolArguments{}, invalid
+		}
+		return toolArguments{SkillScript: &script, JSON: raw}, nil
 	}
 	if designTool(invocation.Function.Name) {
 		raw := json.RawMessage(invocation.Function.Arguments)

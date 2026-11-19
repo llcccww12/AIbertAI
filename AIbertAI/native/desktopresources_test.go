@@ -33,6 +33,10 @@ func TestPrivateDesktopResources(t *testing.T) {
 			}
 			saved = true
 			body = `{}`
+		case "GET /api/v1/skills":
+			body = `{"skills":[{"id":"` + other + `","name":"Uploaded skill","ownership_type":"system","package_sha256":"fixture","tags":null}],"total_count":1}`
+		case "GET /api/v1/skills/" + other + "/content":
+			body = `{"content":"Uploaded instructions"}`
 		case "GET /api/v1/experts":
 			body = `{"experts":[{"id":"` + other + `","name":"Private expert"}],"total_count":1}`
 		case "PUT /api/v1/experts/" + other:
@@ -78,6 +82,16 @@ func TestPrivateDesktopResources(t *testing.T) {
 	raw, err := json.Marshal(cfg)
 	if err != nil || !strings.Contains(string(raw), `"source":"mine"`) || !strings.Contains(string(raw), "Private expert") {
 		t.Fatalf("catalog not refreshed: %s (%v)", raw, err)
+	}
+	skills := cfg.(map[string]any)["server"].(map[string]any)["skills"].([]map[string]any)
+	if len(skills) != 1 || skills[0]["id"] != other || skills[0]["resourceId"] != other ||
+		skills[0]["ownership_type"] != "system" || skills[0]["description"] != "" || len(skills[0]["tags"].([]any)) != 0 {
+		t.Fatalf("invalid visible skill catalog: %+v", skills)
+	}
+	content, err := host.localQuery(t.Context(), "_monkeyai/resources/skills/content",
+		json.RawMessage(`{"id":"`+other+`"}`))
+	if err != nil || string(content.(json.RawMessage)) != `{"content":"Uploaded instructions"}` {
+		t.Fatalf("uploaded skill body unavailable: %v", err)
 	}
 	_, err = host.setDesktopSessionModel(t.Context(), "_monkeyai/session/model/set", json.RawMessage(`{"sessionId":"`+sessionID+`","model":"`+other+`","thinking":{"enabled":true,"effort":"low"}}`))
 	if err != nil || live.sessions[sessionID].Model != other {

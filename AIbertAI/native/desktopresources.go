@@ -14,15 +14,15 @@ func (c *client) desktopCatalog(ctx context.Context, auth authorization, kind st
 	items := []json.RawMessage{}
 	for page := 1; page <= 100; page++ {
 		var result struct {
-			Models, Experts []json.RawMessage
-			Total           int `json:"total_count"`
+			Models, Experts, Skills []json.RawMessage
+			Total                   int `json:"total_count"`
 		}
 		path := fmt.Sprintf("/api/v1/%s?page=%d&page_size=100", kind, page)
 		if err := c.json(ctx, http.MethodGet, path, auth.Access, "", nil, &result); err != nil {
 			return nil, err
 		}
 		rows := map[string][]json.RawMessage{
-			"models": result.Models, "experts": result.Experts,
+			"models": result.Models, "experts": result.Experts, "skills": result.Skills,
 		}[kind]
 		items = append(items, rows...)
 		if len(rows) == 0 || len(items) >= result.Total {
@@ -194,6 +194,11 @@ func (h *relaySessionHost) desktopResource(ctx context.Context, method string, r
 		op.Path = "/api/v1/experts/tags"
 	case "_monkeyai/resources/connectors/tags":
 		op.Path = "/api/v1/connectors/tags"
+	case "_monkeyai/resources/skills/content", "_monkeyai/resources/skills/manifest":
+		if p.ID == "" {
+			return nil, errors.New("invalid_request")
+		}
+		op.Path = "/api/v1/skills/" + p.ID + "/" + strings.TrimPrefix(method, "_monkeyai/resources/skills/")
 	case "_monkeyai/resources/skills/tags":
 		op.Path = "/api/v1/skills/tags"
 	case "_monkeyai/resources/get", "_monkeyai/resources/save", "_monkeyai/resources/delete":

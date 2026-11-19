@@ -1535,7 +1535,7 @@ function serverOrigin(value) {
   if (!value) return void 0;
   try {
     const url2 = new URL(value);
-    return url2.protocol === "https:" && !url2.username && !url2.password ? url2 : void 0;
+    return (url2.protocol === "https:" || url2.protocol === "http:") && !url2.username && !url2.password ? url2 : void 0;
   } catch {
     return void 0;
   }

@@ -92,7 +92,7 @@ func desktopKnowledge(ctx context.Context, reader io.Reader) (any, error) {
 	if in.Method == "_monkeyai/workspace/stat" {
 		return statWorkspaceFile(in.Params.WorkspaceRoot, in.Params.Path)
 	}
-	c, err := newClient(in.Server)
+	c, err := newBackendClient(in.Server, true)
 	if err != nil || (backendOrigin != "" && in.Server != backendOrigin) {
 		return nil, errDesktopCredential
 	}

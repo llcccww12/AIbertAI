@@ -115728,9 +115728,9 @@ const qwt = {
       official: "官方服务器",
       private: "私有化部署",
       privateUrl: "服务器地址",
-      privatePlaceholder: "http://127.0.0.1:5173",
+      privatePlaceholder: "https://ai.example.com",
       privateHint: "填写要登录的服务器地址",
-      invalidUrl: "地址不合法，例如 http://127.0.0.1:5173",
+      invalidUrl: "请输入服务器地址，例如 https://ai.example.com",
       insecureHint: "该地址使用 http，登录令牌会明文传输，仅建议在内网使用。",
       localAccounts: "本机账号",
       continueAs: "以 {{name}} 继续",
@@ -118925,9 +118925,9 @@ Start with the conclusion, then explain the reasoning.`,
       official: "Official server",
       private: "Self-hosted",
       privateUrl: "Server URL",
-      privatePlaceholder: "http://127.0.0.1:5173",
+      privatePlaceholder: "https://ai.example.com",
       privateHint: "Enter the server address",
-      invalidUrl: "Invalid URL, e.g. http://127.0.0.1:5173",
+      invalidUrl: "Enter a server address such as https://ai.example.com",
       insecureHint:
         "This address uses http, so sign-in tokens travel unencrypted. Use it only on a private network.",
       localAccounts: "Accounts on this device",
@@ -159042,7 +159042,7 @@ function eTt(e, t, n, r = n?.expert) {
   });
   return { builtin: i, connections: d };
 }
-function g_e(e, t, n) {
+function g_e(e, t, n, sourceRuntime) {
   const r = (m) => m.toLowerCase(),
     s = (m, g) => (g && g !== m ? { title: g } : {}),
     i = (e?.skills ?? [])
@@ -159085,7 +159085,7 @@ function g_e(e, t, n) {
       name: m.commandName,
       description: m.description,
       ...s(m.commandName, m.name),
-      enableId: m.id,
+      ...(sourceRuntime ? {} : { enableId: m.id }),
     })),
     ...p.map((m) => ({
       name: Ak(m),
@@ -159099,13 +159099,13 @@ function g_e(e, t, n) {
 function tTt(e, t, n) {
   if (!e) return [];
   const r = e.expertSummaries.find((s) => s.id === t);
-  return g_e(r, BX(e, n, r).enabled, v8(e));
+  return g_e(r, BX(e, n, r).enabled, v8(e), e.sourceRuntime);
 }
 function nTt(e, t, n) {
   if (!e) return [];
   const r = t?.expert ?? e.expertSummaries.find((i) => i.id === n),
     s = t?.preferences.enabled ?? BX(e, [], r).enabled;
-  return g_e(r, s, v8(e));
+  return g_e(r, s, v8(e), e.sourceRuntime);
 }
 function FX({
   sessionId: e,
@@ -165505,11 +165505,10 @@ ${e("design.templateStyle")}${Nt}`
     ],
   });
 }
-const cjt = "http://127.0.0.1:5173",
-  ujt =
-    /^(?:localhost|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?|\d{1,3}(?:\.\d{1,3}){3}|\[[0-9a-f:]+\])$/i;
+const ujt =
+    /^(?:localhost|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?|\d{1,3}(?:\.\d{1,3}){3}|\[[0-9a-f:]+\])$/i;
 function hhe(e) {
-  return e?.url ?? cjt;
+  return e?.url ?? "";
 }
 function P_e(e) {
   const t = djt(e);
@@ -165529,10 +165528,11 @@ function djt(e) {
       !ujt.test(r.hostname) ||
       r.username ||
       r.password ||
+      r.pathname !== "/" ||
       r.search ||
       r.hash
       ? null
-      : `${r.protocol}//${r.host}${r.pathname.replace(/\/+$/, "")}`;
+      : r.origin;
   } catch {
     return null;
   }
@@ -187852,6 +187852,7 @@ function GIt({ ask: e, cwd: t, disabled: n, onAnswer: r, permissions: s }) {
     },
     { action: E, summary: T, isPath: M } = ih(_, t, o),
     O =
+      (_.name === "run_skill_script" && _.title) ||
       (E === "command" ||
       E === "commandBackground" ||
       E === "agent" ||

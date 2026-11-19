@@ -52662,7 +52662,7 @@ function requestPrivateDesignRender({ signal, ...input }) {
 function createPrivateCatalog(origin) {
   const backend = new URL(origin);
   if (origin !== backend.origin || backend.username || backend.password ||
-      !(backend.protocol === "https:" || backend.protocol === "http:" && backend.hostname === "127.0.0.1")) {
+      !(backend.protocol === "https:" || backend.protocol === "http:")) {
     throw new Error("invalid_design_backend");
   }
   const base = origin + "/api/v1/design-resources";

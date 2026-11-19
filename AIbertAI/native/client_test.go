@@ -28,6 +28,15 @@ func TestPrivateBackendOrigin(t *testing.T) {
 	}
 }
 
+func TestConfiguredBackendUsesSelectedOrigin(t *testing.T) {
+	for _, origin := range []string{"http://192.168.1.20:5173", "http://aibert-server:8080", "https://ai.example.test"} {
+		c, err := newBackendClient(origin, true)
+		if err != nil || c.server != origin {
+			t.Fatalf("configured origin %q was not preserved: %v", origin, err)
+		}
+	}
+}
+
 func TestPrivateBackendRefusesRedirect(t *testing.T) {
 	c, err := newClient("https://private.example.test")
 	if err != nil {
