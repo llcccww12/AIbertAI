@@ -101,7 +101,7 @@ func TestDesktopGoalRunsAfterDisconnectAndRecoversOnRestart(t *testing.T) {
 	}
 
 	first := open()
-	id, err := first.createInWorkspace(operation, "", "", model, expertSelection{}, nil, "bypassPermissions", desktopMediaModels{})
+	id, err := first.createInWorkspace(operation, "", "", model, expertSelection{}, nil, "default", desktopMediaModels{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,14 +150,30 @@ func TestDesktopGoalRunsAfterDisconnectAndRecoversOnRestart(t *testing.T) {
 	if !strings.Contains(string(result), `"background":true`) {
 		t.Fatalf("goal was not accepted for background execution: %s", result)
 	}
-	if err := ws.Close(websocket.StatusNormalClosure, "window closed"); err != nil {
-		t.Fatal(err)
-	}
 	close(allowModel)
+	for {
+		var request struct {
+			ID     json.RawMessage
+			Method string
+		}
+		if err := wsjson.Read(ctx, ws, &request); err != nil {
+			t.Fatal(err)
+		}
+		if request.Method == "session/request_permission" {
+			if err := wsjson.Write(ctx, ws, map[string]any{"jsonrpc": "2.0", "id": request.ID,
+				"result": map[string]any{"outcome": map[string]string{"outcome": "selected", "optionId": "allow"}}}); err != nil {
+				t.Fatal(err)
+			}
+			break
+		}
+	}
 	select {
 	case <-checkpointReached:
 	case <-ctx.Done():
-		t.Fatal("background turn did not reach its second model request after disconnect")
+		t.Fatal("background turn did not reach its second model request")
+	}
+	if err := ws.Close(websocket.StatusNormalClosure, "window closed"); err != nil {
+		t.Fatal(err)
 	}
 	stopFirst()
 	before, err := first.load(id)
@@ -191,7 +207,8 @@ func TestDesktopGoalRunsAfterDisconnectAndRecoversOnRestart(t *testing.T) {
 		}
 		if row.Goal.Status == "completed" && row.Turns[0].Acked {
 			if len(row.Turns) != 1 || row.Turns[0].Operation != before.Turns[0].Operation ||
-				row.Turns[0].Answer != "Report complete" || row.Goal.Usage.Tokens != 75 || row.GoalRun != "" {
+				row.Turns[0].Answer != "Report complete" || row.Goal.Usage.Tokens != 75 || row.GoalRun != "" ||
+				row.Turns[0].Permissions != (reportedPermissions{Asked: 1, Allowed: 1}) {
 				t.Fatalf("incorrect recovered turn: %+v", row)
 			}
 			break

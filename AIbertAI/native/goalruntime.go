@@ -210,6 +210,7 @@ func goalView(row acpSession) *desktopGoal {
 func materializeGoalCheckpoint(turn *acpTurn) {
 	if saved := turn.GoalCheckpoint; saved != nil {
 		turn.Answer, turn.ToolRuns, turn.Usage = saved.Progress, saved.Runs, saved.Usage
+		turn.Permissions = saved.Permissions
 		turn.GoalCheckpoint = nil
 	}
 }

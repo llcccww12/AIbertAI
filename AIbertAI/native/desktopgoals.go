@@ -136,14 +136,15 @@ type goalReplayMessage struct {
 }
 
 type goalCheckpoint struct {
-	Tail       []goalReplayMessage `json:"tail,omitempty"`
-	Runs       []workspaceToolRun  `json:"runs,omitempty"`
-	Usage      modelUsage          `json:"usage"`
-	ActiveTime time.Duration       `json:"active_time_ns,omitempty"`
-	Progress   string              `json:"progress,omitempty"`
-	Rounds     int                 `json:"rounds,omitempty"`
-	Pending    *goalReplayMessage  `json:"pending,omitempty"`
-	Unknown    []modelToolUse      `json:"unknown,omitempty"`
+	Permissions reportedPermissions `json:"permissions,omitzero"`
+	Tail        []goalReplayMessage `json:"tail,omitempty"`
+	Runs        []workspaceToolRun  `json:"runs,omitempty"`
+	Usage       modelUsage          `json:"usage"`
+	ActiveTime  time.Duration       `json:"active_time_ns,omitempty"`
+	Progress    string              `json:"progress,omitempty"`
+	Rounds      int                 `json:"rounds,omitempty"`
+	Pending     *goalReplayMessage  `json:"pending,omitempty"`
+	Unknown     []modelToolUse      `json:"unknown,omitempty"`
 }
 
 const goalContinuePrompt = "Continue the current goal from the recorded progress and tool results. Do not repeat work already completed. Take the next useful step and keep the same completion rule."

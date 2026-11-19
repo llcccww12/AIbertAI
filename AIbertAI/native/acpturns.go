@@ -250,6 +250,7 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 	var previousActiveTime time.Duration
 	if background && turn.GoalCheckpoint != nil {
 		previousActiveTime = turn.GoalCheckpoint.ActiveTime
+		turn.Permissions = turn.GoalCheckpoint.Permissions
 	}
 	currentGoalAtStart := session.Goal
 	register := index == 0 && retry
@@ -621,6 +622,7 @@ func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Co
 			attemptStarted := time.Now()
 			goalRun.save = func(checkpoint goalCheckpoint) error {
 				checkpoint.ActiveTime = turn.GoalCheckpoint.ActiveTime + time.Since(attemptStarted)
+				checkpoint.Permissions = turn.Permissions
 				row, err := live.checkpointGoal(id, turn.Operation, checkpoint)
 				if err == nil && checkpoint.Pending == nil && ctx.Err() == nil {
 					_ = notifyACPReply(ctx, ws, row, len(row.Turns)-1, true)
