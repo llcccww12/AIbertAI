@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,7 +28,7 @@ func TestNetworkRejectsForeignOwnership(t *testing.T) {
 			t.Fatal("接受未知网络")
 		}
 	}
-	r := rules(n, "spec")
+	r := rules(n, "spec", netip.AddrPort{})
 	for _, want := range []string{"fib daddr type local drop", "169.254.0.0/16", "100.100.100.200/32", "tcp dport { 22, 80, 443 } accept", "meta nfproto != ipv4 drop"} {
 		if !strings.Contains(r, want) {
 			t.Fatal(want)
@@ -78,7 +79,7 @@ func TestDockerNetworkIntegration(t *testing.T) {
 	name := fmt.Sprintf("network-test-%d", time.Now().UnixNano())
 	containerName := name + "-instance"
 	fingerprint := strings.Repeat("b", 64)
-	n, err := Ensure(ctx, c, name, fingerprint, containerName)
+	n, err := Ensure(ctx, c, name, fingerprint, containerName, netip.AddrPort{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,4 +170,24 @@ func TestDockerNetworkIntegration(t *testing.T) {
 }
 func runNft(ctx context.Context, n Network) ([]byte, error) {
 	return run(ctx, []string{"-j", "list", "table", "inet", table(n)}, "")
+}
+
+func TestCloudGatewayRulesAllowOnlyExactBackendTuple(t *testing.T) {
+	var n Network
+	n.ID = strings.Repeat("a", 64)
+	n.Labels = map[string]string{"io.monkeyai.dns": "192.168.1.53"}
+	n.IPAM.Config = append(n.IPAM.Config, struct{ Subnet, Gateway string }{Subnet: "172.20.0.0/16", Gateway: "172.20.0.1"})
+	rules := rules(n, "spec", netip.MustParseAddrPort("172.18.0.1:58176"))
+	for _, want := range []string{
+		"ip saddr 172.20.0.0/16 ip daddr 172.18.0.1 tcp dport 58176",
+		"ip saddr 172.18.0.1 ip daddr 172.20.0.0/16 tcp sport 58176 ct state established",
+		"iifname \"br-aaaaaaaaaaaa\" counter drop; oifname \"br-aaaaaaaaaaaa\" counter drop",
+	} {
+		if !strings.Contains(rules, want) {
+			t.Fatalf("missing %q in %s", want, rules)
+		}
+	}
+	if strings.Contains(rules, "192.168.1.53") || strings.Contains(rules, "dport { 22, 80, 443 }") {
+		t.Fatal("private gateway exposed DNS or public forwarding")
+	}
 }

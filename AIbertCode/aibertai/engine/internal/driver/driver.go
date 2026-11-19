@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -39,6 +40,7 @@ type Driver struct {
 	client         *dockerapi.Client
 	volumes        Volumes
 	root           string
+	cloudGateway   netip.AddrPort
 }
 
 func New(socket, root string, volumes Volumes) (*Driver, error) {
@@ -50,6 +52,18 @@ func New(socket, root string, volumes Volumes) (*Driver, error) {
 	}
 	return &Driver{client: dockerapi.New(socket), volumes: volumes, root: root}, nil
 }
+func (d *Driver) WithCloudGateway(gateway netip.AddrPort) *Driver {
+	d.cloudGateway = gateway
+	return d
+}
+
+func (d *Driver) gatewayFor(s lifecycle.Spec) netip.AddrPort {
+	if s.Runtime != nil && s.NetworkPolicy == "public-only" {
+		return d.cloudGateway
+	}
+	return netip.AddrPort{}
+}
+
 func (d *Driver) WithRuntimeUpdater(update func(context.Context, lifecycle.Spec) error) *Driver {
 	d.runtimeUpdater = update
 	return d
@@ -484,7 +498,7 @@ func (d *Driver) Create(ctx context.Context, s lifecycle.Spec) (string, error) {
 		return "", err
 	}
 	if s.NetworkPolicy == "public-only" {
-		n, e := dockernet.Ensure(ctx, d.client, instanceKey(s), fingerprint(s), containerName(s))
+		n, e := dockernet.Ensure(ctx, d.client, instanceKey(s), fingerprint(s), containerName(s), d.gatewayFor(s))
 		if e != nil {
 			return "", e
 		}
@@ -518,7 +532,7 @@ func (d *Driver) guard(ctx context.Context, s lifecycle.Spec, name string) error
 	if err != nil {
 		return err
 	}
-	return dockernet.Guard(ctx, n, fingerprint(s))
+	return dockernet.Guard(ctx, n, fingerprint(s), d.gatewayFor(s))
 }
 func (d *Driver) Start(ctx context.Context, s lifecycle.Spec, ref string) error {
 	c, err := d.load(ctx, s, ref)

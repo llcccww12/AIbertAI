@@ -122,7 +122,7 @@ func cloudCommand(ctx context.Context, args []string, out io.Writer) error {
 		identity = cloudIdentity{Server: *server, ServerID: *serverID, UserID: *user, MachineID: machine,
 			Name: *name, DataKey: base64.StdEncoding.EncodeToString(seed)}
 		// Verify the configured server before persisting any new identity.
-		c, clientErr := newBackendClient(identity.Server, true)
+		c, clientErr := newCloudBackendClient(identity.Server, os.Getenv("AIBERTAI_CLOUD_BACKEND_GATEWAY"))
 		if clientErr != nil {
 			return clientErr
 		}
@@ -148,7 +148,7 @@ func cloudCommand(ctx context.Context, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	c, err := newBackendClient(identity.Server, true)
+	c, err := newCloudBackendClient(identity.Server, os.Getenv("AIBERTAI_CLOUD_BACKEND_GATEWAY"))
 	if err != nil {
 		return err
 	}
