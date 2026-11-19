@@ -12,6 +12,9 @@
 
 ## 代理与诊断
 
+- 输出参数遵循调用方输入。计费配置只用于成本估算，代理不会因此补写或压低最大输出量，也不会强制写入 `include_usage`。
+
+
 - `GetBody` 从最终改写后的请求体创建独立 reader，供 HTTP Transport 在允许的 GOAWAY 等场景重放；没有增加应用层 POST 重试。
 - SSE 的 `[DONE]` 仅代表终止，不重复解析上一事件，已识别的 `response.completed` 等终止事件保留。
 - `model.usage.failed` 仅表示最终用量未知；解析中途失败但已恢复用量的记录使用 DEBUG `model.usage.parse.recovered`。

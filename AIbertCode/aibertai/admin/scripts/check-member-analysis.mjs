@@ -1,3 +1,4 @@
+import { saveTestScreenshot } from "./test-screenshot.mjs"
 import assert from "node:assert/strict"
 import { readFile, stat } from "node:fs/promises"
 import path from "node:path"
@@ -790,9 +791,7 @@ try {
           document.documentElement.classList.toggle("dark", theme === "dark"),
         theme
       )
-      await modelDistribution.screenshot({
-        path: `/tmp/monkeyai-model-message-distribution-${width}-${theme}.png`,
-      })
+      await saveTestScreenshot(modelDistribution, `model-message-distribution-${width}-${theme}.png`)
       assert(
         await page.evaluate(
           () => document.documentElement.scrollWidth <= innerWidth

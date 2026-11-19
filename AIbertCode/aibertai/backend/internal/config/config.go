@@ -13,7 +13,14 @@ import (
 	"aibertai.local/backend/internal/envconfig"
 )
 
-const defaultLogLevel = slog.LevelWarn
+const (
+	defaultLogLevel      = slog.LevelWarn
+	defaultHTTPAddress   = ":8080"
+	defaultPprofAddress  = "127.0.0.1:6060"
+	defaultShutdown      = 10 * time.Second
+	defaultEndpointLimit = 1000
+	defaultPublicURL     = "http://localhost:8080"
+)
 
 type HTTP struct {
 	Addr            string
@@ -52,16 +59,8 @@ type Config struct {
 }
 
 func Load(args []string) (Config, error) {
-	addr := envconfig.Getenv("AIBERTAI_HTTP_ADDR")
-	if addr == "" {
-		addr = ":8080"
-	}
-	pprofAddr := envconfig.Getenv("AIBERTAI_PPROF_ADDR")
-	if pprofAddr == "" {
-		pprofAddr = "127.0.0.1:6060"
-	}
 
-	shutdownTimeout := 10 * time.Second
+	shutdownTimeout := defaultShutdown
 	if value := envconfig.Getenv("AIBERTAI_SHUTDOWN_TIMEOUT"); value != "" {
 		parsed, err := time.ParseDuration(value)
 		if err != nil {
@@ -70,12 +69,9 @@ func Load(args []string) (Config, error) {
 		shutdownTimeout = parsed
 	}
 
-	logLevel := envconfig.Getenv("AIBERTAI_LOG_LEVEL")
-	if logLevel == "" {
-		logLevel = defaultLogLevel.String()
-	}
+	logLevel := envOr("AIBERTAI_LOG_LEVEL", defaultLogLevel.String())
 
-	endpointMax, err := strconv.Atoi(envOr("AIBERTAI_ENDPOINT_MAX_CONNECTIONS", "1000"))
+	endpointMax, err := strconv.Atoi(envOr("AIBERTAI_ENDPOINT_MAX_CONNECTIONS", strconv.Itoa(defaultEndpointLimit)))
 	if err != nil {
 		return Config{}, fmt.Errorf("解析端点连接上限: %w", err)
 	}
@@ -99,12 +95,12 @@ func Load(args []string) (Config, error) {
 		RuntimeSigningKeyFile:        envconfig.Getenv("AIBERTAI_RUNTIME_SIGNING_KEY_FILE"),
 		RuntimePreviewOriginTemplate: envconfig.Getenv("AIBERTAI_RUNTIME_PREVIEW_ORIGIN_TEMPLATE"),
 		RuntimeFilesOrigin:           envconfig.Getenv("AIBERTAI_RUNTIME_FILES_ORIGIN"),
-		Addr:                         addr,
+		Addr:                         envOr("AIBERTAI_HTTP_ADDR", defaultHTTPAddress),
 		EndpointMaxConnections:       endpointMax,
-		PprofAddr:                    pprofAddr,
+		PprofAddr:                    envOr("AIBERTAI_PPROF_ADDR", defaultPprofAddress),
 		ShutdownTimeout:              shutdownTimeout,
 		URL:                          envconfig.Getenv("AIBERTAI_DATABASE_URL"),
-		PublicURL:                    envOr("AIBERTAI_PUBLIC_URL", "http://localhost:8080"),
+		PublicURL:                    envOr("AIBERTAI_PUBLIC_URL", defaultPublicURL),
 		InitialAdminName:             envOr("AIBERTAI_INITIAL_ADMIN_NAME", "AIbertAI 管理员"),
 		InitialAdminEmail:            strings.TrimSpace(envconfig.Getenv("AIBERTAI_INITIAL_ADMIN_EMAIL")),
 		InitialAdminPassword:         envconfig.Getenv("AIBERTAI_INITIAL_ADMIN_PASSWORD"),

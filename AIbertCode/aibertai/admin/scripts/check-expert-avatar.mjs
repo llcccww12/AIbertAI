@@ -1,5 +1,6 @@
+import { saveTestScreenshot } from "./test-screenshot.mjs"
 import assert from "node:assert/strict"
-import { readFile, stat, mkdir } from "node:fs/promises"
+import { readFile, stat } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { chromium } from "playwright-core"
@@ -527,13 +528,10 @@ try {
               .every((animation) => animation.playState !== "running")
           )
         })
-        await mkdir(process.env.SCREENSHOT_DIR, { recursive: true })
-        await page.screenshot({
-          path: path.join(
-            process.env.SCREENSHOT_DIR,
-            `expert-avatar-${width}-${dark ? "dark" : "light"}.png`
-          ),
-        })
+        await saveTestScreenshot(
+          page,
+          `expert-avatar-${width}-${dark ? "dark" : "light"}.png`
+        )
       }
       assert.deepEqual(errors, [])
       console.log(

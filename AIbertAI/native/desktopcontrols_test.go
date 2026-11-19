@@ -41,69 +41,26 @@ func TestDesktopSessionPresentationSurvivesReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reopened.displayTitle() != "会话回归" || reopened.titleSource() != "user" || reopened.Pinned ||
+	title, source := reopened.sessionTitle()
+	if title != "会话回归" || source != "user" || reopened.Pinned ||
 		reopened.ArchivedAt == nil || reopened.ReadAt == nil || !reopened.ReadAt.Equal(now) {
 		t.Fatalf("metadata lost or inconsistent: %v", reopened.workspaceMetadata())
 	}
 }
 
-func TestTrustPendingToolAppliesOnlyToCurrentLocalSession(t *testing.T) {
-	root, err := os.OpenRoot(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
+func TestDesktopSessionTitleUsesFirstTurnAndPreservesRename(t *testing.T) {
+	const first = "整理项目计划"
+	row := acpSession{Turns: []acpTurn{{Prompt: "  整理\n项目计划  "}, {Prompt: "后续消息"}}}
+	if title, source := row.sessionTitle(); title != "整理 项目计划" || source != "prompt" {
+		t.Fatalf("expected first-message title, got %q (%s)", title, source)
 	}
-	defer root.Close()
-	const id = "c1bd985c-9f71-4b85-937a-c41b1b104d38"
-	const other = "c2bd985c-9f71-4b85-937a-c41b1b104d38"
-	host := &relaySessionHost{live: &acpLive{store: &desktopSessionStore{Root: root}, sessions: map[string]acpSession{
-		id: {ID: id, State: "running"}, other: {ID: other},
-	}}, local: &desktopRuntimeAccess{protocol: "monkeyai.token.test"}}
-	done := make(chan error, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{"monkeyai.v1"}})
-		if err != nil {
-			done <- err
-			return
-		}
-		defer ws.CloseNow()
-		_, err = host.requestACPToolApproval(r.Context(), ws, r, id, "fixture", "Read", "Read", "read", map[string]string{"path": "test.txt"})
-		done <- err
-	}))
-	defer server.Close()
-	host.local.address = strings.TrimPrefix(server.URL, "http://")
-	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
-	defer cancel()
-	ws, _, err := websocket.Dial(ctx, server.URL, &websocket.DialOptions{Subprotocols: []string{"monkeyai.v1", "monkeyai.token.test"}})
-	if err != nil {
-		t.Fatal(err)
+	row.Turns[0].Prompt = strings.Repeat(first, 20)
+	if title, _ := row.sessionTitle(); len([]rune(title)) != 40 {
+		t.Fatalf("title did not respect the length limit: %q", title)
 	}
-	defer ws.CloseNow()
-	var message map[string]any
-	for range 2 {
-		if err := wsjson.Read(ctx, ws, &message); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, target := range []string{other, id} {
-		params := map[string]string{"sessionId": target, "modeId": "bypassPermissions"}
-		if err := wsjson.Write(ctx, ws, map[string]any{"jsonrpc": "2.0", "id": target, "method": "session/set_mode", "params": params}); err != nil {
-			t.Fatal(err)
-		}
-		message = nil
-		if err := wsjson.Read(ctx, ws, &message); err != nil {
-			t.Fatal(err)
-		}
-		if (message["error"] != nil) != (target == other) {
-			t.Fatalf("unexpected eligibility: %v", message)
-		}
-	}
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
-	first, _ := host.live.load(id)
-	second, _ := host.live.load(other)
-	if first.permissionMode() != "bypassPermissions" || second.permissionMode() != "auto" {
-		t.Fatalf("mode leaked between sessions")
+	row.Title = "手动改名"
+	if title, source := row.sessionTitle(); title != "手动改名" || source != "user" {
+		t.Fatalf("expected manual title, got %q (%s)", title, source)
 	}
 }
 
@@ -180,6 +137,7 @@ func TestDesktopTrustTurnExecutesToolAndReportsAnswer(t *testing.T) {
 	const machine = "c2bd985c-9f71-4b85-937a-c41b1b104d38"
 	const session = "c3bd985c-9f71-4b85-937a-c41b1b104d38"
 	const operation = "c4bd985c-9f71-4b85-937a-c41b1b104d38"
+	const other = "c5bd985c-9f71-4b85-937a-c41b1b104d38"
 	root, err := os.OpenRoot(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -238,7 +196,7 @@ func TestDesktopTrustTurnExecutesToolAndReportsAnswer(t *testing.T) {
 		local: &desktopRuntimeAccess{protocol: "monkeyai.token.test", reportMachine: machine},
 		live: &acpLive{client: &client{backend.URL, backend.Client()}, auth: authorization{Access: "account"}, key: "model-credential",
 			store: &desktopSessionStore{Root: root}, cwd: root.Name(),
-			sessions: map[string]acpSession{session: {ID: session, CWD: root.Name(), Model: model, State: "idle"}}}}
+			sessions: map[string]acpSession{session: {ID: session, CWD: root.Name(), Model: model, State: "idle"}, other: {ID: other}}}}
 	desktop := httptest.NewServer(host)
 	defer desktop.Close()
 	host.local.address = strings.TrimPrefix(desktop.URL, "http://")
@@ -294,6 +252,10 @@ func TestDesktopTrustTurnExecutesToolAndReportsAnswer(t *testing.T) {
 	if err != nil || row.permissionMode() != "bypassPermissions" || !row.Turns[0].Acked {
 		t.Fatalf("turn or mode not retained: %v", err)
 	}
+	unrelated, err := host.live.load(other)
+	if err != nil || unrelated.permissionMode() != "auto" {
+		t.Fatalf("approval affected another session: %v", err)
+	}
 }
 
 func TestDesktopCancelInterruptsModelAndReportsTurn(t *testing.T) {
@@ -301,6 +263,8 @@ func TestDesktopCancelInterruptsModelAndReportsTurn(t *testing.T) {
 	const machine = "c2bd985c-9f71-4b85-937a-c41b1b104d38"
 	const session = "c3bd985c-9f71-4b85-937a-c41b1b104d38"
 	const messageID = "c4bd985c-9f71-4b85-937a-c41b1b104d38"
+	const queuedID = "c5bd985c-9f71-4b85-937a-c41b1b104d38"
+	const nodeID = "c6bd985c-9f71-4b85-937a-c41b1b104d38"
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	started := make(chan struct{})
@@ -444,9 +408,27 @@ func TestDesktopCancelInterruptsModelAndReportsTurn(t *testing.T) {
 	if update["sessionUpdate"] != "agent_message_chunk" || content["text"] != "First fragment" || meta["messageId"] != session+"-1-response" {
 		t.Fatalf("model text was not displayed before completion: %v", chunk)
 	}
+	pending := map[string]any{"sessionId": session, "action": "add", "sendIfIdle": true, "id": queuedID,
+		"text": "Queued while the model is streaming", "canvasNodes": []acpCanvasNode{{ID: nodeID, Title: "Fixture canvas node", NodeType: "text"}}}
+	for _, requestID := range []int{8, 9} {
+		send(turn, requestID, "_monkeyai/session/queue", pending)
+		if read(turn, requestID)["clientMessageId"] != queuedID {
+			t.Fatal("queued message was not acknowledged")
+		}
+	}
 	send(turn, 6, "_monkeyai/session/queue", map[string]any{"sessionId": session, "action": "get"})
-	if read(turn, 6)["sessionId"] != session {
-		t.Fatal("same connection could not read the queue during a model turn")
+	queue := read(turn, 6)["queue"].(map[string]any)
+	if messages := queue["messages"].([]any); len(messages) != 1 || messages[0].(map[string]any)["id"] != queuedID {
+		t.Fatalf("pending message was lost or duplicated: %v", queue)
+	}
+	var persisted desktopSessionManifest
+	if err := readDesktopSessionRecord(root, session+desktopSessionManifestSuffix, &persisted); err != nil ||
+		len(persisted.Queue.Messages) != 1 || persisted.Queue.Messages[0].CanvasNodes[0].ID != nodeID {
+		t.Fatalf("pending canvas reference was not saved in the session journal: %v", err)
+	}
+	send(turn, 10, "_monkeyai/session/queue", map[string]any{"sessionId": session, "action": "remove", "id": queuedID})
+	if removed := read(turn, 10)["queue"].(map[string]any); len(removed["messages"].([]any)) != 0 {
+		t.Fatalf("queued message could not be removed during a turn: %v", removed)
 	}
 	send(turn, 7, "_monkeyai/session/messages", map[string]any{"sessionId": session})
 	if got := read(turn, 7)["messages"]; got == nil {

@@ -14,7 +14,7 @@ import { tableQueryState, tableQueryParams } from "@/lib/table-query"
 import { billingExclusiveUntil, billingPageParams } from "@/lib/billing-range"
 import { useAppToast } from "@/components/animated-toast-provider"
 import { AccountDialog } from "@/components/billing/account-dialog"
-import { BillingUserSearch } from "@/components/billing/user-search"
+import { UserSearch } from "@/components/user-search"
 import { UserAvatar } from "@/components/user-avatar"
 import { DatePickerField } from "@/components/date-picker-field"
 import { Button } from "@/components/ui/button"
@@ -346,7 +346,7 @@ export function BillingDetailsPage() {
     />
   )
   return (
-    <section className="flex min-h-0 flex-1 flex-col p-4 pt-px md:h-[calc(100vh-5rem)] md:flex-none md:overflow-hidden">
+    <section className="data-table-page-layout">
       <Tabs
         value={view}
         onValueChange={(value) => {
@@ -374,7 +374,8 @@ export function BillingDetailsPage() {
                 className="flex flex-wrap items-center gap-2 px-[var(--card-spacing)]"
               >
                 {visibleFields.has("user") && (
-                  <BillingUserSearch
+                  <UserSearch
+                    id="billing-user"
                     userID={draft.user_id ?? ""}
                     query={draft.user ?? ""}
                     onChange={({ userID, query }) =>

@@ -413,7 +413,7 @@ export default function KbDetailPage() {
   if (!selectedKb && documentsLoading) return <p className="p-6 text-sm text-muted-foreground">{t("resources.loading")}</p>
   if (!selectedKb) return null
   return (
-    <section className="flex h-[calc(100vh-4rem)] min-h-0 flex-none flex-col gap-4 p-4 pt-0 md:h-[calc(100vh-5rem)]">
+    <section className="resource-page-layout">
       <div className="flex shrink-0 items-start gap-4 rounded-xl border p-4">
         <Avatar size="lg">
           {selectedKb.avatar_path && <AvatarImage src={selectedKb.avatar_path} alt="" className="object-contain" />}

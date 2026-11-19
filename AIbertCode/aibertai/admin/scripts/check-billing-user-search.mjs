@@ -1,3 +1,4 @@
+import { saveTestScreenshot } from "./test-screenshot.mjs"
 import assert from "node:assert/strict"
 import { readFile, stat } from "node:fs/promises"
 import path from "node:path"
@@ -75,7 +76,7 @@ async function click(page, selector, text) {
 }
 async function type(page, text) {
   await click(page, "#billing-user")
-  await page.keyboard.press("Control+a")
+  await page.keyboard.press("ControlOrMeta+a")
   await page.keyboard.insertText(text)
 }
 const pause = () => {
@@ -412,14 +413,12 @@ try {
         false
       )
       assert.deepEqual(errors, [])
-      await page.screenshot({
-        path: `/tmp/monkeyai-billing-users-${width}-${path.basename(executablePath)}.png`,
-      })
+      await saveTestScreenshot(page, `billing-users-${width}-${path.basename(executablePath)}.png`)
       console.log(
         `PASS billing user selection ${width}: duplicates, exact ID, reload, paging, clear, legacy, stale requests, retry, deleted`
       )
     } catch (error) {
-      await page.screenshot({ path: "/tmp/monkeyai-billing-users-failed.png" })
+      await saveTestScreenshot(page, "billing-users-failed.png")
       console.error(await page.locator("body").textContent())
       throw error
     } finally {

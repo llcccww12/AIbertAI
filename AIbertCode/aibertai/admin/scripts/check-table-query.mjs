@@ -1,3 +1,4 @@
+import { saveTestScreenshot } from "./test-screenshot.mjs"
 import assert from "node:assert/strict"
 import { readFile, stat } from "node:fs/promises"
 import path from "node:path"
@@ -128,7 +129,7 @@ async function click(page, selector, text) {
 }
 async function type(page, selector, value) {
   await click(page, selector)
-  await page.keyboard.press("Control+a")
+  await page.keyboard.press("ControlOrMeta+a")
   if (value) await page.keyboard.insertText(value)
   else await page.keyboard.press("Backspace")
 }
@@ -442,13 +443,12 @@ try {
             new URL(page.url()).searchParams.has(config.textKey),
             false
           )
+          const calendar = page.locator('[data-slot="calendar"]')
           for (const selector of config.dates) {
-            await click(page, `#${selector}`)
-            await click(
-              page,
-              '[data-slot="calendar"] button[data-selected-single="true"]'
-            )
+            await page.locator(`#${selector}`).click()
+            await calendar.locator('button[data-selected-single="true"]').click()
             await page.keyboard.press("Escape")
+            await calendar.waitFor({ state: "hidden" })
           }
           pending = response((q) => config.dateKeys.every((key) => !q.has(key)))
           await click(page, "button", "搜索")
@@ -574,10 +574,7 @@ try {
           `PASS URL search ${config.name} ${width}: bookmark, all filters, paging, reload, back/forward, clear${config.name === "billing" ? ", default28/all-time" : ""}`
         )
       } catch (error) {
-        await page.screenshot({
-          path: `/tmp/monkeyai-table-query-${config.name}-${width}-failed.png`,
-          fullPage: true,
-        })
+        await saveTestScreenshot(page, `table-query-${config.name}-${width}-failed.png`, { fullPage: true })
         throw error
       } finally {
         await page.close()

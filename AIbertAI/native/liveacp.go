@@ -36,6 +36,7 @@ type acpLive struct {
 	operations     map[string]string
 	sessions       map[string]acpSession
 	activeTurns    map[string]context.CancelFunc
+	queueWorkers   map[string]bool
 	compacting     map[string]bool
 	restarting     bool
 }
@@ -70,6 +71,7 @@ type acpSession struct {
 	Turns                []acpTurn              `json:"turns,omitempty"`
 	ConnectorPreferences *connectorPreferences  `json:"connectorPreferences,omitempty"`
 	ResourceRevision     int                    `json:"resourceRevision,omitempty"`
+	Queue                desktopSessionQueue    `json:"queue,omitzero"`
 	archivedTurns        int
 }
 
@@ -213,12 +215,38 @@ func (h *relaySessionHost) currentSessions(cwd string) []map[string]any {
 		defer h.live.mu.Unlock()
 		for _, row := range h.live.sessions {
 			if cwd == "" || cwd == row.CWD {
-				items = append(items, map[string]any{"sessionId": row.ID, "cwd": row.CWD, "title": row.displayTitle(), "updatedAt": row.Updated,
-					"_meta": row.workspaceMetadata()})
+				meta := row.workspaceMetadata()
+				items = append(items, map[string]any{"sessionId": row.ID, "cwd": row.CWD, "title": meta["title"], "updatedAt": row.Updated,
+					"_meta": meta})
 			}
 		}
 	}
 	return items
+}
+
+type acpPermissionContextKey struct{}
+
+type acpPermissionReply struct {
+	ID      json.RawMessage `json:"id"`
+	Method  string          `json:"method"`
+	Params  json.RawMessage `json:"params"`
+	JSONRPC string          `json:"jsonrpc"`
+	Result  struct {
+		Outcome struct{ Outcome, OptionID string }
+	} `json:"result"`
+	Error json.RawMessage `json:"error"`
+}
+
+type acpPermissionWaiter struct {
+	sessionID string
+	reply     chan acpPermissionReply
+}
+
+func (w *acpPermissionWaiter) resolve(reply acpPermissionReply) {
+	select {
+	case w.reply <- reply:
+	default:
+	}
 }
 
 func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
@@ -239,17 +267,23 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 	defer ws.CloseNow()
 	ws.SetReadLimit(64 << 10)
 	initialized := false
+	permissions := new(sync.Map)
+	ctx = context.WithValue(ctx, acpPermissionContextKey{}, permissions)
 	for {
-		var in struct {
-			Version string          `json:"jsonrpc"`
-			ID      json.RawMessage `json:"id"`
-			Method  string          `json:"method"`
-			Params  json.RawMessage `json:"params"`
-		}
+		var in acpPermissionReply
 		if wsjson.Read(ctx, ws, &in) != nil {
 			return
 		}
-		if in.Version != "2.0" || in.Method == "" || len(in.ID) == 0 || string(in.ID) == "null" {
+		if in.JSONRPC != "2.0" || len(in.ID) == 0 || string(in.ID) == "null" {
+			continue
+		}
+		if in.Method == "" {
+			var permissionID string
+			if json.Unmarshal(in.ID, &permissionID) == nil {
+				if wait, ok := permissions.LoadAndDelete(permissionID); ok {
+					wait.(*acpPermissionWaiter).resolve(in)
+				}
+			}
 			continue
 		}
 		if h.trace && len(in.Method) <= 128 {
@@ -257,6 +291,7 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 		}
 		var result any
 		var fault error
+		var trusted *acpPermissionWaiter
 		code := -32602
 		if !initialized {
 			var p struct{ ProtocolVersion int }
@@ -452,7 +487,19 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 						result, fault = h.setDesktopSessionExpert(ctx, in.Params)
 					}
 				case "session/set_mode":
-					result, fault = h.setACPPermissionMode(r, in.Params, "")
+					var p struct{ SessionID, ModeID string }
+					waitingID := ""
+					if json.Unmarshal(in.Params, &p) == nil && p.ModeID == "bypassPermissions" {
+						permissions.Range(func(key, value any) bool {
+							wait := value.(*acpPermissionWaiter)
+							if wait.sessionID == p.SessionID {
+								waitingID, trusted = wait.sessionID, wait
+								return false
+							}
+							return true
+						})
+					}
+					result, fault = h.setACPPermissionMode(r, in.Params, waitingID)
 				case "_monkeyai/session/goal":
 					if h.local == nil || h.live == nil || h.acpScope(r, "session:control") != nil {
 						fault = errRelayAccess
@@ -573,7 +620,25 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 						if err := h.acpScope(r, "files:read"); err != nil {
 							code, fault = -32001, errRelayAccess
 						} else {
-							result, fault = h.promptACP(ctx, ws, r, p.SessionID, p.Meta.OperationID, "", p.Prompt[0].Text, nil)
+							go func(requestID json.RawMessage, id, operation, prompt string) {
+								value, err := h.promptACP(ctx, ws, r, id, operation, "", prompt, nil, nil)
+								reply := map[string]any{"jsonrpc": "2.0", "id": requestID}
+								if err != nil {
+									reply["error"] = map[string]any{"code": -32602, "message": err.Error()}
+								} else {
+									reply["result"] = value
+								}
+								if wsjson.Write(ctx, ws, reply) != nil {
+									return
+								}
+								h.live.mu.Lock()
+								start := h.live.claimQueue(h.live.sessions[id])
+								h.live.mu.Unlock()
+								if start {
+									_, _ = h.runSessionQueue(ctx, ws, r, id, nil, nil)
+								}
+							}(in.ID, p.SessionID, p.Meta.OperationID, p.Prompt[0].Text)
+							continue
 						}
 					}
 				default:
@@ -602,12 +667,18 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 		if wsjson.Write(ctx, ws, reply) != nil {
 			return
 		}
+		if fault == nil && trusted != nil {
+			var allowed acpPermissionReply
+			allowed.Result.Outcome.Outcome, allowed.Result.Outcome.OptionID = "selected", "allow"
+			trusted.resolve(allowed)
+		}
 	}
 }
 
 func (row acpSession) workspaceMetadata() map[string]any {
+	title, source := row.sessionTitle()
 	return map[string]any{"cwd": row.CWD, "model": row.Model, "thinking": row.Thinking, "mode": row.permissionMode(), "mediaImageModelId": row.MediaImageModelID, "mediaVideoModelId": row.MediaVideoModelID, "expertId": row.ExpertID, "configurationRevision": row.ResourceRevision, "isDefaultWorkspace": row.Workspace != "selected", "projectId": row.ProjectID, "status": row.State, "goalModeAvailable": row.Workspace != "", "goal": row.Goal,
-		"titleSource": row.titleSource(), "pinned": row.Pinned, "archivedAt": row.ArchivedAt, "readAt": row.ReadAt}
+		"title": title, "titleSource": source, "pinned": row.Pinned, "archivedAt": row.ArchivedAt, "readAt": row.ReadAt}
 }
 
 func (h *relaySessionHost) acpFile(r *http.Request, method string, raw json.RawMessage) (any, error) {

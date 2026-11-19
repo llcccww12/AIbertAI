@@ -31,7 +31,7 @@ export function EnvironmentFrame({
   return (
     <section
       aria-label={title}
-      className="flex min-h-0 flex-1 flex-col p-4 pt-px md:h-[calc(100vh-5rem)] md:flex-none md:overflow-hidden"
+      className="data-table-page-layout"
     >
       <Card className="min-h-0 flex-1">
         <CardContent className="min-h-0 flex-1 gap-4 px-0">

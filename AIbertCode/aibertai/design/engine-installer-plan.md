@@ -1,4 +1,6 @@
-# monkeyai-engine 一条命令安装
+# 宿主安装器历史实施记录
+
+本页记载早期实现和当时的 Linux 验收。当前安装命令、目录及升级步骤见[宿主安装说明](../engine/INSTALL.md)。
 
 分支：`feat-engine-installer`，基于 main `8be22a22` 创建独立 worktree。
 
@@ -30,7 +32,7 @@ systemd 管理独立 `monkeyai-containerd` 和 `monkeyai-engine`。engine 主动
 
 本阶段的心跳用于安装接入和预检。后续云电脑调度的 WSS、短期宿主 token、分配代次及环境协议仍在云环境实施范围内。不得将当前 `online` 或 `prerequisites_met` 当作可调度执行能力，响应始终 `workload_enabled=false`。
 
-## 文件与资源
+## 当时的安装路径
 
 | 路径 | 用途 |
 | --- | --- |

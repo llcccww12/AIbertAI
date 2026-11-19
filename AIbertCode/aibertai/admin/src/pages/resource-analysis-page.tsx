@@ -458,7 +458,7 @@ export function ResourceAnalysisPage() {
           )}
           <ScrollArea
             horizontal
-            className="min-h-0 min-w-0 flex-1 [&_[data-slot=table-container]]:h-full [&_[data-slot=table-container]]:overflow-visible"
+            className="data-table-scroll"
           >
             <Table
               className={cn(

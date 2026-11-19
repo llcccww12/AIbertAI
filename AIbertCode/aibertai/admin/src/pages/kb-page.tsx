@@ -210,7 +210,7 @@ export function KbPage() {
   }
 
   const renderList = () => (
-    <section className="flex h-[calc(100vh-4rem)] min-h-0 flex-none flex-col gap-4 p-4 pt-0 md:h-[calc(100vh-5rem)]">
+    <section className="resource-page-layout">
       <ResourceList
         page={remote}
         typeLabel={t("pages.knowledgeBases.type")}

@@ -20829,15 +20829,15 @@ class DesignCanvasService {
     this.selections.set(observer ? sessionId + "\0" + observer : sessionId, selection);
     return selection;
   }
-  async getSelection(sessionId, { readRuntimeInput = true } = {}) {
+  async getSelection(sessionId, { readRuntimeInput = true, nodeIds: requested } = {}) {
     const input = readRuntimeInput ? await this.readInputSelection?.(sessionId) : void 0;
     const location = await this.location(sessionId);
     const document = this.wrap(() => this.migrateEmptyHtmlContainers(location, this.canvases.get(location)));
     const existing = new Set(document.nodes.map((node) => node.id));
-    const current = input ?? this.inputSelections.get(sessionId) ?? this.selections.get(sessionId) ?? { nodeIds: [] };
+    const current = requested ? { nodeIds: requested } : input ?? this.inputSelections.get(sessionId) ?? this.selections.get(sessionId) ?? { nodeIds: [] };
     const nodeIds = current.nodeIds.filter((id2) => existing.has(id2));
     const selection = { nodeIds, ...current.focusedNodeId && nodeIds.includes(current.focusedNodeId) ? { focusedNodeId: current.focusedNodeId } : {} };
-    this.selections.set(sessionId, selection);
+    if (!requested) this.selections.set(sessionId, selection);
     const selectedNodes = document.nodes.filter((node) => nodeIds.includes(node.id) || node.groupId && nodeIds.includes(node.groupId));
     const nodes = await Promise.all(selectedNodes.map(async (node) => {
       if (node.type === "html") return { ...node, artifact_path: require$$1$1.join(location.workspace, ".aibertai/design", location.canvasId, "artifacts", node.id) };
@@ -20853,11 +20853,13 @@ class DesignCanvasService {
     const document = this.wrap(() => this.canvases.get(location));
     const selected = new Set(nodeIds ?? this.selections.get(sessionId)?.nodeIds ?? []);
     if (selected.size > 128 || [...selected].some((id2) => typeof id2 !== "string" || !document.nodes.some((node) => node.id === id2))) throw RequestError.invalidParams({ reason: "invalid_canvas_selection" });
-    const images = document.nodes.filter((node) => (selected.has(node.id) || node.groupId !== void 0 && selected.has(node.groupId)) && node.type === "image");
+    const images = document.nodes.filter((node) => (selected.has(node.id) || node.groupId !== void 0 && selected.has(node.groupId)) && node.type === "image" && node.source);
+    if (!images.length) return [];
+    const root = this.canvases.root(location.workspace, location.canvasId);
     return Promise.all(images.map(async (node) => {
-      const sourcePath = require$$1$1.join(location.workspace, ".aibertai/design", location.canvasId, node.source);
       const marked = node.markups?.length ? await this.markedView(location, node) : void 0;
-      const path = marked?.path ?? sourcePath;
+      const path = node_fs.realpathSync(marked?.path ?? require$$1$1.join(root, node.source));
+      if (!inside$1(root, path)) throw RequestError.invalidParams({ reason: "invalid_canvas_source" });
       return { name: node.title?.trim() || "画布图片", path, relativePath: require$$1$1.relative(location.workspace, path).split(require$$1$1.sep).join("/"), canvasNodeId: node.id };
     }));
   }
@@ -52803,7 +52805,7 @@ function createPrivateCatalog(origin) {
           } : {})
         });
         if (name === "canvas_get_selection") {
-          const selection = await workspace.canvas.getSelection(sessionId, { readRuntimeInput: false });
+          const selection = await workspace.canvas.getSelection(sessionId, { readRuntimeInput: false, nodeIds: input.node_ids });
           return { nodes: selection.nodes.slice(0, 20).map(summary), totalNodes: selection.nodes.length };
         }
         if (name === "canvas_prepare_pptx") {
@@ -52849,6 +52851,7 @@ function createPrivateCatalog(origin) {
       case "canvas_get":
       case "canvas_apply":
       case "canvas_select":
+      case "canvas_selected_sources":
       case "canvas_create_image":
       case "canvas_create_video":
       case "canvas_generate_media":

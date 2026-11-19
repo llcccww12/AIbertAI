@@ -381,7 +381,7 @@ export function ConversationHistoryPage() {
   }
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col p-4 pt-px md:h-[calc(100vh-5rem)] md:flex-none md:overflow-hidden">
+    <section className="data-table-page-layout">
       <Card className="min-h-0 flex-1">
         <CardContent className="min-h-0 flex-1 gap-4 px-0">
           <form
@@ -543,7 +543,7 @@ export function ConversationHistoryPage() {
           </form>
           <ScrollArea
             horizontal
-            className="min-h-0 min-w-0 flex-1 [&_[data-slot=table-container]]:h-full [&_[data-slot=table-container]]:overflow-visible"
+            className="data-table-scroll"
           >
             <Table
               className={cn(

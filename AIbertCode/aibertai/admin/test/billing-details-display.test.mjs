@@ -40,7 +40,7 @@ test("billing views use tabs and tables scroll inside the available page height"
     new URL("../src/pages/billing-details-page.tsx", import.meta.url),
     "utf8"
   )
-  assert.match(source, /md:h-\[calc\(100vh-5rem\)\]/)
+  assert.match(source, /className="data-table-page-layout"/)
   assert.match(source, /<Tabs\s+value=\{view\}/)
   assert.match(source, /<TabsTrigger value="entries">积分流水<\/TabsTrigger>/)
   assert.match(
@@ -113,7 +113,7 @@ test("billing filters match the compact operation-log interaction", async () => 
     /flex flex-wrap items-center gap-2 px-\[var\(--card-spacing\)\]/
   )
   assert.equal((filters.match(/className="w-32"/g) ?? []).length, 1)
-  assert.match(filters, /<BillingUserSearch/)
+  assert.match(filters, /<UserSearch\s+id="billing-user"/)
   assert.equal((filters.match(/<DatePickerField/g) ?? []).length, 2)
   assert.match(filters, /className="w-32 sm:w-32"/)
   assert.equal((filters.match(/<DropdownMenu>/g) ?? []).length, 3)

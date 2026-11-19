@@ -1,3 +1,4 @@
+import { saveTestScreenshot } from "./test-screenshot.mjs"
 import assert from "node:assert/strict"
 import { readFile, stat } from "node:fs/promises"
 import path from "node:path"
@@ -837,18 +838,12 @@ try {
         )
         await page.setViewportSize({ width, height })
         await page.evaluate(() => window.scrollTo(0, 0))
-        await page.screenshot({
-          path: `/tmp/monkeyai-client-devices-${locale}-${width}-${path.basename(executablePath)}.png`,
-          fullPage: true,
-        })
+        await saveTestScreenshot(page, `client-devices-${locale}-${width}-${path.basename(executablePath)}.png`, { fullPage: true })
         console.log(
           `PASS client device inventory ${locale} ${width}: endpoint data, all-time defaults, split OS fields, metadata, pagination, URL filters, account client link, exact user ID, reload, history, dates, independent retry, empty recovery`
         )
       } catch (error) {
-        await page.screenshot({
-          path: "/tmp/monkeyai-client-devices-failed.png",
-          fullPage: true,
-        })
+        await saveTestScreenshot(page, "client-devices-failed.png", { fullPage: true })
         console.error(await page.locator("body").textContent())
         console.error(
           "URL",

@@ -1,3 +1,4 @@
+import { saveTestScreenshot } from "./test-screenshot.mjs"
 import assert from "node:assert/strict"
 import { readFile, stat } from "node:fs/promises"
 import path from "node:path"
@@ -203,10 +204,7 @@ try {
   await page.locator("[data-markdown-editor] .ace_editor").waitFor()
   assert.equal(await page.getByRole("dialog").count(), 0)
   await page.locator(".tiptap h1").filter({ hasText: "文档标题" }).waitFor()
-  await page.screenshot({
-    path: "/tmp/monkeyai-document-editor-desktop.png",
-    fullPage: true,
-  })
+  await saveTestScreenshot(page, "document-editor-desktop.png", { fullPage: true })
   const title = page.getByRole("textbox", { name: "内容标题", exact: true })
   await title.fill("编辑后的文档")
   const ace = page.locator(".ace_text-input:not([aria-hidden=true])")
@@ -377,10 +375,7 @@ try {
       "页面不应横向溢出"
     )
   }
-  await page.screenshot({
-    path: "/tmp/monkeyai-document-editor.png",
-    fullPage: true,
-  })
+  await saveTestScreenshot(page, "document-editor.png", { fullPage: true })
   failLoad = true
   await page.reload({ waitUntil: "networkidle" })
   await page.getByRole("alert").filter({ hasText: "模拟请求失败" }).waitFor()

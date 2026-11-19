@@ -22741,7 +22741,7 @@ function privateDesignWorkspaceArguments(input) {
     return [tool, { sessionId, uploadId, offset, bytes }];
   }
   const tools = [
-    "design_session_open", "design_state", "canvas_get", "canvas_apply", "canvas_select", "canvas_create_text",
+    "design_session_open", "design_state", "canvas_get", "canvas_apply", "canvas_select", "canvas_create_text", "canvas_selected_sources",
     "canvas_create_image", "canvas_create_video",
     "canvas_create_media_project", "canvas_duplicate", "canvas_export_upload", "canvas_upload_status",
     "canvas_import_video", "canvas_import_audio", "canvas_import_extracted_media", "canvas_append_media_project",
@@ -25618,6 +25618,12 @@ function onReady() {
       ? { sessionId: params.sessionId, cwd: workspace.cwd, selection: params.selection }
       : { cwd: workspace.cwd, payload: workspace.capabilities?.design ?? {}, params, observer });
     runtime.assertCurrent();
+    if (tool === "canvas_selected_sources" && result.length) {
+      const staged = await attachmentDestination(event.sender)(
+        result.map(({ uri }) => fileAttachment(node_url.fileURLToPath(uri)))
+      );
+      return staged.map(({ name, uri }, index) => ({ name, uri, canvasNodeId: result[index].canvasNodeId }));
+    }
     return result;
   });
   setupOhosTitlebar();
