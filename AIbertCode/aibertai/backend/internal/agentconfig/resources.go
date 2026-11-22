@@ -372,6 +372,11 @@ func (r *Resources) manifest(ctx context.Context, q resource.Queryer, c catalog,
 	resource.Stable(connectors)
 	slices.SortFunc(issues, func(a, b resource.Object) int { return strings.Compare(resource.Hash(a), resource.Hash(b)) })
 	out := resource.Object{"expert_id": expert, "name": e["name"], "description": e["description"], "name_i18n": e["name_i18n"], "description_i18n": e["description_i18n"], "prompt": e["prompt"], "rules": rules, "skills": skills, "connectors": connectors, "issues": issues, "available": true}
+	for _, field := range []string{"dsh_plugins", "canvas_tools"} {
+		if selection := e[field]; selection != nil {
+			out[field] = selection
+		}
+	}
 	if key := e.String("avatar_s3_key"); key != "" {
 		out["avatar_path"] = "/api/v1/experts/" + expert + "/avatar?v=" + resource.Hash(key)
 	}

@@ -14,11 +14,26 @@ import (
 const connectorPreferencesFile = "connector-preferences.json"
 
 type connectorPreferences struct {
-	Enabled  map[string]bool            `json:"enabled"`
-	Tools    map[string]map[string]bool `json:"tool_states"`
-	Bindings map[string]string          `json:"connector_bindings"`
-	Builtin  json.RawMessage            `json:"builtin_tools"`
-	Revision int                        `json:"-"`
+	Enabled          map[string]bool            `json:"enabled"`
+	Tools            map[string]map[string]bool `json:"tool_states"`
+	Bindings         map[string]string          `json:"connector_bindings"`
+	Builtin          json.RawMessage            `json:"builtin_tools"`
+	KnowledgeBaseIDs []string                   `json:"knowledge_base_ids,omitempty"`
+	Revision         int                        `json:"-"`
+}
+
+func validKnowledgeSelection(ids []string) bool {
+	if len(ids) > 50 {
+		return false
+	}
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if !validUUID(id) || seen[id] {
+			return false
+		}
+		seen[id] = true
+	}
+	return true
 }
 
 func (p connectorPreferences) hasEnabledConnector() bool {
@@ -86,6 +101,9 @@ func (l *acpLive) saveConnectorPreferences(raw json.RawMessage) error {
 	if l.store == nil || len(raw) > 48<<10 || json.Unmarshal(raw, &next) != nil || next.Enabled == nil || next.Bindings == nil || next.Tools == nil {
 		return errors.New("connector_preferences_invalid")
 	}
+	if !validKnowledgeSelection(next.KnowledgeBaseIDs) {
+		return errors.New("connector_preferences_invalid")
+	}
 	if next.Builtin != nil && json.Unmarshal(next.Builtin, new(builtinToolPreferences)) != nil {
 		return errors.New("connector_preferences_invalid")
 	}
@@ -112,6 +130,7 @@ func (h *relaySessionHost) sessionConnectorResources(raw json.RawMessage, write 
 		Change struct {
 			Kind, ID, Name, Server, ConnectorID, CredentialID string
 			Enabled                                           *bool
+			IDs                                               []string
 		}
 	}
 	if json.Unmarshal(raw, &request) != nil || !validUUID(request.SessionID) {
@@ -141,6 +160,11 @@ func (h *relaySessionHost) sessionConnectorResources(raw json.RawMessage, write 
 		prefs = prefs.normalized()
 		change := request.Change
 		switch change.Kind {
+		case "knowledge_selection":
+			if !validKnowledgeSelection(change.IDs) {
+				return nil, errors.New("invalid_session_resources")
+			}
+			prefs.KnowledgeBaseIDs = slices.Clone(change.IDs)
 		case "resource":
 			name, ok := strings.CutPrefix(change.ID, "mcp/")
 			if !ok || !h.validConnectorPreference(name) || change.Enabled == nil {

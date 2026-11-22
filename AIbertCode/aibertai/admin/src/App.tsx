@@ -42,6 +42,7 @@ import { ResourceAnalysisPage } from "@/pages/resource-analysis-page"
 import { SessionDetailPage } from "@/pages/session-detail-page"
 import { ToolsPage } from "@/pages/tools-page"
 
+const DshGlobalPluginsPage = lazy(() => import("@/pages/dsh-global-plugins-page").then(module => ({ default: module.DshGlobalPluginsPage })))
 const KbDocumentPage = lazy(() => import("@/pages/kb-document-page"))
 const KbDetailPage = lazy(() => import("@/pages/kb-detail-page"))
 
@@ -143,6 +144,8 @@ export function App() {
                     <SkillsPage />
                   ) : page.path === CONSOLE_ROUTES.experts ? (
                     <ExpertsPage />
+                  ) : page.path === CONSOLE_ROUTES.dshGlobalPlugins ? (
+                    <Suspense fallback={<PageLoading />}><DshGlobalPluginsPage /></Suspense>
                   ) : page.path === CONSOLE_ROUTES.tools ? (
                     <ToolsPage />
                   ) : page.path === CONSOLE_ROUTES.billingDetails ? (

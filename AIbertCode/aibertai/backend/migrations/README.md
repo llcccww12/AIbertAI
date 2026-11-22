@@ -14,7 +14,7 @@ migrate -path migrations -database "$AIBERTAI_DATABASE_URL" up
 migrate -path migrations -database "$AIBERTAI_DATABASE_URL" version
 ```
 
-成功后 `schema_migrations` 应为 `version=52, dirty=false`，再次 `up` 返回 `no change`。可丢弃测试库执行 `down -all` 后再 `up`，应能完整重建。
+成功后 `schema_migrations` 应为 `version=53, dirty=false`，再次 `up` 返回 `no change`。可丢弃测试库执行 `down -all` 后再 `up`，应能完整重建。
 
 初始化不预置用户、分组或业务设置。首次管理员由后端按部署环境变量创建，RustFS Bucket 由后端启动流程检查并按需创建。团队根节点仅用于界面展示，名称读取 `settings.branding.workspace_name`；顶层分组使用 `parent_id IS NULL`，成员关系通过 `group_users` 显式维护。
 
@@ -171,3 +171,5 @@ down在开放计费时段、已收费时段、交易／账本环境历史、待�
 版本 `41` 同时为 `knowledge_bases` 增加 `avatar_s3_key text NOT NULL DEFAULT ''`，历史记录默认没有自定义图标，原有知识库及内容保持不变。须先迁移，再启动使用该字段的新后端。down 仅删除图标存储键字段，丢失自定义图标关联，不删除知识库、文档或对象存储中的图片；再次 up 只恢复默认空字段。
 
 版本 `52` 将会话回合镜像触发器的父会话行锁改为 `FOR NO KEY UPDATE`，与上报事务持有的锁一致。计数更新仍串行执行，模型结算的外键检查可以并行。迁移替换触发器函数，回滚恢复原锁方式。
+
+版本 `53` 为专家增加两个可空字段。`dsh_plugins` 默认继承 SDK 的会话插件组合。`canvas_tools` 默认继承已导入专家的画布配置。任一字段填写数组时，仅启用该名单中的可选项，空数组关闭该类预设工具。先执行迁移，再启动新版本后端。回滚会丢弃这两份名单，再次升级后使用各自的默认配置。

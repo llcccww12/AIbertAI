@@ -58,11 +58,21 @@ type toolArguments struct {
 }
 
 type workspaceToolRun struct {
+	DSHResultMeta json.RawMessage   `json:"dshResultMeta,omitempty"`
+	DSHCallID     string            `json:"dshCallId,omitempty"`
+	DisplayName   string            `json:"displayName,omitempty"`
+	DisplayKind   string            `json:"displayKind,omitempty"`
+	Pending       bool              `json:"pending,omitempty"`
 	Preamble      string            `json:"preamble,omitempty"`
+	DSHParts      []dshMessagePart  `json:"dshParts,omitempty"`
 	Call          *modelToolUse     `json:"call,omitempty"`
 	Report        reportedTool      `json:"report"`
 	Output        string            `json:"output,omitempty"`
 	ResponseItems []json.RawMessage `json:"responseItems,omitempty"`
+
+	dshSourceInvocation string
+	dshStreamAttempt    string
+	DSHThoughtProof     *dshGoalThoughtProof `json:"dshThoughtProof,omitempty"`
 }
 
 func (c *client) completeToolTurn(ctx context.Context, protocol, key, session string, approved []string, prompt string, history []toolConversationMessage, requireTool, allowWrite bool, call func(modelToolUse, workspaceToolArguments, []json.RawMessage) (string, error)) (string, modelUsage, *reportedTool, error) {

@@ -20,6 +20,8 @@
   "kb_write_forbidden": {"zh-CN":"知识库仅有只读权限。", "en-US":"You only have read access to this knowledge base."},
   "document_revision_conflict": {"zh-CN":"文档已更新，请刷新后重试。", "en-US":"The document has changed. Refresh and try again."},
   "request_failed": {"zh-CN":"操作失败，请稍后重试。", "en-US":"The operation failed. Please try again later."},
+  "invalid_canvas_tools": {"zh-CN":"请选择有效的画布工具，每个工具只能选择一次。", "en-US":"Choose valid canvas tools and select each tool only once."},
+  "invalid_dsh_plugins": {"zh-CN":"请选择有效的 DSH 会话插件，每个插件只能选择一次。", "en-US":"Choose valid DSH session plugins and select each plugin only once."},
   "invalid_request": {"zh-CN":"请求参数无效，请检查填写内容。", "en-US":"The request is invalid. Please check the input."},
   "invalid_json": {"zh-CN":"请求格式无效，请提交一个有效的 JSON 对象。", "en-US":"The request must contain one valid JSON object."},
   "not_found": {"zh-CN":"资源不存在或无权访问。", "en-US":"The resource does not exist or you do not have access."},

@@ -79,7 +79,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu"
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
   Popover,
@@ -106,6 +106,8 @@ type Expert = {
   description: string
   prompt: string
   tagIds: string[]
+  canvasTools: string[] | null
+  dshPlugins: string[] | null
   connectorSettings: ResourceRow["connectors"]
   knowledgeBaseIds: string[]
   toolIds: string[]
@@ -127,6 +129,44 @@ type ExpertForm = Omit<
   | "grants"
   | "avatarPath"
 >
+const CANVAS_TOOLS = [
+  "canvas_get_document",
+  "canvas_get_selection",
+  "canvas_create_text",
+  "canvas_create_html",
+  "canvas_commit_html",
+  "canvas_prepare_pptx",
+  "design_catalog_search",
+  "design_catalog_detail",
+  "design_await_style_choice",
+  "media_get_image_model",
+  "media_generate_image",
+  "canvas_create_image",
+] as const
+
+const DSH_PLUGINS = [
+  "agent-instructions",
+  "time-context",
+  "tool-bash",
+  "tool-pwsh",
+  "tool-fs",
+  "tool-fs-search",
+  "tool-jobs",
+  "skill-filesystem",
+  "tool-skill",
+  "tool-ask-user",
+  "tool-todo",
+  "tool-web",
+  "present",
+  "tool-office",
+  "tool-agent-team",
+  "tool-subagent-control",
+  "tool-subagent",
+  "tool-subagent-fork",
+  "tool-plugin-manager",
+  "tool-workflow",
+] as const
+
 type AssociationKey = "knowledgeBaseIds" | "toolIds" | "ruleIds" | "skillIds"
 
 type AssociationOption = {
@@ -151,6 +191,8 @@ function toExpert(row: ResourceRow, language: string): Expert {
     description: text.description,
     prompt: row.prompt,
     tagIds: (row.tags ?? []).map((tag) => tag.id),
+    dshPlugins: row.dsh_plugins ?? null,
+    canvasTools: row.canvas_tools ?? null,
     connectorSettings: row.connectors ?? [],
     knowledgeBaseIds: [],
     toolIds: (row.connectors ?? []).map((p) => p.connector_id),
@@ -166,6 +208,8 @@ const EMPTY_FORM: ExpertForm = {
   description: "",
   prompt: "",
   tagIds: [],
+  dshPlugins: null,
+  canvasTools: null,
   connectorSettings: [],
   knowledgeBaseIds: [],
   toolIds: [],
@@ -411,6 +455,8 @@ export function ExpertsPage() {
       description: expert.description,
       prompt: expert.prompt,
       tagIds: expert.tagIds,
+      dshPlugins: expert.dshPlugins,
+      canvasTools: expert.canvasTools,
       connectorSettings: expert.connectorSettings,
       knowledgeBaseIds: expert.knowledgeBaseIds,
       toolIds: expert.toolIds,
@@ -471,6 +517,8 @@ export function ExpertsPage() {
           description: form.description,
           prompt: form.prompt,
           tag_ids: form.tagIds,
+          dsh_plugins: form.dshPlugins,
+          canvas_tools: form.canvasTools,
           rule_ids: form.ruleIds,
           skill_ids: form.skillIds,
           connectors: form.toolIds.map(
@@ -886,6 +934,58 @@ export function ExpertsPage() {
                     </Field>
                   ))}
                 </div>
+                <Field>
+                  <FieldLabel htmlFor="expert-dsh-plugins">{t("pages.experts.dshPlugins")}</FieldLabel>
+                  <label className="flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={form.dshPlugins === null}
+                      onCheckedChange={(checked) =>
+                        updateForm("dshPlugins", checked ? null : [])
+                      }
+                    />
+                    {t("pages.experts.dshDefault")}
+                  </label>
+                  <ExpertAssociationSelect
+                    id="expert-dsh-plugins"
+                    label={t("pages.experts.dshPlugins")}
+                    options={DSH_PLUGINS.map((id) => ({
+                      id,
+                      name: t(`pages.experts.dshPluginNames.${id}`),
+                      description: id,
+                    }))}
+                    value={form.dshPlugins ?? []}
+                    onValueChange={(ids) => updateForm("dshPlugins", ids)}
+                  />
+                  <FieldDescription>
+                    {t(
+                      form.dshPlugins === null
+                        ? "pages.experts.dshDefaultHint"
+                        : "pages.experts.dshCustomHint"
+                    )}{" "}
+                    {t("pages.experts.dshActivationHint")}
+                  </FieldDescription>
+                  {form.skillIds.length > 0 &&
+                    form.dshPlugins !== null &&
+                    !form.dshPlugins.includes("tool-skill") && (
+                      <FieldDescription role="status">
+                        {t("pages.experts.dshSkillHint")}
+                      </FieldDescription>
+                    )}
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="expert-canvas-tools">{t("pages.experts.canvasTools")}</FieldLabel>
+                  <ExpertAssociationSelect
+                    id="expert-canvas-tools"
+                    label={t("pages.experts.canvasTools")}
+                    options={CANVAS_TOOLS.map((id) => ({
+                      id,
+                      name: t(`pages.experts.canvasToolNames.${id}`),
+                      description: id,
+                    }))}
+                    value={form.canvasTools ?? []}
+                    onValueChange={(ids) => updateForm("canvasTools", ids)}
+                  />
+                </Field>
                 {form.toolIds.map((id) => {
                   const settings = form.connectorSettings.find(
                     (p) => p.connector_id === id

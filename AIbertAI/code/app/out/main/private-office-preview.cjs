@@ -23,31 +23,42 @@ const OFFICE_FONTS = `<?xml version="1.0"?>
   <alias><family>Arial</family><prefer><family>Arial</family><family>Heiti SC</family></prefer></alias>
 </fontconfig>`;
 
-async function renderOffice(bytes, format, converter, temp, signal) {
-  if (process.platform !== "darwin" || !path.isAbsolute(converter)) throw new Error("office_converter_unavailable");
+async function renderOffice(bytes, format, converter, temp, signal, kitRoot) {
+  if (process.platform !== "darwin" || (converter && !path.isAbsolute(converter))) throw new Error("office_converter_unavailable");
   const directory = await fs.mkdtemp(path.join(temp, "aibert-office-"));
   try {
-    const app = await fs.realpath(converter);
     const home = await fs.realpath(os.homedir());
     const privateRoots = ["Documents", "Desktop", "Downloads", ".ssh", ".aws", ".gnupg"].map((name) => path.join(home, name));
     const denyOtherFiles = privateRoots.map((root) => `(deny file-read-data (subpath ${JSON.stringify(root)}))`).join("\n");
     const source = path.join(directory, "document." + format);
-    const profile = path.join(directory, "profile");
-    const fontConfig = path.join(directory, "fonts.conf");
-    await fs.mkdir(path.join(profile, "user"), { recursive: true });
-    await fs.writeFile(path.join(profile, "user", "registrymodifications.xcu"),
-      '<?xml version="1.0" encoding="UTF-8"?><oor:items xmlns:oor="http://openoffice.org/2001/registry"><item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="MacroSecurityLevel" oor:op="fuse"><value>3</value></prop></item></oor:items>');
-    await fs.writeFile(source, bytes, { mode: 0o600, flag: "wx" });
-    await fs.writeFile(fontConfig, OFFICE_FONTS, { mode: 0o600, flag: "wx" });
-    await run("/usr/bin/sandbox-exec", [
-      "-p", "(version 1) (allow default) (deny network*)\n" + denyOtherFiles,
-      app, `-env:UserInstallation=${pathToFileURL(profile).href}`,
-      "--headless", "--norestore", "--convert-to", "pdf", "--outdir", directory, source
-    ], {
-      cwd: directory, timeout: 90_000, maxBuffer: 64 * 1024, signal,
-      env: { ...process.env, FONTCONFIG_FILE: fontConfig, XDG_CACHE_HOME: directory }
-    });
     const output = path.join(directory, "document.pdf");
+    await fs.writeFile(source, bytes, { mode: 0o600, flag: "wx" });
+    const sandbox = "(version 1) (allow default) (deny network*)\n" + denyOtherFiles;
+    if (kitRoot && !converter) {
+      const kit = await fs.realpath(kitRoot);
+      const cli = path.join(kit, "app", "packages", "document", "office-kit", "node_modules", "@deepseek-ai", "libreoffice-kit", "lib", "cli.js");
+      await run("/usr/bin/sandbox-exec", [
+        "-p", sandbox + "\n(allow file-read-data (subpath " + JSON.stringify(kit) + "))",
+        path.join(kit, "bin", "node"), cli, "convert", "--input", source, "--output", output
+      ], { cwd: directory, timeout: 90_000, maxBuffer: 64 * 1024, signal,
+        env: { PATH: "/usr/bin:/bin", HOME: directory, TMPDIR: directory } });
+    } else {
+      const app = await fs.realpath(converter || "/Applications/LibreOffice.app/Contents/MacOS/soffice");
+      const profile = path.join(directory, "profile");
+      const fontConfig = path.join(directory, "fonts.conf");
+      await fs.mkdir(path.join(profile, "user"), { recursive: true });
+      await fs.writeFile(path.join(profile, "user", "registrymodifications.xcu"),
+        '<?xml version="1.0" encoding="UTF-8"?><oor:items xmlns:oor="http://openoffice.org/2001/registry"><item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="MacroSecurityLevel" oor:op="fuse"><value>3</value></prop></item></oor:items>');
+      await fs.writeFile(fontConfig, OFFICE_FONTS, { mode: 0o600, flag: "wx" });
+      await run("/usr/bin/sandbox-exec", [
+        "-p", sandbox,
+        app, `-env:UserInstallation=${pathToFileURL(profile).href}`,
+        "--headless", "--norestore", "--convert-to", "pdf", "--outdir", directory, source
+      ], {
+        cwd: directory, timeout: 90_000, maxBuffer: 64 * 1024, signal,
+        env: { ...process.env, FONTCONFIG_FILE: fontConfig, XDG_CACHE_HOME: directory }
+      });
+    }
     const stat = await fs.stat(output);
     if (!stat.isFile() || stat.size < 5 || stat.size > LIMIT) throw new Error("invalid_office_preview");
     const pdf = await fs.readFile(output);
@@ -58,7 +69,7 @@ async function renderOffice(bytes, format, converter, temp, signal) {
   }
 }
 
-async function startPrivateOfficePreview({ token, converter, temp, vendor, validate }) {
+async function startPrivateOfficePreview({ token, converter, temp, vendor, validate, dshResources }) {
   const key = Buffer.from(token);
   const docs = new Map();
   const assets = new Map([
@@ -131,7 +142,7 @@ async function startPrivateOfficePreview({ token, converter, temp, vendor, valid
           const bytes = Buffer.concat(chunks, size);
           const pdf = format === "pdf" ? bytes : await (async () => {
             await validate(bytes, format);
-            return renderOffice(bytes, format, converter, temp, entry.controller.signal);
+            return renderOffice(bytes, format, converter, temp, entry.controller.signal, dshResources?.());
           })();
           if (pdf.subarray(0, 5).toString("ascii") !== "%PDF-") throw new Error("invalid_office_preview");
           entry.resolve(pdf);

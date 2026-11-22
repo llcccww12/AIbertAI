@@ -339,6 +339,9 @@ func (h *relaySessionHost) editToolWorkspaceFile(ctx context.Context, row acpSes
 }
 
 func replaceWorkspaceText(original string, edits []workspaceReplacement) (string, int, error) {
+	return replaceWorkspaceTextLimit(original, edits, maxToolText)
+}
+func replaceWorkspaceTextLimit(original string, edits []workspaceReplacement, limit int) (string, int, error) {
 	type match struct {
 		start, end int
 		value      string
@@ -377,14 +380,14 @@ func replaceWorkspaceText(original string, edits []workspaceReplacement) (string
 	var output strings.Builder
 	offset := 0
 	for _, item := range matches {
-		if output.Len()+item.start-offset+len(item.value) > maxToolText {
+		if output.Len()+item.start-offset+len(item.value) > limit {
 			return "", 0, errors.New("workspace_edit_output_too_large")
 		}
 		output.WriteString(original[offset:item.start])
 		output.WriteString(item.value)
 		offset = item.end
 	}
-	if output.Len()+len(original)-offset > maxToolText {
+	if output.Len()+len(original)-offset > limit {
 		return "", 0, errors.New("workspace_edit_output_too_large")
 	}
 	output.WriteString(original[offset:])

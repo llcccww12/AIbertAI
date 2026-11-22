@@ -1018,6 +1018,7 @@ function exposeHostApi(getPathForFile2, features) {
     switchAccount: (id, request2) => invokeLogin("accounts:switch", id, request2),
     removeAccount: (id, options) => electron.ipcRenderer.invoke("accounts:remove", id, options?.deleteData === true),
     openExternal: (url) => electron.ipcRenderer.invoke("shell:openExternal", url),
+    workspaceDocumentAction: (scope, relative, action) => electron.ipcRenderer.invoke("workspace:document-action", scope, relative, action),
     revealInFolder: (path) => electron.ipcRenderer.invoke("shell:revealInFolder", path),
     openDirectory: (path) => electron.ipcRenderer.invoke("shell:openDirectory", path),
     privateDesignCatalog: (tool, args) => electron.ipcRenderer.invoke("design:private-catalog", tool, args),

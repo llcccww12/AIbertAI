@@ -213,3 +213,32 @@ func TestDesktopSessionRecoversInterruptedTurn(t *testing.T) {
 		t.Fatal("interrupted turn lost its local failure record or pending report")
 	}
 }
+
+func TestDSHConnectorFailureRequiresVerifiedReceiptsToContinue(t *testing.T) {
+	const id = "c1bd985c-9f71-4b85-937a-c41b1b104d38"
+	const op = "c2bd985c-9f71-4b85-937a-c41b1b104d38"
+	now := time.Now().UTC()
+	for _, tc := range []struct {
+		name                        string
+		reconciled, reviewed, acked bool
+		want                        string
+	}{
+		{"unverified", false, false, true, "dsh_reconciliation_required"},
+		{"review alone", false, true, true, "dsh_reconciliation_required"},
+		{"report pending", true, false, false, "session_report_pending"},
+		{"verified and reported", true, false, true, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			last := acpTurn{Failed: true, FailureCode: "dsh_connector_reconciliation_required", Ended: now, DSHReconciled: tc.reconciled, DSHUserReviewed: tc.reviewed, Acked: tc.acked}
+			live := &acpLive{dir: t.TempDir(), sessions: map[string]acpSession{id: {ID: id, Engine: "dsh", State: "error", Turns: []acpTurn{last}}}}
+			_, index, replay, err := live.beginTurn(id, op, "", "next", nil, nil)
+			if tc.want != "" {
+				if err == nil || err.Error() != tc.want {
+					t.Fatalf("expected %s, got %v", tc.want, err)
+				}
+			} else if err != nil || replay || index != 1 {
+				t.Fatalf("expected a new turn after verification, index=%d replay=%v err=%v", index, replay, err)
+			}
+		})
+	}
+}

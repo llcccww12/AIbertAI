@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"aibertai.local/backend/logging"
 	"bufio"
 	"bytes"
 	"compress/gzip"
@@ -8,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"aibertai.local/backend/logging"
 	"io"
 	"log/slog"
 	"net/http"
@@ -108,7 +108,11 @@ func newUsageCapture(logger *slog.Logger, src io.ReadCloser, ctx usageCaptureCon
 }
 
 func (p *Proxy) modifyResponse(response *http.Response) error {
-	if response == nil || response.Body == nil {
+	if response == nil {
+		return nil
+	}
+	response.Header.Del("X-Aibertai-Model-Not-Dispatched")
+	if response.Body == nil {
 		return nil
 	}
 	pc, ok := response.Request.Context().Value(proxyContextKey{}).(*proxyContext)

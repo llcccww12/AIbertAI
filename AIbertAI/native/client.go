@@ -21,6 +21,15 @@ var (
 	modelID       string
 )
 
+type backendHTTPError struct {
+	Method, Path string
+	Status       int
+}
+
+func (e *backendHTTPError) Error() string {
+	return fmt.Sprintf("%s %s: HTTP %d", e.Method, e.Path, e.Status)
+}
+
 type client struct {
 	server string
 	http   *http.Client
@@ -80,7 +89,7 @@ func (c *client) requestWithHeaders(ctx context.Context, method, path, token, ma
 	}
 	if (resp.StatusCode < 200 || resp.StatusCode >= 300) && !slices.Contains(accepted, resp.StatusCode) {
 		resp.Body.Close()
-		return nil, fmt.Errorf("%s %s: HTTP %d", method, req.URL.Path, resp.StatusCode)
+		return nil, &backendHTTPError{method, req.URL.Path, resp.StatusCode}
 	}
 	return resp, nil
 }

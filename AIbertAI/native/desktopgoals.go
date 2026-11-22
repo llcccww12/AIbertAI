@@ -5,22 +5,54 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
 type desktopGoal struct {
-	ID            string           `json:"goal_id"`
-	Objective     string           `json:"objective"`
-	Status        string           `json:"status"`
-	Reason        string           `json:"reason_code,omitempty"`
-	ExecutionID   string           `json:"current_execution_id,omitempty"`
-	Generation    int64            `json:"generation"`
-	Version       int64            `json:"state_version"`
-	Current       bool             `json:"is_current"`
-	ActiveSeconds int64            `json:"active_seconds"`
-	Uncertain     bool             `json:"usage_uncertain"`
-	Usage         desktopGoalUsage `json:"usage"`
-	Limits        desktopGoalLimit `json:"effective_limits"`
+	ID             string                       `json:"goal_id"`
+	Objective      string                       `json:"objective"`
+	Status         string                       `json:"status"`
+	Reason         string                       `json:"reason_code,omitempty"`
+	ExecutionID    string                       `json:"current_execution_id,omitempty"`
+	Generation     int64                        `json:"generation"`
+	Version        int64                        `json:"state_version"`
+	Current        bool                         `json:"is_current"`
+	ActiveSeconds  int64                        `json:"active_seconds"`
+	DSHActiveSince *time.Time                   `json:"dsh_active_since,omitempty"`
+	Uncertain      bool                         `json:"usage_uncertain"`
+	Usage          desktopGoalUsage             `json:"usage"`
+	Limits         desktopGoalLimit             `json:"effective_limits"`
+	Invocations    map[string]dshGoalInvocation `json:"dsh_invocations,omitempty"`
+	DSHGoalID      string                       `json:"dsh_goal_id,omitempty"`
+	DSHCommandID   string                       `json:"dsh_command_id,omitempty"`
+	DSHQueryOp     string                       `json:"dsh_query_operation,omitempty"`
+	DSHObjective   string                       `json:"dsh_objective,omitempty"`
+	DSHRevision    int64                        `json:"dsh_revision,omitempty"`
+	DSHEventSeq    int64                        `json:"dsh_event_seq,omitempty"`
+	DSHReadProjOp  string                       `json:"dsh_read_projection_operation,omitempty"`
+	DSHReadProjSeq *int64                       `json:"dsh_read_projection_seq,omitempty"`
+	DSHPhase       string                       `json:"dsh_phase,omitempty"`
+	RoundsStarted  int                          `json:"rounds_started,omitempty"`
+	RecentProgress string                       `json:"recent_progress,omitempty"`
+}
+
+// An admitted DSH invocation remains pending until its committed usage has
+// been persisted. A pending invocation must never be admitted again.
+type dshGoalInvocation struct {
+	Settled bool   `json:"settled"`
+	Tokens  int64  `json:"tokens,omitempty"`
+	Input   *int64 `json:"input_tokens,omitempty"`
+	Output  *int64 `json:"output_tokens,omitempty"`
+}
+
+func (g *desktopGoal) hasPendingDSHInvocation() bool {
+	for _, call := range g.Invocations {
+		if !call.Settled {
+			return true
+		}
+	}
+	return false
 }
 
 type desktopGoalUsage struct {
@@ -49,8 +81,14 @@ func (l *acpLive) saveGoalAction(raw json.RawMessage, background bool) (any, err
 	if p.Action == "get" || p.RequestID == row.LastGoalRequest {
 		return map[string]any{"goal": goalView(row), "background": background}, nil
 	}
+	if row.Engine == "dsh" && !background {
+		return nil, errors.New("dsh_goal_control_unavailable")
+	}
 	if p.Action != "create" && (goal == nil || !goal.Current || p.ExpectedGoalID != goal.ID || p.ExpectedGeneration != goal.Generation) {
 		return nil, errors.New("stale_goal")
+	}
+	if row.Engine == "dsh" && goal != nil && p.Action == "edit" && (goal.Status == "reconciling" || goal.Status == "clearing" || goal.DSHPhase == "complete") {
+		return nil, errors.New("goal_session_busy")
 	}
 	if row.State == "running" && p.Action != "pause" && p.Action != "clear" {
 		return nil, errors.New("goal_session_busy")
@@ -60,6 +98,9 @@ func (l *acpLive) saveGoalAction(raw json.RawMessage, background bool) (any, err
 		if p.Objective == "" || utf8.RuneCountInString(p.Objective) > 4000 {
 			return nil, errors.New("invalid_goal_objective")
 		}
+		if row.Engine == "dsh" && p.Action == "create" && dshReservedGoalObjective(p.Objective) {
+			return nil, errors.New("invalid_goal_objective")
+		}
 	}
 	var next desktopGoal
 	if goal != nil {
@@ -67,7 +108,7 @@ func (l *acpLive) saveGoalAction(raw json.RawMessage, background bool) (any, err
 	}
 	switch p.Action {
 	case "create":
-		if next.Current {
+		if next.Current || next.hasPendingDSHInvocation() || row.Engine == "dsh" && next.Uncertain {
 			return nil, errors.New("goal_already_exists")
 		}
 		next = desktopGoal{ID: p.RequestID, Objective: p.Objective, Status: "active", Current: true, Generation: 1,
@@ -78,11 +119,44 @@ func (l *acpLive) saveGoalAction(raw json.RawMessage, background bool) (any, err
 	case "pause":
 		next.Status, next.Reason = "paused", "user_paused"
 	case "resume":
-		if next.Status == "active" || goalView(row).Usage.Tokens >= next.Limits.Tokens {
+		if next.Status == "active" || next.Status == "reconciling" || next.Status == "clearing" || goalView(row).Usage.Tokens >= next.Limits.Tokens && next.DSHPhase != "complete" {
 			return nil, errors.New("goal_cannot_resume")
 		}
-		next.Status, next.Reason = "active", ""
+		workspaceRecovery := false
+		if row.Engine == "dsh" && (next.Uncertain || next.Reason == "host_restarted") && l.store != nil && l.store.Root != nil {
+			_, _, err := goalWorkspaceClaim(l.store.Root, row)
+			workspaceRecovery = err == nil
+		}
+		if row.Engine == "dsh" && next.Reason == "host_restarted" && !workspaceRecovery && len(row.Turns) > 0 {
+			for _, run := range row.Turns[len(row.Turns)-1].ToolRuns {
+				if run.Call != nil && run.Report.Failed == 0 && (run.Call.Function.Name == "write" || run.Call.Function.Name == "edit") {
+					return nil, errors.New("goal_cannot_resume")
+				}
+			}
+		}
+		if workspaceRecovery {
+			next.Status = "reconciling"
+		} else if row.Engine == "dsh" && next.DSHPhase == "complete" {
+			if next.DSHCommandID == "" || next.Reason == "resume_confirmation" {
+				return nil, errors.New("goal_cannot_resume")
+			}
+			next.Status = "reconciling"
+		} else if row.Engine == "dsh" && (next.hasPendingDSHInvocation() && next.Reason == "usage_unknown" || next.Reason == "host_restarted" && validUUID(next.DSHQueryOp)) {
+			next.Status = "reconciling"
+		} else {
+			if next.hasPendingDSHInvocation() || row.Engine == "dsh" && next.Uncertain {
+				return nil, errors.New("goal_cannot_resume")
+			}
+			next.Status, next.Reason = "active", ""
+		}
 	case "clear":
+		if row.Engine == "dsh" && background && (next.DSHGoalID != "" || row.State == "running") {
+			next.Status, next.Reason = "clearing", ""
+			if row.GoalRun == "" {
+				row.GoalRun = p.RequestID
+			}
+			break
+		}
 		next.Current, next.Status = false, "cleared"
 		if row.GoalRun != "" && row.State != "running" {
 			if n := len(row.Turns); n != 0 && row.Turns[n-1].Operation == row.GoalRun {
@@ -92,9 +166,11 @@ func (l *acpLive) saveGoalAction(raw json.RawMessage, background bool) (any, err
 				materializeGoalCheckpoint(turn)
 				turn.Ended, turn.Interrupted = time.Now().UTC(), true
 				row.Updated = turn.Ended
-				tokens, known := goalModelTokens(turn.Usage)
-				next.Usage.Tokens = min(next.Usage.Tokens+tokens, maxGoalBudget)
-				next.Uncertain = next.Uncertain || !known
+				if row.Engine != "dsh" {
+					tokens, known := goalModelTokens(turn.Usage)
+					next.Usage.Tokens = min(next.Usage.Tokens+tokens, maxGoalBudget)
+					next.Uncertain = next.Uncertain || !known
+				}
 				if active != nil {
 					next.ActiveSeconds += int64(active.ActiveTime / time.Second)
 				}
@@ -118,6 +194,21 @@ func (l *acpLive) saveGoalAction(raw json.RawMessage, background bool) (any, err
 		}
 	}
 	return map[string]any{"goal": goalView(row), "background": background}, nil
+}
+
+func dshReservedGoalObjective(objective string) bool {
+	if strings.TrimFunc(objective, func(r rune) bool { return unicode.IsSpace(r) || r == '\ufeff' }) != objective {
+		return true
+	}
+	lower := strings.ToLower(objective)
+	if lower == "pause" || lower == "resume" || lower == "clear" || lower == "edit" {
+		return true
+	}
+	if strings.HasPrefix(lower, "edit") && len(lower) > len("edit") {
+		r, _ := utf8.DecodeRuneInString(lower[len("edit"):])
+		return unicode.IsSpace(r) || r == '\ufeff'
+	}
+	return false
 }
 
 func goalModelTokens(usage modelUsage) (int64, bool) {
@@ -145,6 +236,11 @@ type goalCheckpoint struct {
 	Rounds      int                 `json:"rounds,omitempty"`
 	Pending     *goalReplayMessage  `json:"pending,omitempty"`
 	Unknown     []modelToolUse      `json:"unknown,omitempty"`
+
+	DSHParts              []dshMessagePart     `json:"dshParts,omitempty"`
+	DSHThoughtProof       *dshGoalThoughtProof `json:"dshThoughtProof,omitempty"`
+	DSHProgressInvocation string               `json:"dshProgressInvocation,omitempty"`
+	DSHProgressQuery      string               `json:"dshProgressQuery,omitempty"`
 }
 
 const goalContinuePrompt = "Continue the current goal from the recorded progress and tool results. Do not repeat work already completed. Take the next useful step and keep the same completion rule."
@@ -176,9 +272,11 @@ func settleDesktopGoal(row *acpSession, original *desktopGoal, turn acpTurn) {
 		return
 	}
 	next := *row.Goal
-	tokens, known := goalModelTokens(turn.Usage)
-	next.Usage.Tokens = min(next.Usage.Tokens+tokens, maxGoalBudget)
-	next.Uncertain = next.Uncertain || !known
+	if row.Engine != "dsh" {
+		tokens, known := goalModelTokens(turn.Usage)
+		next.Usage.Tokens = min(next.Usage.Tokens+tokens, maxGoalBudget)
+		next.Uncertain = next.Uncertain || !known
+	}
 	activeTime := turn.Ended.Sub(turn.Started)
 	if turn.GoalCheckpoint != nil {
 		activeTime = turn.GoalCheckpoint.ActiveTime

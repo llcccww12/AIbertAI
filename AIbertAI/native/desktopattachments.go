@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -70,6 +71,36 @@ func openDesktopAttachment(root *os.Root, file acpAttachment, maximum int64) (*o
 	}
 	defer dir.Close()
 	return openAttachmentFile(dir, file.Name, maximum)
+}
+
+// A file URI in history is readable only if it belongs to the requested session.
+func (h *relaySessionHost) previewSessionAttachment(sessionID, uri string) (any, error) {
+	row, err := h.live.load(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	for _, turn := range row.Turns {
+		for _, attachment := range turn.Attachments {
+			if attachment.URI != uri {
+				continue
+			}
+			file, err := openDesktopAttachment(h.local.attachments, attachment, maxWorkspaceTextPreview)
+			if err != nil {
+				return map[string]any{"path": uri, "kind": "unavailable", "reason": "missing"}, nil
+			}
+			data, err := io.ReadAll(io.LimitReader(file, maxWorkspaceTextPreview+1))
+			_ = file.Close()
+			if err != nil || len(data) > maxWorkspaceTextPreview {
+				return map[string]any{"path": uri, "kind": "unavailable", "reason": "too_large"}, nil
+			}
+			switch mime := http.DetectContentType(data); mime {
+			case "image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp":
+				return map[string]any{"path": uri, "kind": "image", "imageUrl": "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)}, nil
+			}
+			return map[string]any{"path": uri, "kind": "unavailable", "reason": "unsupported"}, nil
+		}
+	}
+	return nil, errors.New("attachment_not_in_session")
 }
 
 func desktopFileURIPath(uriText string) (string, error) {

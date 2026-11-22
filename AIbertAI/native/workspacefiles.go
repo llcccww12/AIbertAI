@@ -76,8 +76,11 @@ func writeWorkspaceText(ctx context.Context, root *os.Root, requested, content s
 }
 
 func writeWorkspaceTextIfUnchanged(ctx context.Context, root *os.Root, requested, content string, expected os.FileInfo) error {
+	return writeWorkspaceTextIfUnchangedLimit(ctx, root, requested, content, expected, maxToolText)
+}
+func writeWorkspaceTextIfUnchangedLimit(ctx context.Context, root *os.Root, requested, content string, expected os.FileInfo, limit int) error {
 	relative, err := workspaceRelative(requested)
-	if err != nil || relative == "." || !utf8.ValidString(content) || len(content) > maxToolText || strings.ContainsRune(content, 0) {
+	if err != nil || relative == "." || !utf8.ValidString(content) || len(content) > limit || strings.ContainsRune(content, 0) {
 		return errWorkspacePath
 	}
 	parent, err := root.OpenRoot(filepath.Dir(relative))
@@ -188,6 +191,7 @@ func (h *relaySessionHost) workspaceRoot(id string) (*os.Root, acpSession, error
 }
 
 type workspaceRequest struct {
+	TextPage  *workspaceTextCursor
 	SessionID string
 	Path      string
 	Purpose   string
@@ -200,6 +204,9 @@ func (h *relaySessionHost) workspaceQuery(ctx context.Context, method string, ra
 	var p workspaceRequest
 	if json.Unmarshal(raw, &p) != nil || !validUUID(p.SessionID) || p.Offset < 0 || p.Offset > 1000000 {
 		return nil, errors.New("invalid_request")
+	}
+	if method == "_monkeyai/workspace/read" && strings.HasPrefix(p.Path, "file:") && h.local != nil {
+		return h.previewSessionAttachment(p.SessionID, p.Path)
 	}
 	root, row, err := h.workspaceRoot(p.SessionID)
 	if err != nil {
@@ -243,6 +250,9 @@ func (h *relaySessionHost) workspaceQuery(ctx context.Context, method string, ra
 	case "_monkeyai/workspace/stat":
 		return workspaceFileStat{Exists: true, Size: info.Size(), MtimeMS: info.ModTime().UnixMilli()}, nil
 	case "_monkeyai/workspace/read":
+		if p.TextPage != nil && (info.Size() > maxWorkspaceTextPreview || p.TextPage.Offset != 0) {
+			return previewWorkspaceTextPage(root, relative, p.Path, *p.TextPage)
+		}
 		return previewWorkspaceFile(root, relative, p.Path, info.Size())
 	case "_monkeyai/workspace/link":
 		if p.Purpose != "" && p.Purpose != "resource" && p.Purpose != "download" || p.TTL < 0 || p.TTL > int64(24*time.Hour/time.Millisecond) {

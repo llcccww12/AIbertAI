@@ -110,6 +110,10 @@ func (h *relaySessionHost) compactDesktopSession(ctx context.Context, id string)
 		l.mu.Unlock()
 		return nil, errors.New("session_compaction_unavailable")
 	}
+	if row.Engine == "dsh" {
+		l.mu.Unlock()
+		return nil, errors.New("dsh_compaction_entry_unavailable")
+	}
 	if l.compacting == nil {
 		l.compacting = make(map[string]bool)
 	}

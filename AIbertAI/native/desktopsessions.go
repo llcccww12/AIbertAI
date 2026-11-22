@@ -11,8 +11,11 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
+
+var desktopSessionRecordMu sync.RWMutex
 
 const maxDesktopSessionBytes = 8 << 20
 const desktopSessionManifestSuffix = ".state.json"
@@ -117,6 +120,8 @@ func openDesktopSessions(profile, serverID, machineID, cwd string) (*acpLive, er
 }
 
 func readDesktopSessionRecord(root *os.Root, name string, destination any) error {
+	desktopSessionRecordMu.RLock()
+	defer desktopSessionRecordMu.RUnlock()
 	info, err := root.Lstat(name)
 	if err != nil {
 		return err
@@ -133,11 +138,24 @@ func readDesktopSessionRecord(root *os.Root, name string, destination any) error
 	if err != nil || !os.SameFile(info, opened) {
 		return errors.New("desktop_session_snapshot_changed")
 	}
-	reader := json.NewDecoder(io.LimitReader(file, maxDesktopSessionBytes+1))
-	if reader.Decode(destination) != nil || reader.Decode(new(any)) != io.EOF {
+	data, err := io.ReadAll(io.LimitReader(file, maxDesktopSessionBytes+1))
+	if err != nil || len(data) > maxDesktopSessionBytes {
 		return errors.New("invalid_desktop_session_snapshot")
 	}
-	return nil
+	var marker struct {
+		Format string `json:"_aibertaiChunkRecord"`
+	}
+	if json.Unmarshal(data, &marker) != nil {
+		return errors.New("invalid_desktop_session_snapshot")
+	}
+	if marker.Format != "" {
+		var record desktopChunkRecord
+		if json.Unmarshal(data, &record) != nil {
+			return errors.New("invalid_desktop_session_snapshot")
+		}
+		return readDesktopLargeRecord(root, name, record, destination)
+	}
+	return json.Unmarshal(data, destination)
 }
 
 func desktopTurnRecordName(id string, index int) string {
@@ -227,11 +245,25 @@ func saveDesktopSession(root *os.Root, session acpSession, previous int) (int, e
 }
 
 func saveDesktopSessionRecord(root *os.Root, name string, value any) error {
+	desktopSessionRecordMu.Lock()
+	defer desktopSessionRecordMu.Unlock()
 	data, err := json.Marshal(value)
-	if err != nil || len(data) > maxDesktopSessionBytes {
+	if err != nil {
 		return errors.New("desktop_session_snapshot_too_large")
 	}
-	return writeSourceState(root, name, data)
+	if len(data) > maxDesktopSessionBytes {
+		return saveDesktopLargeRecord(root, name, data)
+	}
+	if err := writeSourceState(root, name, data); err != nil {
+		return err
+	}
+	if info, err := root.Lstat(name + ".chunks"); err == nil && info.IsDir() {
+		if err := syncDesktopDir(root, filepath.Dir(name)); err != nil {
+			return err
+		}
+		pruneDesktopChunks(root, name, nil)
+	}
+	return nil
 }
 
 func writeSourceState(root *os.Root, name string, data []byte) error {
@@ -294,7 +326,50 @@ func (l *acpLive) restoreDesktopSessions() error {
 	// An interrupted process may have completed an action before recording
 	// its result. Close the interrupted turn without replaying the action.
 	for _, session := range l.sessions {
+		if session.Engine == "dsh" && session.Goal != nil && session.Goal.Status == "completed" && session.GoalRun != "" {
+			if n := len(session.Turns); n > 0 && session.Turns[n-1].Operation == session.GoalRun && session.Turns[n-1].Ended.IsZero() {
+				goal := *session.Goal
+				goal.Current, goal.Status, goal.Reason = true, "paused", "completion_unverified"
+				goal.Version++
+				session.Goal, session.State = &goal, "idle"
+				if err := l.save(session); err != nil {
+					return err
+				}
+				continue
+			}
+		}
 		activeGoal := session.Goal != nil && session.Goal.Current && session.Goal.Status == "active"
+		if session.Engine == "dsh" && session.Goal != nil && session.Goal.Current && (activeGoal || session.State == "running" || session.Goal.Status == "reconciling") {
+			// DSH restores durable goal state disarmed. Do not re-arm it merely
+			// because the platform host restarted.
+			goal := *session.Goal
+			if activeGoal {
+				goal.Status, goal.Reason = "paused", "host_restarted"
+			}
+			if goal.Status == "reconciling" {
+				goal.Status, goal.Reason, goal.Uncertain = "paused", "usage_unknown", true
+			}
+			if goal.hasPendingDSHInvocation() {
+				goal.Reason, goal.Uncertain = "usage_unknown", true
+			}
+			if n := len(session.Turns); n > 0 {
+				for _, run := range session.Turns[n-1].ToolRuns {
+					if run.Pending {
+						goal.Reason, goal.Uncertain = "resume_confirmation", true
+						break
+					}
+				}
+				if saved := session.Turns[n-1].GoalCheckpoint; saved != nil && saved.Pending != nil {
+					goal.Reason, goal.Uncertain = "resume_confirmation", true
+				}
+			}
+			goal.Version++
+			session.Goal, session.State = &goal, "idle"
+			if err := l.save(session); err != nil {
+				return err
+			}
+			continue
+		}
 		if session.GoalRun != "" && session.Goal != nil && session.Goal.Current {
 			if n := len(session.Turns); n > 0 && session.Turns[n-1].Operation == session.GoalRun {
 				saved := session.Turns[n-1].GoalCheckpoint
@@ -322,6 +397,11 @@ func (l *acpLive) restoreDesktopSessions() error {
 			if last.Ended.IsZero() {
 				materializeGoalCheckpoint(last)
 				last.Failed, last.Ended = true, time.Now().UTC()
+				if session.Engine == "dsh" && dshPendingWrite(*last) {
+					last.FailureCode = "dsh_write_outcome_unknown"
+				} else if session.Engine == "dsh" && dshPendingCanvasWrite(*last) {
+					last.FailureCode = "dsh_canvas_outcome_unknown"
+				}
 				if last.Ended.Before(last.Started) {
 					last.Ended = last.Started
 				}

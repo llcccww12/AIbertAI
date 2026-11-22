@@ -14689,6 +14689,7 @@ let webOrigin$1 = "";
 let capabilities = null;
 const readyWaiters$1 = [];
 let reloadWhenReady = null;
+let verifiedOfficeResources = null;
 function runtimeStatus() {
   return status$1;
 }
@@ -14772,6 +14773,7 @@ function onStdoutLine(proc, token, raw, logger, authorizationServer) {
     return;
   }
   status$1 = "ready";
+  verifiedOfficeResources = authorizationServer && typeof event.dshResources === "string" && node_path.isAbsolute(event.dshResources) ? event.dshResources : null;
   if (authorizationServer) ready2.sourcePreview = true;
   endpoint$2 = ready2;
   restart$2 = recordReady();
@@ -19727,7 +19729,8 @@ function ensureOfficePreview() {
   const { executable } = sourceEmployeeRuntime();
   privateOfficeStart ??= require("./private-office-preview.cjs").startPrivateOfficePreview({
     token: node_crypto.randomBytes(24).toString("hex"),
-    converter: process.env.AIBERTAI_OFFICE_CONVERTER || "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+    converter: process.env.AIBERTAI_OFFICE_CONVERTER,
+    dshResources: () => endpoint$2 && verifiedOfficeResources,
     temp: electron.app.getPath("temp"),
     vendor: node_path.join(webDir, "office-preview"),
     validate: (bytes, format) => runNativePptxCheck(executable, ["verify-office-preview", format], bytes)
@@ -21376,6 +21379,25 @@ function setupWorkspaceHost(features) {
   handle("workspace:html-preview:revoke", (args) => [url(args[0])], (event, target) => {
     previews.revoke(ownerOf(event), target);
   });
+  handle("workspace:document-action", (args) => [
+    scope$1(args[0]), text(args[1], ErrorCode.invalidPath, 8192), text(args[2], ErrorCode.invalidRequest, 16),
+  ], async (event, value, relative, action) => {
+    ownerOf(event);
+    const scope = activeScope(value);
+    const runtime = await captureLocalRuntime(event.sender);
+    const { cwd } = await runtime.request(AIBERTAI_METHODS.sessionWorkspace.name, { sessionId: scope.sessionId });
+    if (typeof cwd !== "string" || !node_path.isAbsolute(cwd)) throw new Error(ErrorCode.invalidWorkspace);
+    const stat = await runtime.request(AIBERTAI_METHODS.workspaceStat.name, { sessionId: scope.sessionId, path: relative });
+    if (!stat?.exists) throw new Error(ErrorCode.invalidPath);
+    const { workspaceDocumentAction, defaultApplication } = require("./workspace-document-action.cjs");
+    return workspaceDocumentAction({ cwd, relative, action,
+      assertCurrent: () => { runtime.assertCurrent(); activeScope(scope); },
+      preferred: file => defaultApplication(verifiedOfficeResources, file),
+      openPath: file => electron.shell.openPath(file),
+      showItemInFolder: file => electron.shell.showItemInFolder(file),
+      verifyOffice: (bytes, format) => runNativePptxCheck(sourceEmployeeRuntime().executable, ["verify-office-preview", format], bytes),
+    });
+  });
   handle("workspace:office-preview:create", (args) => [scope$1(args[0]), text(args[1], ErrorCode.invalidPath, 8192), args[2]], async (event, value, path2, remoteLink) => {
     const owner = ownerOf(event);
     if (runtimeTarget(event.sender)?.transport === "relay") {
@@ -22680,18 +22702,18 @@ async function answerRuntimeDesignTool(proc, server, event) {
   };
   const reply = { type: "design_tool_result", id };
   try {
-    const open = name === "design_session_open", list = name === "design_tool_catalog", image = runtimeImageTools.has(name);
+    const open = name === "design_session_open", list = name === "design_tool_catalog", guard = name === "design_guard_capabilities", image = runtimeImageTools.has(name);
     if (!current() || typeof name !== "string" || (!image && !/^(?:canvas|design)_[a-z_]{1,48}$/.test(name)) ||
         typeof sessionId !== "string" || !UUID$2.test(sessionId) ||
-        typeof cwd !== "string" || !node_path.isAbsolute(cwd) || (!open && !list && !image && !design) ||
+        typeof cwd !== "string" || !node_path.isAbsolute(cwd) || (!open && !list && !guard && !image && !design) ||
         !args || typeof args !== "object" || Array.isArray(args)) {
       throw new Error("invalid_design_tool_request");
     }
-    const controller = image && name !== "media_get_image_model" ? new AbortController() : null;
+    const controller = (image && name !== "media_get_image_model" || name === "design_await_style_choice") ? new AbortController() : null;
     if (controller) runtimeImageCalls.set(id, controller);
-    const result = await requestPrivateDesignCatalog(new URL(server).origin, open ? name : list ? name : "design_model_tool", open
+    const result = await requestPrivateDesignCatalog(new URL(server).origin, open ? name : list || guard ? name : "design_model_tool", open
       ? { cwd, sessionId, selection: args }
-      : { name, args, cwd, sessionId, design }, controller?.signal);
+      : { name, args, cwd, sessionId, design, ...(event.expectedRevision === void 0 ? {} : { expectedRevision: event.expectedRevision, expectedCanvasDigest: event.expectedCanvasDigest, expectedArtifactsDigest: event.expectedArtifactsDigest, expectedContextDigest: event.expectedContextDigest, expectedSourceDigest: event.expectedSourceDigest }) }, controller?.signal);
     if (!result || Buffer.byteLength(JSON.stringify(result)) > 48 * 1024) throw new Error("design_tool_result_too_large");
     reply.result = result;
   } catch (error) {
@@ -22702,7 +22724,7 @@ async function answerRuntimeDesignTool(proc, server, event) {
   }
   if (!current()) return;
   proc.stdin?.write(JSON.stringify(reply) + "\n");
-  if (reply.result && !["design_tool_catalog", "canvas_get_document", "canvas_get_selection", "media_get_image_model"].includes(name)) {
+  if (reply.result && !["design_tool_catalog", "design_guard_capabilities", "canvas_get_document", "canvas_get_selection", "media_get_image_model", "design_await_style_choice"].includes(name)) {
     for (const window of liveWindows()) {
       const sender = window.webContents;
       if (runtimeTarget(sender)?.transport !== "relay") sender.send("design:canvas-changed", sessionId);

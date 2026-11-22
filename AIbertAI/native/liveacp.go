@@ -19,26 +19,28 @@ import (
 )
 
 type acpLive struct {
-	client         *client
-	auth           authorization
-	source         *desktopSourceAuth
-	key            string
-	protocol       string
-	dir, cwd       string
-	cloudWorkspace string
-	store          *desktopSessionStore
-	modelBudget    int
-	modelLocked    bool
-	workspaces     *desktopWorkspaces
-	connectorPrefs connectorPreferences
-	settings       desktopSettings
-	mu             sync.Mutex
-	operations     map[string]string
-	sessions       map[string]acpSession
-	activeTurns    map[string]context.CancelFunc
-	queueWorkers   map[string]chan struct{}
-	compacting     map[string]bool
-	restarting     bool
+	dsh             *dshRuntimeConfig
+	client          *client
+	auth            authorization
+	source          *desktopSourceAuth
+	key             string
+	protocol        string
+	dir, cwd        string
+	cloudWorkspace  string
+	store           *desktopSessionStore
+	modelBudget     int
+	modelLocked     bool
+	workspaces      *desktopWorkspaces
+	connectorPrefs  connectorPreferences
+	settings        desktopSettings
+	mu              sync.Mutex
+	operations      map[string]string
+	sessions        map[string]acpSession
+	activeTurns     map[string]context.CancelFunc
+	dshStoppedTurns map[string]string
+	queueWorkers    map[string]chan struct{}
+	compacting      map[string]bool
+	restarting      bool
 }
 
 func (l *acpLive) authorization(ctx context.Context) (authorization, error) {
@@ -55,6 +57,10 @@ type acpSession struct {
 	LastGoalRequest      string                 `json:"lastGoalRequest,omitempty"`
 	GoalRun              string                 `json:"goalRun,omitempty"`
 	ID                   string                 `json:"sessionId"`
+	Engine               string                 `json:"engine,omitempty"`
+	DSHSessionID         string                 `json:"dshSessionId,omitempty"`
+	AgentTeamEnabled     *bool                  `json:"agentTeamEnabled,omitempty"`
+	AgentTeamAvailable   *bool                  `json:"agentTeamAvailable,omitempty"`
 	CWD                  string                 `json:"cwd"`
 	Workspace            string                 `json:"workspace,omitempty"`
 	ProjectID            string                 `json:"projectId,omitempty"`
@@ -116,6 +122,14 @@ func (l *acpLive) create(operation, cwd string) (string, error) {
 }
 
 func (l *acpLive) createInWorkspace(operation, cwd, projectID, selected string, expert expertSelection, preference *modelThinking, mode string, media desktopMediaModels) (string, error) {
+	return l.createSession(operation, cwd, projectID, selected, expert, preference, mode, media, l.dsh != nil)
+}
+
+func (l *acpLive) createSession(operation, cwd, projectID, selected string, expert expertSelection, preference *modelThinking, mode string, media desktopMediaModels, useDSH bool) (string, error) {
+	return l.createSessionWithTeam(operation, cwd, projectID, selected, expert, preference, mode, media, useDSH, nil, nil)
+}
+
+func (l *acpLive) createSessionWithTeam(operation, cwd, projectID, selected string, expert expertSelection, preference *modelThinking, mode string, media desktopMediaModels, useDSH bool, teamEnabled, teamAvailable *bool) (string, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if !validUUID(operation) {
@@ -162,13 +176,17 @@ func (l *acpLive) createInWorkspace(operation, cwd, projectID, selected string, 
 		cwd = l.workspaces.defaultPath(id)
 	}
 	now := time.Now().UTC()
+	engine, dshID := "", ""
+	if useDSH {
+		engine, dshID = "dsh", id
+	}
 	prefs := l.connectorPrefs
 	if preference == nil {
 		if fallback, ok := l.settings.ModelThinking[selected]; ok {
 			preference = &fallback
 		}
 	}
-	if err := l.save(acpSession{ID: id, CWD: cwd, Workspace: kind, ProjectID: projectID,
+	if err := l.save(acpSession{ID: id, Engine: engine, DSHSessionID: dshID, AgentTeamEnabled: teamEnabled, AgentTeamAvailable: teamAvailable, CWD: cwd, Workspace: kind, ProjectID: projectID,
 		Model: selected, Thinking: preference, Mode: mode, MediaImageModelID: media.Image, MediaVideoModelID: media.Video, ExpertID: expert.ID, ExpertName: expert.Name, Created: now, Updated: now, State: "idle", Operation: operation, ConnectorPreferences: &prefs}); err != nil {
 		return "", err
 	}
@@ -223,6 +241,13 @@ func (h *relaySessionHost) currentSessions(cwd string) []map[string]any {
 		for _, row := range h.live.sessions {
 			if cwd == "" || cwd == row.CWD {
 				meta := row.workspaceMetadata()
+				meta["dshWorkspaceRecoveryAvailable"] = h.live.dsh != nil && h.live.store != nil && dshWorkspaceRecoveryAvailable(row)
+				if dshWorkspaceRecoveryAvailable(row) {
+					_, _, reviewErr := h.dshManualReviewLocked(row.ID, false)
+					meta["dshWorkspaceManualReviewAvailable"] = reviewErr == nil
+				}
+				meta["dshCanvasRecoveryAvailable"] = h.live.dsh != nil && h.live.store != nil && dshCanvasRecoveryAvailable(row)
+				meta["dshPromptRecoveryAvailable"] = h.live.dsh != nil && h.live.store != nil && dshPromptRecoveryAvailable(row)
 				items = append(items, map[string]any{"sessionId": row.ID, "cwd": row.CWD, "title": meta["title"], "updatedAt": row.Updated,
 					"_meta": meta})
 			}
@@ -232,6 +257,7 @@ func (h *relaySessionHost) currentSessions(cwd string) []map[string]any {
 }
 
 type acpPermissionContextKey struct{}
+type acpViewerDoneKey struct{}
 
 type acpPermissionReply struct {
 	ID      json.RawMessage `json:"id"`
@@ -274,21 +300,40 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 	viewer := h.goals != nil && h.local != nil && r.Header.Get("Origin") == h.local.origin
 	if viewer {
 		defer h.goals.removeViewer(ws)
+		if h.interactions != nil {
+			defer h.interactions.viewer(ws, false)
+		}
 	}
 	initialized := false
 	permissions := new(sync.Map)
 	ctx = context.WithValue(ctx, acpPermissionContextKey{}, permissions)
+	viewerDone := make(chan struct{})
+	defer close(viewerDone)
+	ctx = context.WithValue(ctx, acpViewerDoneKey{}, (<-chan struct{})(viewerDone))
 	for {
 		var in acpPermissionReply
 		if wsjson.Read(ctx, ws, &in) != nil {
 			return
 		}
-		if in.JSONRPC != "2.0" || len(in.ID) == 0 || string(in.ID) == "null" {
+		if in.JSONRPC != "2.0" || string(in.ID) == "null" {
+			continue
+		}
+		if len(in.ID) == 0 {
+			// The browser ACP client sends session/cancel as a notification.
+			if initialized && in.Method == "session/cancel" && h.local != nil && h.live != nil && h.acpScope(r, "session:control") == nil {
+				var input struct{ SessionID string }
+				if json.Unmarshal(in.Params, &input) == nil && validUUID(input.SessionID) {
+					h.live.cancelTurn(input.SessionID)
+				}
+			}
 			continue
 		}
 		if in.Method == "" {
 			var permissionID string
 			if json.Unmarshal(in.ID, &permissionID) == nil {
+				if h.interactions != nil && h.interactions.answer(ws, permissionID, in) {
+					continue
+				}
 				if wait, ok := permissions.LoadAndDelete(permissionID); ok {
 					wait.(*acpPermissionWaiter).resolve(in)
 				}
@@ -311,9 +356,13 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 				fault = errors.New("initialize_required")
 			} else {
 				initialized = true
-				meta := map[string]any{"sessionReads": map[string]any{"version": 1, "maxBytes": 5 << 20, "queue": true, "state": 1}}
-				if h.local != nil && h.live != nil && h.acpScope(r, "session:control") == nil {
+				meta := map[string]any{"sessionReads": map[string]any{"version": 1, "maxBytes": 5 << 20, "queue": true, "state": 1, "pageFragments": 1}}
+				if h.live != nil && (h.local != nil) && h.acpScope(r, "session:control") == nil {
 					meta["goalMode"] = map[string]int{"version": 1}
+					if h.live.dsh != nil {
+						meta["agentTeam"] = 1
+						meta["standardPreset"] = 1
+					}
 				}
 				if h.terminals != nil && h.acpScope(r, "session:control") == nil {
 					meta["terminal"] = h.terminals.capability()
@@ -341,6 +390,7 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 					OperationID, ProjectID, Model, Profile, Mode string
 					MediaModels                                  desktopMediaModels
 					Thinking                                     *modelThinking
+					AgentTeamEnabled                             *bool
 				} `json:"_meta"`
 			}
 			if len(in.Params) != 0 && json.Unmarshal(in.Params, &p) != nil {
@@ -371,16 +421,110 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 					} else {
 						result, fault = h.deleteDesktopSessions(ctx, ws, in.Method, in.Params)
 					}
-				case "_monkeyai/session/queue":
+				case "_aibertai/session/jobs", "_aibertai/session/members", "_aibertai/session/member-interrupt":
+					if h.local == nil || h.live == nil || h.live.dsh == nil || h.acpScope(r, "session:control") != nil {
+						code, fault = -32001, errRelayAccess
+					} else if in.Method == "_aibertai/session/member-interrupt" {
+						result, fault = h.memberInterrupt(ctx, in.Params)
+					} else if in.Method == "_aibertai/session/members" {
+						result, fault = h.sessionMembers(ctx, in.Params)
+					} else {
+						result, fault = h.sessionJobs(ctx, in.Params)
+					}
+				case "_aibertai/session/agent-team":
+					if h.local == nil || h.live == nil || h.live.dsh == nil || h.acpScope(r, "session:control") != nil {
+						code, fault = -32001, errRelayAccess
+					} else {
+						result, fault = h.sessionAgentTeam(ctx, in.Params)
+					}
+				case "_aibertai/session/review-workspace":
+					if h.live == nil || h.acpScope(r, "session:control") != nil {
+						code, fault = -32001, errRelayAccess
+					} else {
+						var input struct {
+							SessionID   string `json:"sessionId"`
+							Action      string `json:"action"`
+							Fingerprint string `json:"fingerprint"`
+							Decision    string `json:"decision"`
+						}
+						if json.Unmarshal(in.Params, &input) != nil || input.SessionID != p.SessionID {
+							fault = errors.New("invalid_session_parameters")
+						} else if input.Action == "inspect" {
+							result, fault = h.inspectDSHManualReview(input.SessionID)
+						} else if input.Action == "confirm" {
+							go func(id json.RawMessage, input struct {
+								SessionID   string `json:"sessionId"`
+								Action      string `json:"action"`
+								Fingerprint string `json:"fingerprint"`
+								Decision    string `json:"decision"`
+							}) {
+								err := h.confirmDSHManualReview(ctx, input.SessionID, input.Fingerprint, input.Decision)
+								reply := map[string]any{"jsonrpc": "2.0", "id": id}
+								if err != nil {
+									reply["error"] = map[string]any{"code": -32602, "message": err.Error()}
+								} else {
+									if row, loadErr := h.live.load(input.SessionID); loadErr == nil && len(row.Turns) > 0 {
+										_ = notifyACPReply(ctx, ws, row, len(row.Turns)-1, true)
+										h.notifyDSHHistory(ctx, row)
+									}
+									reply["result"] = map[string]any{"reviewed": true}
+								}
+								_ = wsjson.Write(ctx, ws, reply)
+							}(in.ID, input)
+							continue
+						} else {
+							fault = errors.New("invalid_session_parameters")
+						}
+					}
+				case "_aibertai/session/reconcile-workspace", "_aibertai/session/reconcile-prompt", "_aibertai/session/reconcile-canvas":
+					if h.live == nil || h.acpScope(r, "session:control") != nil {
+						code, fault = -32001, errRelayAccess
+					} else {
+						go func(id json.RawMessage, sessionID, method string) {
+							var err error
+							if method == "_aibertai/session/reconcile-workspace" {
+								err = h.recoverDSHWorkspaceSession(ctx, sessionID)
+							} else if method == "_aibertai/session/reconcile-canvas" {
+								err = h.recoverDSHCanvasSession(ctx, sessionID)
+							} else {
+								err = h.recoverDSHPromptSession(ctx, sessionID, false)
+							}
+							reply := map[string]any{"jsonrpc": "2.0", "id": id}
+							if err != nil {
+								reply["error"] = map[string]any{"code": -32602, "message": err.Error()}
+							} else {
+								if row, loadErr := h.live.load(sessionID); loadErr == nil && len(row.Turns) > 0 {
+									_ = notifyACPReply(ctx, ws, row, len(row.Turns)-1, true)
+									_ = notifyACPTurnState(ctx, ws, row, row.Turns[len(row.Turns)-1].Operation, true)
+									if row.Turns[len(row.Turns)-1].DSHModelFailureSettled {
+										// Receipt verification can finish after its requesting window closes.
+										push, cancel := context.WithTimeout(context.WithoutCancel(ctx), 4*time.Second)
+										h.notifyDSHTurnCheckpoint(push, row, len(row.Turns)-1, row.Turns[len(row.Turns)-1].Operation)
+										cancel()
+									} else {
+										h.notifyDSHHistory(ctx, row)
+									}
+								}
+								reply["result"] = map[string]any{"reconciled": true}
+							}
+							_ = wsjson.Write(ctx, ws, reply)
+						}(in.ID, p.SessionID, in.Method)
+						continue
+					}
+				case "_monkeyai/session/queue", "_aibertai/session/member-prompt":
 					// A queued turn may run for minutes. Leave the ACP reader free for
 					// history, cancellation and other control requests on this connection.
-					go func(id, params json.RawMessage) {
+					go func(method string, id, params json.RawMessage) {
 						replied := false
 						accept := func(result any) error {
 							replied = true
 							return wsjson.Write(ctx, ws, map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
 						}
-						result, err := h.handleQueue(ctx, ws, r, params, accept)
+						handle := h.handleQueue
+						if method == "_aibertai/session/member-prompt" {
+							handle = h.memberPrompt
+						}
+						result, err := handle(ctx, ws, r, params, accept)
 						if replied {
 							return
 						}
@@ -390,7 +534,7 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 						}
 						_ = wsjson.Write(ctx, ws, map[string]any{"jsonrpc": "2.0", "id": id,
 							"error": map[string]any{"code": -32602, "message": err.Error()}})
-					}(in.ID, in.Params)
+					}(in.Method, in.ID, in.Params)
 					continue
 				case "_aibertai/runtime/prepare-restart":
 					if h.local == nil || h.live == nil || len(r.Header.Values("Origin")) != 0 {
@@ -411,7 +555,38 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 						case "_monkeyai/session/outline":
 							result, fault = h.desktopOutline(p.SessionID)
 						case "_monkeyai/session/compact":
-							result, fault = h.compactDesktopSession(ctx, p.SessionID)
+							row, loadErr := h.live.load(p.SessionID)
+							if loadErr != nil {
+								fault = loadErr
+								break
+							}
+							if row.Engine != "dsh" {
+								result, fault = h.compactDesktopSession(ctx, p.SessionID)
+								break
+							}
+							if h.local == nil || !validUUID(p.Meta.OperationID) || h.acpScope(r, "files:read") != nil {
+								fault = errors.New("dsh_compaction_entry_unavailable")
+								break
+							}
+							go func(requestID json.RawMessage, id, operation string) {
+								runCtx, release := h.dshPromptContext(ctx, id)
+								defer release()
+								value, err := h.promptACP(runCtx, ws, r, id, operation, "", "/compact", nil, nil)
+								reply := map[string]any{"jsonrpc": "2.0", "id": requestID}
+								if err != nil {
+									reply["error"] = map[string]any{"code": -32602, "message": err.Error()}
+								} else if result, ok := value.(map[string]string); ok && result["stopReason"] == "cancelled" {
+									reply["result"] = map[string]any{"status": "cancelled"}
+								} else if current, loadErr := h.live.load(id); loadErr == nil && len(current.Turns) > 0 && current.Turns[len(current.Turns)-1].Operation == operation && current.Turns[len(current.Turns)-1].DSHCompactID != "" {
+									turn := current.Turns[len(current.Turns)-1]
+									skipped := turn.Answer == "No compactable history yet."
+									reply["result"] = map[string]any{"status": "completed", "skipped": skipped, "text": turn.Answer, "usage": turn.Usage}
+								} else {
+									reply["error"] = map[string]any{"code": -32602, "message": "dsh_compaction_unverified"}
+								}
+								_ = wsjson.Write(ctx, ws, reply)
+							}(in.ID, p.SessionID, p.Meta.OperationID)
+							continue
 						}
 					}
 				case "_aibertai/connectors/local/test", "_aibertai/connectors/local/save":
@@ -620,7 +795,13 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 									expert, fault = h.resolveDesktopExpert(ctx, p.Meta.Profile)
 								}
 								if fault == nil {
-									id, fault = h.live.createInWorkspace(p.Meta.OperationID, p.CWD, p.Meta.ProjectID, selected, expert.expertSelection, p.Meta.Thinking, p.Meta.Mode, p.Meta.MediaModels)
+									dsh := h.local != nil && h.live.dsh != nil
+									available := dsh && expert.allowsAgentTeam()
+									if p.Meta.AgentTeamEnabled != nil && *p.Meta.AgentTeamEnabled && !available {
+										fault = errors.New("agent_team_unavailable")
+									} else {
+										id, fault = h.live.createSessionWithTeam(p.Meta.OperationID, p.CWD, p.Meta.ProjectID, selected, expert.expertSelection, p.Meta.Thinking, p.Meta.Mode, p.Meta.MediaModels, dsh, p.Meta.AgentTeamEnabled, &available)
+									}
 								}
 							}
 						}
@@ -636,7 +817,9 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 							code, fault = -32001, errRelayAccess
 						} else {
 							go func(requestID json.RawMessage, id, operation, prompt string) {
-								value, err := h.promptACP(ctx, ws, r, id, operation, "", prompt, nil, nil)
+								runCtx, release := h.dshPromptContext(ctx, id)
+								defer release()
+								value, err := h.promptACP(runCtx, ws, r, id, operation, "", prompt, nil, nil)
 								reply := map[string]any{"jsonrpc": "2.0", "id": requestID}
 								if err != nil {
 									reply["error"] = map[string]any{"code": -32602, "message": err.Error()}
@@ -644,7 +827,10 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 									reply["result"] = value
 								}
 								if wsjson.Write(ctx, ws, reply) != nil {
-									return
+									row, loadErr := h.live.load(id)
+									if loadErr != nil || row.Engine != "dsh" || runCtx.Err() != nil {
+										return
+									}
 								}
 								h.live.mu.Lock()
 								start := h.live.claimQueue(h.live.sessions[id])
@@ -687,6 +873,9 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 		}
 		if viewer && initialized && in.Method == "initialize" {
 			h.goals.addViewer(ws)
+			if h.interactions != nil {
+				h.interactions.viewer(ws, true)
+			}
 		}
 	}
 }
@@ -695,6 +884,26 @@ func (row acpSession) workspaceMetadata() map[string]any {
 	title, source := row.sessionTitle()
 	metadata := map[string]any{"cwd": row.CWD, "model": row.Model, "thinking": row.Thinking, "mode": row.permissionMode(), "mediaImageModelId": row.MediaImageModelID, "mediaVideoModelId": row.MediaVideoModelID, "expertId": row.ExpertID, "configurationRevision": row.ResourceRevision, "isDefaultWorkspace": row.Workspace != "selected", "projectId": row.ProjectID, "status": row.State, "goalModeAvailable": row.Workspace != "", "goal": goalView(row),
 		"title": title, "titleSource": source, "pinned": row.Pinned, "archivedAt": row.ArchivedAt, "readAt": row.ReadAt}
+	if row.Engine == "dsh" {
+		row.addDSHTodoMetadata(metadata)
+		if n := len(row.Turns); n > 0 {
+			last := row.Turns[n-1]
+			if last.DSHStopObserved && last.Failed && !last.DSHReconciled {
+				metadata["dshStopAccountingPending"] = true
+			}
+		}
+		row.addAgentTeamMetadata(metadata)
+		for i := len(row.Turns) - 1; i >= 0; i-- {
+			turn := row.Turns[i]
+			if turn.Model != row.Model {
+				break
+			}
+			if turn.DSHContext.valid() {
+				metadata["context"] = turn.DSHContext
+				break
+			}
+		}
+	}
 	if reason := row.lastTurnFailure(); reason != "" {
 		metadata["lastError"] = reason
 	}
@@ -741,6 +950,21 @@ func (h *relaySessionHost) acpFile(r *http.Request, method string, raw json.RawM
 		return h.uploads.create(params.relayUploadParams, access.Auth)
 	}
 	return h.uploads.operation(method, params.UploadID, params.SessionID, params.Meta.OperationID, access.Auth)
+}
+
+// Desktop DSH work follows the host lifetime rather than one viewer connection.
+// The existing active-turn cancel function still stops the individual session.
+func (h *relaySessionHost) dshPromptContext(ctx context.Context, id string) (context.Context, func()) {
+	if h.local == nil || h.live == nil || h.terminalLifetime == nil {
+		return ctx, func() {}
+	}
+	row, err := h.live.load(id)
+	if err != nil || row.Engine != "dsh" {
+		return ctx, func() {}
+	}
+	detached, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	stop := context.AfterFunc(h.terminalLifetime, cancel)
+	return detached, func() { stop(); cancel() }
 }
 
 func websocketProtocols(r *http.Request) []string {

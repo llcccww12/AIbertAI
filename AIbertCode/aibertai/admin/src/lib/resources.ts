@@ -29,6 +29,8 @@ export type Credential = {
   last_error: string | null
 }
 export type ResourceRow = {
+  dsh_plugins?: string[] | null
+  canvas_tools?: string[] | null
   id: string
   name: string
   revision: number

@@ -1,0 +1,4 @@
+.dsh-employee-document [data-code-preview] .line[aria-current="location"] {
+  background: color-mix(in srgb, var(--shiki-token-link) 12%, transparent);
+  box-shadow: inset 2px 0 var(--shiki-token-link);
+}

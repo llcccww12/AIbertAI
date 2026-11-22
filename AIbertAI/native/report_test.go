@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -56,5 +58,38 @@ func TestTurnReportInputTruncatesUnicode(t *testing.T) {
 	got := turnReportInput(prompt + "\x00尾")
 	if got.Text != prompt || !got.TextTruncated {
 		t.Fatal("expected exactly 8192 characters and a truncation marker")
+	}
+}
+
+func TestTurnReportUsesBackendCategoriesForDesktopTools(t *testing.T) {
+	c, err := newClient("https://private.example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := []reportedTool{
+		{Category: "canvas", Name: "canvas_create_html", Calls: 1},
+		{Category: "knowledge", Name: "knowledge_search", Calls: 1},
+		{Category: "connector", Name: "resource_connector", Calls: 1},
+	}
+	want := slices.Clone(tools)
+	want[0].Category, want[1].Category = "builtin", "builtin"
+	c.http.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		var payload struct {
+			Turns []struct{ Tools []reportedTool }
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if len(payload.Turns) != 1 || !slices.Equal(payload.Turns[0].Tools, want) {
+			t.Fatalf("unexpected reported tools: %+v", payload.Turns)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"acked_turn":1}`))}, nil
+	})
+	now := time.Now()
+	if err := c.reportTurn(t.Context(), authorization{Access: "fixture"}, "machine", "session", modelID, 1, 0, now, now, "error", modelUsage{}, reportedInput{Kind: "prompt"}, nil, tools...); err != nil {
+		t.Fatal(err)
+	}
+	if tools[0].Category != "canvas" || tools[1].Category != "knowledge" {
+		t.Fatal("reporting changed the local tool receipt")
 	}
 }

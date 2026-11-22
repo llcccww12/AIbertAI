@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -95,6 +96,26 @@ func (m desktopTrashMove) move() (bool, error) {
 	return err == nil, err
 }
 
+// The pinned SDK stores a session's immutable generations and lock together
+// beneath a project directory. Discover the project as its JSONL backend does:
+// a workspace can move, and the SDK owns the encoded project directory name.
+func desktopDSHTrashMoves(root *os.Root, id string) ([]desktopTrashMove, error) {
+	projects, err := fs.ReadDir(root.FS(), "dsh/home/sessions")
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	moves := []desktopTrashMove{
+		{root, filepath.Join("dsh", "gateway", id), filepath.Join("deleted-dsh", "gateway")},
+		{root, filepath.Join("dsh", "home", "storages", "session_projcache", "sessions", id+".json"), filepath.Join("deleted-dsh", "projection-cache")},
+	}
+	for _, project := range projects {
+		if project.IsDir() {
+			moves = append(moves, desktopTrashMove{root, filepath.Join("dsh", "home", "sessions", project.Name(), id), filepath.Join("deleted-dsh", "sessions", project.Name())})
+		}
+	}
+	return moves, nil
+}
+
 func (h *relaySessionHost) trashDesktopSession(id string, deleteWorkspace bool) (bool, error) {
 	l := h.live
 	l.mu.Lock()
@@ -102,6 +123,11 @@ func (h *relaySessionHost) trashDesktopSession(id string, deleteWorkspace bool) 
 	row, exists := l.sessions[id]
 	if exists && (row.State == "running" || l.compacting[id]) {
 		return false, errors.New("session_busy")
+	}
+	if exists && l.dsh != nil && l.dsh.LeasePool != nil && row.DSHSessionID != "" {
+		if err := l.dsh.LeasePool.evictIfIdle(row.DSHSessionID); err != nil {
+			return false, err
+		}
 	}
 	profile, err := os.OpenRoot(h.profile)
 	if err != nil {
@@ -113,8 +139,16 @@ func (h *relaySessionHost) trashDesktopSession(id string, deleteWorkspace bool) 
 		if deleteWorkspace && l.workspaces != nil && row.Workspace == "default" && row.CWD == l.workspaces.defaultPath(id) {
 			moves = append(moves, desktopTrashMove{l.workspaces.root, filepath.Join("workspaces", id), "deleted-workspaces"})
 		}
-		for _, suffix := range []string{".json", desktopSessionManifestSuffix, ".turns"} {
+		for _, suffix := range []string{".json", desktopSessionManifestSuffix, desktopSessionManifestSuffix + ".chunks", ".turns"} {
 			moves = append(moves, desktopTrashMove{l.store.Root, id + suffix, ".deleted"})
+		}
+		moves = append(moves, desktopTrashMove{l.store.Root, filepath.Join("dsh-connector-dispatch", id), filepath.Join(".deleted", "dsh-connector-dispatch")})
+		if l.workspaces != nil && row.Engine == "dsh" && row.DSHSessionID == id {
+			owned, err := desktopDSHTrashMoves(l.workspaces.root, id)
+			if err != nil {
+				return false, errors.New("session_delete_failed")
+			}
+			moves = append(moves, owned...)
 		}
 	}
 	var completed []desktopTrashMove

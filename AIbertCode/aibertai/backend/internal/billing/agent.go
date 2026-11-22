@@ -11,6 +11,7 @@ import (
 )
 
 func (s *Service) RegisterAgent(r chi.Router) {
+	r.With(identity.RequireScope("session:report")).Post("/sessions/{id}/model-invocations/{invocation}/receipt", s.agentModelReceipt)
 	r.Get("/billing/account", func(w http.ResponseWriter, r *http.Request) {
 		u, _ := identity.UserFromContext(r.Context())
 		a, err := s.Account(r.Context(), u.ID)

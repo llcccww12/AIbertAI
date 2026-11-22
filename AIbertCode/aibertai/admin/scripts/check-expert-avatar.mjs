@@ -498,7 +498,22 @@ try {
       )
       // A subsequent edit without choosing an image stays JSON and preserves the path.
       await edit("已换头像专家")
-      await dialog().locator("#expert-description").fill("仅修改说明")
+      await dialog().locator("#expert-description").fill("自定义专家预设")
+      const defaultPreset = dialog().getByRole("checkbox", {
+        name: "使用 DSH 默认组合",
+      })
+      assert(await defaultPreset.isChecked())
+      assert(await dialog().locator("#expert-dsh-plugins").isVisible())
+      const presets = [
+        ["expert-dsh-plugins", "tool-todo"],
+        ["expert-canvas-tools", "canvas_get_document"],
+        ["expert-canvas-tools", "canvas_create_image"],
+      ]
+      for (const [select, option] of presets) {
+        await dialog().locator(`#${select}`).click()
+        await page.locator(`label[for="${select}-${option}"]`).click()
+        await page.keyboard.press("Escape")
+      }
       await dialog().getByRole("button", { name: "保存", exact: true }).click()
       await dialog().waitFor({ state: "hidden" })
       assert.equal(writes[3].multipart, false)
@@ -506,6 +521,16 @@ try {
       assert(
         (await cardImage("已换头像专家").getAttribute("src")).includes("v=2")
       )
+      assert.deepEqual(writes[3].metadata.dsh_plugins, ["tool-todo"])
+      assert.deepEqual(writes[3].metadata.canvas_tools, ["canvas_get_document", "canvas_create_image"])
+      await edit("已换头像专家")
+      assert(!(await defaultPreset.isChecked()))
+      for (const [select, option] of presets) {
+        await dialog().locator(`#${select}`).click()
+        assert(await page.locator(`#${select}-${option}`).isChecked())
+        await page.keyboard.press("Escape")
+      }
+      await close()
       await edit("资源包专家")
       assert(await dialog().locator("#expert-avatar-upload").isDisabled())
       assert(await dialog().locator("#expert-avatar-file").isDisabled())
@@ -535,7 +560,7 @@ try {
       }
       assert.deepEqual(errors, [])
       console.log(
-        `PASS expert avatar ${width} ${dark ? "dark" : "light"}: local preview/cancel, size/format errors, create/retry, pending locks, replacement/version, JSON preservation, package read-only and 36/40px card geometry`
+        `PASS expert avatar ${width} ${dark ? "dark" : "light"}: local preview/cancel, size/format errors, create/retry, pending locks, replacement/version, JSON preservation, DSH and canvas preset save/reopen, package read-only and 36/40px card geometry`
       )
       await page.close()
     }

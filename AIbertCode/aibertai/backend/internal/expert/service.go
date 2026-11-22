@@ -31,7 +31,7 @@ func (s *Service) WithStorage(storage resource.Storage) *Service {
 
 func NewService(store *resource.Store) *Service {
 	s := &Service{Store: store}
-	s.CRUD = resource.NewCRUD(store, resource.Definition{Kind: "expert", Repository: func(q resource.Queryer) resource.Repository { return sqlc.New(q) }, Path: "/experts", Fields: []string{"name", "description", "prompt", "enabled"}, UserFields: []string{"name", "description", "prompt", "rule_ids", "skill_ids", "connectors", "tag_ids", avatarChangeKey}, UserDecorate: func(o resource.Object) {
+	s.CRUD = resource.NewCRUD(store, resource.Definition{Kind: "expert", Repository: func(q resource.Queryer) resource.Repository { return sqlc.New(q) }, Path: "/experts", Fields: []string{"name", "description", "prompt", "dsh_plugins", "canvas_tools", "enabled"}, UserFields: []string{"name", "description", "prompt", "dsh_plugins", "canvas_tools", "rule_ids", "skill_ids", "connectors", "tag_ids", avatarChangeKey}, UserDecorate: func(o resource.Object) {
 		if path := o.String("avatar_path"); path != "" {
 			o["avatar_path"] = strings.Replace(path, "/api/admin/v1/", "/api/v1/", 1)
 		}
@@ -39,6 +39,12 @@ func NewService(store *resource.Store) *Service {
 	return s
 }
 func (s *Service) validate(ctx context.Context, tx pgx.Tx, in, old resource.Object) error {
+	if !validToolSelection(in["dsh_plugins"], dshPlugins) {
+		return resource.InvalidCode("invalid_dsh_plugins", "DSH 插件未知、重复或格式无效")
+	}
+	if !validToolSelection(in["canvas_tools"], canvasTools) {
+		return resource.InvalidCode("invalid_canvas_tools", "画布工具未知、重复或格式无效")
+	}
 	if avatar, ok := in[avatarChangeKey].(*avatarChange); ok {
 		avatar.old = old.String("avatar_s3_key")
 	}

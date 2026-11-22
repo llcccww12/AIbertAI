@@ -305,6 +305,12 @@ func (h *relaySessionHost) setDesktopSessionModel(ctx context.Context, method st
 	if row.State == "running" || len(row.Turns) > 0 && !row.Turns[len(row.Turns)-1].Acked {
 		return nil, errors.New("session_unavailable_for_model_change")
 	}
+	if changeModel && row.Engine == "dsh" && row.Model != p.Model && len(row.Turns) > 0 {
+		last := row.Turns[len(row.Turns)-1]
+		if last.Failed || last.Interrupted {
+			return nil, errors.New("dsh_reconciliation_required")
+		}
+	}
 	if changeModel {
 		row.Model = p.Model
 	}

@@ -1,0 +1,258 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+)
+
+// History-only recovery. The caller must authorize and exclude concurrent turns.
+func reconcileDSHCanvasSession(ctx context.Context, cfg *dshRuntimeConfig, root *os.Root, session acpSession) error {
+	options, _ := ctx.Value(dshSDKOptionsKey{}).(dshSDKOptions)
+	previous := options.AfterReconcile
+	options.AfterReconcile = func(ctx context.Context, p *dshProcess) error {
+		if previous != nil {
+			if err := previous(ctx, p); err != nil {
+				return err
+			}
+		}
+		return dshRecoverCanvasClaim(ctx, root, session, func(ctx context.Context, params map[string]any) (json.RawMessage, error) {
+			return p.call(ctx, "aibertai/history", params, nil)
+		})
+	}
+	return reconcileDSHSession(context.WithValue(ctx, dshSDKOptionsKey{}, options), cfg, session)
+}
+
+func dshRecoverCanvasClaim(ctx context.Context, root *os.Root, session acpSession, fetch dshConnectorHistoryFetch) error {
+	fail := func() error { return errors.New("dsh_canvas_reconciliation_required") }
+	if root == nil || session.ID != session.DSHSessionID || !validUUID(session.ID) || fetch == nil {
+		return fail()
+	}
+	marker, err := readConnectorClaim(root, "dsh-connector-dispatch/"+session.ID+"/.pending", session.ID)
+	pending := err == nil
+	var claim dshConnectorClaim
+	if pending {
+		claim, err = connectorPending(root, session.ID, marker.OperationID, marker.CallID)
+	} else if errors.Is(err, os.ErrNotExist) && len(session.Turns) > 0 {
+		last := session.Turns[len(session.Turns)-1]
+		if len(last.ToolRuns) == 0 {
+			return fail()
+		}
+		run := last.ToolRuns[len(last.ToolRuns)-1]
+		claim, err = readConnectorClaim(root, connectorClaimPath(session.ID, last.Operation, run.DSHCallID), session.ID)
+		if err == nil && (claim.State != "reconciled" || dshConnectorAssertSettled(root, session.ID) != nil) {
+			return fail()
+		}
+	} else {
+		return fail()
+	}
+	if err != nil || claim.Kind != "canvas" || (claim.State != "result_ready" && claim.State != "reconciled") {
+		return fail()
+	}
+	if len(session.Turns) == 0 {
+		return fail()
+	}
+	last := session.Turns[len(session.Turns)-1]
+	if last.Operation != claim.OperationID || len(last.ToolRuns) == 0 || last.ToolRuns[len(last.ToolRuns)-1].DSHCallID != claim.CallID {
+		return fail()
+	}
+	var matched *workspaceToolRun
+	count := 0
+	for _, turn := range session.Turns {
+		if turn.Operation != claim.OperationID {
+			continue
+		}
+		for i := range turn.ToolRuns {
+			if turn.ToolRuns[i].DSHCallID == claim.CallID {
+				matched = &turn.ToolRuns[i]
+				count++
+			}
+		}
+	}
+	if count != 1 || matched == nil || matched.Call == nil || !designWriteTool(matched.Call.Function.Name) {
+		return fail()
+	}
+	read := func(s, o, c string) (json.RawMessage, error) {
+		return dshMatchConnectorHistory(ctx, s, o, c, matched.Call.Function.Name, json.RawMessage(matched.Call.Function.Arguments), fetch)
+	}
+	if pending {
+		return dshConnectorReconcile(root, session.ID, claim.OperationID, claim.CallID, read)
+	}
+	raw, err := read(session.ID, claim.OperationID, claim.CallID)
+	var event struct {
+		Event struct {
+			Seq  *int64 `json:"seq"`
+			Data struct {
+				Message struct {
+					IsError bool `json:"isError"`
+					Content []struct {
+						Type string `json:"type"`
+						Text string `json:"text"`
+					} `json:"content"`
+				} `json:"message"`
+			} `json:"data"`
+		} `json:"event"`
+	}
+	if err != nil || json.Unmarshal(raw, &event) != nil || event.Event.Seq == nil || claim.SDKSeq == nil || *event.Event.Seq != *claim.SDKSeq || event.Event.Data.Message.IsError || len(event.Event.Data.Message.Content) != 1 || event.Event.Data.Message.Content[0].Type != "text" || claim.Output == nil || dshCanvasResultDigest(event.Event.Data.Message.Content[0].Text) != *claim.Output {
+		return fail()
+	}
+	return nil
+}
+
+func dshVerifyCanvasResult(ctx context.Context, claim dshConnectorClaim, run workspaceToolRun, fetch dshConnectorHistoryFetch) error {
+	fail := func() error { return errors.New("dsh_canvas_reconciliation_required") }
+	if claim.Kind != "canvas" || (claim.State != "result_ready" && claim.State != "reconciled") || claim.Output == nil || run.Call == nil || !dshRecoverableCanvasTool(run.Call.Function.Name) || run.DSHCallID != claim.CallID {
+		return fail()
+	}
+	raw, err := dshMatchConnectorHistory(ctx, claim.SessionID, claim.OperationID, claim.CallID, run.Call.Function.Name, json.RawMessage(run.Call.Function.Arguments), fetch)
+	var data struct {
+		Event struct {
+			Seq  *int64 `json:"seq"`
+			Data struct {
+				Message struct {
+					IsError bool `json:"isError"`
+					Content []struct {
+						Type string `json:"type"`
+						Text string `json:"text"`
+					} `json:"content"`
+				} `json:"message"`
+			} `json:"data"`
+		} `json:"event"`
+	}
+	if err != nil || json.Unmarshal(raw, &data) != nil || data.Event.Seq == nil || data.Event.Data.Message.IsError || len(data.Event.Data.Message.Content) != 1 || data.Event.Data.Message.Content[0].Type != "text" || dshCanvasResultDigest(data.Event.Data.Message.Content[0].Text) != *claim.Output || claim.State == "reconciled" && (claim.SDKSeq == nil || *claim.SDKSeq != *data.Event.Seq) {
+		return fail()
+	}
+	return nil
+}
+
+func dshRecoverableCanvasTool(name string) bool {
+	switch name {
+	case designTextTool, designCreateHTMLTool, designCommitHTMLTool, designPreparePPTXTool, "canvas_create_image":
+		return true
+	default:
+		return false
+	}
+}
+
+func dshPendingCanvasWrite(turn acpTurn) bool {
+	for _, run := range turn.ToolRuns {
+		if run.Pending && run.Call != nil && dshRecoverableCanvasTool(run.Call.Function.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+func dshCanvasRecoveryAvailable(row acpSession) bool {
+	if row.Engine != "dsh" || row.State == "running" || row.GoalRun != "" || row.Goal != nil || len(row.Turns) == 0 {
+		return false
+	}
+	last := row.Turns[len(row.Turns)-1]
+	if !last.Failed || last.DSHReconciled || (last.FailureCode != "dsh_canvas_outcome_unknown" && last.FailureCode != "dsh_runtime_exited") || len(last.ToolRuns) == 0 {
+		return false
+	}
+	run := last.ToolRuns[len(last.ToolRuns)-1]
+	return run.Call != nil && run.DSHCallID != "" && designWriteTool(run.Call.Function.Name)
+}
+
+func (h *relaySessionHost) recoverDSHCanvasSession(ctx context.Context, id string) error {
+	fail := func() error { return errors.New("dsh_canvas_reconciliation_required") }
+	if h.live == nil || h.live.store == nil || h.live.store.Root == nil || h.live.dsh == nil || !validUUID(id) {
+		return fail()
+	}
+	live := h.live
+	// The interrupted turn must be reported before evidence can release it.
+	live.mu.Lock()
+	row, ok := live.sessions[id]
+	needsReport := ok && dshCanvasRecoveryAvailable(row) && !row.Turns[len(row.Turns)-1].Acked
+	live.mu.Unlock()
+	if needsReport && h.retryPendingReport(ctx, id) != nil {
+		return fail()
+	}
+	live.mu.Lock()
+	row, ok = live.sessions[id]
+	if !ok || live.restarting || live.compacting[id] || live.activeTurns[id] != nil || !dshCanvasRecoveryAvailable(row) || !row.Turns[len(row.Turns)-1].Acked {
+		live.mu.Unlock()
+		return fail()
+	}
+	snapshot, err := json.Marshal(row)
+	if err != nil {
+		live.mu.Unlock()
+		return fail()
+	}
+	var detached acpSession
+	if json.Unmarshal(snapshot, &detached) != nil {
+		live.mu.Unlock()
+		return fail()
+	}
+	if live.compacting == nil {
+		live.compacting = map[string]bool{}
+	}
+	live.compacting[id] = true
+	live.mu.Unlock()
+	defer func() { live.mu.Lock(); delete(live.compacting, id); live.mu.Unlock() }()
+	var rebuilt acpTurn
+	var projectionSeq int64
+	options := dshSDKOptions{AfterReconcile: func(ctx context.Context, p *dshProcess) error {
+		fetch := func(ctx context.Context, params map[string]any) (json.RawMessage, error) {
+			return p.call(ctx, "aibertai/history", params, nil)
+		}
+		var events []dshConnectorHistoryEvent
+		var raws []json.RawMessage
+		through, e := dshRepairHistory(ctx, detached.DSHSessionID, -1, fetch, func(_ int64, raw json.RawMessage) error {
+			var event dshConnectorHistoryEvent
+			if json.Unmarshal(raw, &event) != nil {
+				return fail()
+			}
+			events = append(events, event)
+			raws = append(raws, raw)
+			return nil
+		})
+		if e != nil {
+			return fail()
+		}
+		last := detached.Turns[len(detached.Turns)-1]
+		verify := func(run workspaceToolRun) error {
+			claim, e := readConnectorClaim(live.store.Root, connectorClaimPath(id, last.Operation, run.DSHCallID), id)
+			if e != nil {
+				return fail()
+			}
+			if run.Call != nil && (run.Call.Function.Name == "write" || run.Call.Function.Name == "edit") {
+				seq, e := dshVerifyWorkspaceProof(ctx, claim, run.Call.Function.Name, json.RawMessage(run.Call.Function.Arguments), fetch)
+				if e != nil || claim.State == "reconciled" && (claim.SDKSeq == nil || *claim.SDKSeq != seq) {
+					return fail()
+				}
+				return nil
+			}
+			return dshVerifyCanvasResult(ctx, claim, run, fetch)
+		}
+		rebuilt, projectionSeq, e = dshRebuildPromptTurn(detached.DSHSessionID, last, events, raws, verify)
+		if e != nil || projectionSeq != through {
+			return fail()
+		}
+		return nil
+	}}
+	ctx = context.WithValue(ctx, dshSDKOptionsKey{}, options)
+	if err = reconcileDSHCanvasSession(ctx, live.dsh, live.store.Root, detached); err != nil {
+		return fail()
+	}
+	if dshConnectorAssertSettled(live.store.Root, id) != nil {
+		return fail()
+	}
+	live.mu.Lock()
+	defer live.mu.Unlock()
+	current, ok := live.sessions[id]
+	currentBytes, err := json.Marshal(current)
+	if !ok || err != nil || string(currentBytes) != string(snapshot) {
+		return fail()
+	}
+	current.Turns = append([]acpTurn(nil), current.Turns...)
+	rebuilt.DSHProjectionSeq = &projectionSeq
+	rebuilt.DSHReconciled = true
+	current.Turns[len(current.Turns)-1] = rebuilt
+	if live.save(current) != nil {
+		return fail()
+	}
+	return nil
+}

@@ -26,7 +26,9 @@ macOS 构建使用本机的 Electron ARM64 和系统 DMG 工具，生成带临�
 
 ## 员工端本机开发
 
-在 macOS 运行 `bash AIbertAI/启动员工端.command --dev`，用本地 Electron 启动源码员工端。脚本从 Go 源码构建员工端运行时和浏览器助手。开发版使用独立的 `AIbertAI Dev` 资料目录，也可通过 `AIBERTAI_USER_DATA` 指定测试目录。登录时填写私有后端地址，授权加密保存在当前账号资料目录。后续重启复用同一设备身份。需要验收合成文件时可设置 `AIBERTAI_SOURCE_WORKSPACE_FILE`。
+在 Apple Silicon Mac 上，首次从源码构建 DSH 需要 Node v25.9.0、pnpm 11.28.5、Python 3.12+、Xcode 命令行工具，以及包含固定上游提交的 DSH Git 仓库。运行 `AIbertAI/dsh-integration/build-dev-sdk.sh /path/to/dsh-checkout` 会应用该分支的补丁，编译 SDK，并在工作树下保存资源清单和摘要。可通过 `AIBERTAI_DSH_PNPM_BIN` 选择 pnpm 可执行文件，通过 `AIBERTAI_DSH_NODE_ARCHIVE` 使用已下载的官方 macOS arm64 Node 压缩包。
+
+运行 `bash AIbertAI/启动员工端.command --dev`，用工作树的 Electron 启动 DSH 员工端。工作树中没有打包应用时，双击该脚本也会走开发入口。脚本从 Go 源码构建员工端运行时和浏览器助手。开发版使用该工作树下的 `AIbertAI/.local-runtime/employee-profile`，也可通过 `AIBERTAI_USER_DATA` 指定测试目录。首次登录时填写私有后端地址，授权加密保存在当前账号资料目录。后续重启复用同一设备身份。需要验收合成文件时可设置 `AIBERTAI_SOURCE_WORKSPACE_FILE`。
 
 启动时，私有后端若拒绝刷新已失效的授权，员工端会重新打开该后端的浏览器授权页。原账号完成确认后，宿主保存新凭据并恢复启动。
 
@@ -59,6 +61,8 @@ macOS 构建使用本机的 Electron ARM64 和系统 DMG 工具，生成带临�
 安装包启动时校验包内运行时文件。客户登录时输入自己的后端地址，应用按账号保存并使用它。安装包无需为每个部署重新构建。运行时从该后端的授权目录选择第一个兼容文本模型。应用的集成允许正常访问第三方服务。打包脚本检查发包内容是否残留旧网关地址。
 
 使用 `build-employee-candidate.sh` 生成包含真实员工端界面的候选包。依次传入平台、合成文本文件或 `-`，以及输出目录。传入 `-` 时测试实际工作区。Windows 还需提供官方 Electron Windows x64 ZIP 及同目录的 `SHASUMS256.txt`。脚本输出 macOS DMG 或 Windows x64 便携 ZIP，以及 SHA-256 校验文件。回环后端地址适合在运行后端的同一台机器上验收。
+
+macOS arm64 候选包默认携带本工作树已构建的 DSH SDK。要使用单独准备的资源，设置 `AIBERTAI_DSH_RESOURCES` 为含 `manifest.json` 的目录的绝对路径，`AIBERTAI_DSH_MANIFEST_SHA256` 为该资源构建时记录的摘要。macOS 发行构建必须显式传入这两个值。打包脚本校验资源清单及目标架构，把清单摘要编译进原生宿主，签名后再次核对资源。此开发构建脚本只生成 `darwin-arm64` SDK；为 Windows 构建 DSH 需要单独准备对应的 `windows-amd64` 资源。
 
 ### 工作区目录迁移
 
@@ -104,7 +108,7 @@ macOS 覆盖安装后，如已有独立数据文件夹，先退出另一份客�
 
 ## 源码员工端的 Office 预览
 
-源码员工端使用本机回环服务和随包分发的 PDF.js 打开 PDF 与转换后的 PPTX、DOCX、XLSX。macOS 的 Office 转换使用 `/Applications/LibreOffice.app/Contents/MacOS/soffice`，也可在部署环境设置 `AIBERTAI_OFFICE_CONVERTER` 指向绝对路径。转换器使用临时工作目录和用户资料目录，在禁网沙箱中运行，无法读取用户的文档、桌面、下载和凭据目录。文档的宏、外部关联和未受支持的嵌入对象会在转换前被拒绝。缺少转换器时，可编辑导出文件仍保留在工作区，应用会标明排版校验未完成。
+源码员工端使用本机回环服务和随包分发的 PDF.js 打开 PDF 与转换后的 PPTX、DOCX、XLSX。macOS 的员工端优先使用已验证 DSH 资源包内的 LibreOffice Kit 转换 Office 文档；未配置 DSH 时可使用 `/Applications/LibreOffice.app/Contents/MacOS/soffice`。部署环境也可设置 `AIBERTAI_OFFICE_CONVERTER` 指向指定 soffice 的绝对路径。转换器使用临时工作目录和用户资料目录，在禁网沙箱中运行，无法读取用户的文档、桌面、下载和凭据目录。文档的宏、外部关联和未受支持的嵌入对象会在转换前被拒绝。缺少转换器时，可编辑导出文件仍保留在工作区，应用会标明排版校验未完成。
 
 转换器从 macOS 系统字体目录加载字体，中文图表标签可回退到黑体。字体配置和缓存随单次转换创建和清理。
 

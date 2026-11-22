@@ -1,12 +1,12 @@
 package proxy
 
 import (
+	"aibertai.local/backend/internal/web"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"aibertai.local/backend/internal/web"
 	"io"
 	"log/slog"
 	"net/http"
@@ -153,6 +153,16 @@ func (p *Proxy) Register(router chi.Router) {
 }
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Only our own pre-dispatch branches may attest that a desktop request
+	// reached neither the model nor billing. Upstream copies are stripped.
+	const notDispatched = "X-Aibertai-Model-Not-Dispatched"
+	invocationID := ""
+	if r.Header.Get("X-Aibertai-DSH-Stream") == "1" {
+		invocationID = r.Header.Get("Idempotency-Key")
+		if invocationID != "" {
+			w.Header().Set(notDispatched, invocationID)
+		}
+	}
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
 		web.HTTPError(w, r, http.StatusMethodNotAllowed)
@@ -239,11 +249,19 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		target.SessionID = sessionID
 	}
+	w.Header().Del(notDispatched)
 	var reservation Reservation
 	if p.billing != nil && target.OwnershipType != "user" {
 		logging.Bind(r.Context(), slog.String("phase", "billing_begin"))
 		reservation, err = p.billing.Begin(r.Context(), target, BillingRequest{Path: r.URL.Path, Body: body, IdempotencyKey: r.Header.Get("Idempotency-Key"), SessionID: sessionID})
 		if err != nil {
+			var rejected *resource.Error
+			if invocationID != "" && errors.As(err, &rejected) {
+				switch rejected.Code {
+				case "insufficient_credits", "invalid_session", "user_disabled", "model_limits_required":
+					w.Header().Set(notDispatched, invocationID)
+				}
+			}
 			billingError(r.Context(), w, err)
 			return
 		}

@@ -24,6 +24,7 @@ const defaultModelInputBudget = 64 << 10
 
 type selectedModelConfig struct {
 	ID                  string  `json:"id"`
+	OwnershipType       string  `json:"ownership_type"`
 	Model               string  `json:"model"`
 	DisplayName         string  `json:"display_name"`
 	CreditMultiplier    float64 `json:"credit_multiplier"`
@@ -32,6 +33,7 @@ type selectedModelConfig struct {
 	ContextWindowTokens int     `json:"context_window_tokens"`
 	MaxOutputTokens     int     `json:"max_output_tokens"`
 	SupportsReasoning   bool    `json:"supports_reasoning"`
+	SupportsVision      bool    `json:"supports_vision"`
 	StreamMode          string  `json:"stream_mode"`
 }
 

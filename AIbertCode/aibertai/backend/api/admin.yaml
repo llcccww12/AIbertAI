@@ -9543,9 +9543,27 @@ components:
       - manifest_path
       - available
       - issues
+    ExpertCanvasTools:
+      type: [array, 'null']
+      uniqueItems: true
+      description: 指定该专家在设计画布中可调用的工具。缺省或 null 继承已导入的专家配置，空数组关闭预设画布工具。
+      items:
+        type: string
+        enum: [canvas_get_document, canvas_get_selection, canvas_create_text, canvas_create_html, canvas_commit_html, canvas_prepare_pptx, design_catalog_search, design_catalog_detail, design_await_style_choice, media_get_image_model, media_generate_image, canvas_create_image]
+    ExpertDSHPlugins:
+      type: [array, 'null']
+      uniqueItems: true
+      description: 缺省或 null 继承 DSH 默认配置。空数组关闭全部可选会话插件。
+      items:
+        type: string
+        enum: [agent-instructions, time-context, tool-bash, tool-pwsh, tool-fs, tool-fs-search, tool-jobs, skill-filesystem, tool-skill, tool-ask-user, tool-todo, tool-web, present, tool-office, tool-agent-team, tool-subagent-control, tool-subagent, tool-subagent-fork, tool-plugin-manager, tool-workflow]
     ExpertManifest:
       type: object
       properties:
+        canvas_tools:
+          $ref: "#/components/schemas/ExpertCanvasTools"
+        dsh_plugins:
+          $ref: "#/components/schemas/ExpertDSHPlugins"
         expert_id:
           type: string
         name:
@@ -9828,6 +9846,10 @@ components:
     ExpertResource:
       type: object
       properties:
+        canvas_tools:
+          $ref: "#/components/schemas/ExpertCanvasTools"
+        dsh_plugins:
+          $ref: "#/components/schemas/ExpertDSHPlugins"
         avatar_path:
           type: string
           readOnly: true
@@ -9910,6 +9932,10 @@ components:
     ExpertInput:
       type: object
       properties:
+        canvas_tools:
+          $ref: "#/components/schemas/ExpertCanvasTools"
+        dsh_plugins:
+          $ref: "#/components/schemas/ExpertDSHPlugins"
         tag_ids:
           type: array
           items: {type: string, format: uuid}

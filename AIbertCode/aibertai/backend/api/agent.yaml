@@ -1218,6 +1218,40 @@ paths:
         '403': {$ref: '#/components/responses/ResourceError403'}
         '409': {$ref: '#/components/responses/ResourceError409'}
         '429': {description: 请求过于频繁，遵守 Retry-After}
+  /api/v1/sessions/{id}/model-invocations/{invocation}/receipt:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: invocation, in: path, required: true, schema: {type: string, format: uuid}}
+    post:
+      summary: 核验本人会话的模型调用持久记录
+      description: 使用本人的交互式账号授权和 session:report 权限。按会话、调用、模型及请求摘要精确匹配平台模型计费交易。recorded 表示已保存调用终态，交易用量可以仍待核对。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model_id, request_hash]
+              properties:
+                model_id: {type: string, format: uuid}
+                request_hash: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+                transaction_id: {type: string, format: uuid}
+      responses:
+        '200':
+          description: 持久账务记录状态
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [recorded, transaction_id]
+                properties:
+                  recorded: {type: boolean}
+                  transaction_id: {type: string, format: uuid, description: 平台模型的计费交易 ID}
+                  result: {type: string, enum: [succeeded, failed, cancelled], description: recorded 为 true 时返回}
+                  error_code: {type: string, description: recorded 为 true 时返回，成功时可为空}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/ResourceError403'}
+        '404': {description: 会话或匹配的调用不存在}
   /api/v1/sessions/{id}/turns:
     parameters:
       - name: id
@@ -7431,9 +7465,27 @@ components:
       - manifest_path
       - available
       - issues
+    ExpertCanvasTools:
+      type: [array, 'null']
+      uniqueItems: true
+      description: 指定该专家在设计画布中可调用的工具。缺省或 null 继承已导入的专家配置，空数组关闭预设画布工具。
+      items:
+        type: string
+        enum: [canvas_get_document, canvas_get_selection, canvas_create_text, canvas_create_html, canvas_commit_html, canvas_prepare_pptx, design_catalog_search, design_catalog_detail, design_await_style_choice, media_get_image_model, media_generate_image, canvas_create_image]
+    ExpertDSHPlugins:
+      type: [array, 'null']
+      uniqueItems: true
+      description: 缺省或 null 继承 DSH 默认配置。空数组关闭全部可选会话插件。
+      items:
+        type: string
+        enum: [agent-instructions, time-context, tool-bash, tool-pwsh, tool-fs, tool-fs-search, tool-jobs, skill-filesystem, tool-skill, tool-ask-user, tool-todo, tool-web, present, tool-office, tool-agent-team, tool-subagent-control, tool-subagent, tool-subagent-fork, tool-plugin-manager, tool-workflow]
     ExpertManifest:
       type: object
       properties:
+        canvas_tools:
+          $ref: "#/components/schemas/ExpertCanvasTools"
+        dsh_plugins:
+          $ref: "#/components/schemas/ExpertDSHPlugins"
         expert_id:
           type: string
         name:
@@ -7723,6 +7775,10 @@ components:
     ExpertResource:
       type: object
       properties:
+        canvas_tools:
+          $ref: "#/components/schemas/ExpertCanvasTools"
+        dsh_plugins:
+          $ref: "#/components/schemas/ExpertDSHPlugins"
         avatar_path:
           type: string
           readOnly: true
@@ -7798,6 +7854,10 @@ components:
     ExpertInput:
       type: object
       properties:
+        canvas_tools:
+          $ref: "#/components/schemas/ExpertCanvasTools"
+        dsh_plugins:
+          $ref: "#/components/schemas/ExpertDSHPlugins"
         tag_ids:
           type: array
           items: {type: string, format: uuid}
