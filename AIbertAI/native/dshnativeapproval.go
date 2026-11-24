@@ -114,7 +114,7 @@ func (h *relaySessionHost) dshNativeApproval(ctx context.Context, ws *websocket.
 		}
 		_, background := ctx.Value(goalRuntimeContext{}).(*goalRuntime)
 		viewerDone, _ := ctx.Value(acpViewerDoneKey{}).(<-chan struct{})
-		trusted := !manager && h.local != nil && !background && viewerDone != nil && current.permissionMode() == "bypassPermissions"
+		trusted := !manager && h.local != nil && !background && viewerDone != nil && current.permissionMode() == modeFullAccess
 		if !trusted {
 			approvalCtx := context.WithValue(ctx, dshNativeApprovalWaitKey{}, true)
 			counts, err := h.requestDSHToolApproval(approvalCtx, ws, session.ID, run.Call.ID, title, req.ToolName, kind, input, false)
@@ -143,7 +143,7 @@ func (h *relaySessionHost) dshNativeApproval(ctx context.Context, ws *websocket.
 					return false
 				default:
 				}
-				if row.permissionMode() != "bypassPermissions" {
+				if row.permissionMode() != modeFullAccess {
 					return false
 				}
 			}

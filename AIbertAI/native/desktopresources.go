@@ -306,8 +306,9 @@ func (h *relaySessionHost) setDesktopSessionModel(ctx context.Context, method st
 		return nil, errors.New("session_unavailable_for_model_change")
 	}
 	if changeModel && row.Engine == "dsh" && row.Model != p.Model && len(row.Turns) > 0 {
-		last := row.Turns[len(row.Turns)-1]
-		if last.Failed || last.Interrupted {
+		// Only an unsettled model invocation is bound to the old route's journal.
+		// Any other failure, including quota or access errors, may switch models.
+		if l.dshModelCallPending(row.ID) {
 			return nil, errors.New("dsh_reconciliation_required")
 		}
 	}

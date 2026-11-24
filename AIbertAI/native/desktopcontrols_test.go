@@ -132,6 +132,9 @@ func TestDesktopMediaGatewayUsesSessionModelAndAccountCatalog(t *testing.T) {
 	}
 }
 
+// A conversation's permission level is fixed once it has a turn, as DSH pins
+// its preset: a switch mid-turn is refused and the approval is answered
+// normally.
 func TestDesktopTrustTurnExecutesToolAndReportsAnswer(t *testing.T) {
 	const model = "c1bd985c-9f71-4b85-937a-c41b1b104d38"
 	const machine = "c2bd985c-9f71-4b85-937a-c41b1b104d38"
@@ -229,10 +232,15 @@ func TestDesktopTrustTurnExecutesToolAndReportsAnswer(t *testing.T) {
 	for {
 		message := read()
 		if message["method"] == "session/request_permission" {
-			send(3, "session/set_mode", map[string]string{"sessionId": session, "modeId": "bypassPermissions"})
+			send(3, "session/set_mode", map[string]string{"sessionId": session, "modeId": "full-access"})
+			if err := wsjson.Write(ctx, ws, map[string]any{"jsonrpc": "2.0", "id": message["id"],
+				"result": map[string]any{"outcome": map[string]string{"outcome": "selected", "optionId": "allow"}}}); err != nil {
+				t.Fatal(err)
+			}
 		}
 		if message["id"] == float64(3) {
-			allowed = message["error"] == nil
+			fault, _ := message["error"].(map[string]any)
+			allowed = fault != nil && fault["message"] == "session_mode_locked"
 		}
 		if params, ok := message["params"].(map[string]any); ok {
 			if update, ok := params["update"].(map[string]any); ok {
@@ -249,11 +257,11 @@ func TestDesktopTrustTurnExecutesToolAndReportsAnswer(t *testing.T) {
 		}
 	}
 	row, err := host.live.load(session)
-	if err != nil || row.permissionMode() != "bypassPermissions" || !row.Turns[0].Acked {
+	if err != nil || row.permissionMode() != "workspace-write" || !row.Turns[0].Acked {
 		t.Fatalf("turn or mode not retained: %v", err)
 	}
 	unrelated, err := host.live.load(other)
-	if err != nil || unrelated.permissionMode() != "auto" {
+	if err != nil || unrelated.permissionMode() != "workspace-write" {
 		t.Fatalf("approval affected another session: %v", err)
 	}
 }

@@ -682,27 +682,15 @@ func (g *dshLocalGateway) Patch(baseURL string, model selectedModelConfig, disab
 	if model.ContextWindowTokens > 0 {
 		entry["contextWindow"] = model.ContextWindowTokens
 	}
-	if model.MaxOutputTokens > 0 {
-		entry["maxTokens"] = model.MaxOutputTokens
+	provider := map[string]any{"api": api, "baseURL": baseURL, "apiKeyEnv": "DSH_AIBERTAI_LOCAL_TOKEN", "transport": "sse", "models": []any{entry}, "retryPolicy": map[string]any{"mode": "normal", "maxRetries": 0}}
+	// The output cap is the model's capability, not a configured request cap:
+	// pi-ai still sends it clamped to the room left, and compaction reserves nothing.
+	output := dshRequestOutputTokens(model)
+	if output > 0 {
+		provider["defaultMaxTokens"] = output
 	}
-	patch := []any{map[string]any{"id": "llm-pi-ai", "config": map[string]any{"providers": map[string]any{"aibertai": map[string]any{"api": api, "baseURL": baseURL, "apiKeyEnv": "DSH_AIBERTAI_LOCAL_TOKEN", "transport": "sse", "models": []any{entry}, "retryPolicy": map[string]any{"mode": "normal", "maxRetries": 0}}}}}}
-	// The SDK's 64K headroom can leave smaller routes with no valid pressure
-	// threshold. Keep its defaults wherever its 16% verbatim tail still fits.
-	const defaultHeadroom = 65536
-	headroom := defaultHeadroom
-	inputBudget := model.ContextWindowTokens - max(0, model.MaxOutputTokens)
-	if inputBudget > 0 && inputBudget-defaultHeadroom <= inputBudget*16/100 {
-		headroom = inputBudget / 5
-	}
-	summaryLimit := max(1, headroom)
-	if model.MaxOutputTokens > 0 {
-		summaryLimit = min(summaryLimit, model.MaxOutputTokens)
-	}
-	if headroom != defaultHeadroom || summaryLimit != defaultHeadroom {
-		policy := map[string]any{"provider": "aibertai", "model": model.ID, "maxTokens": summaryLimit}
-		if headroom != defaultHeadroom {
-			policy["headroomTokens"] = headroom
-		}
+	patch := []any{map[string]any{"id": "llm-pi-ai", "config": map[string]any{"providers": map[string]any{"aibertai": provider}}}}
+	if policy := dshCompactionPolicy(model.ID, model.ContextWindowTokens, output); policy != nil {
 		patch = append(patch, map[string]any{"id": "compaction-basic", "config": map[string]any{"modelPolicies": []any{policy}}})
 	}
 	patch = append(patch, map[string]any{"id": "agent-team", "config": map[string]bool{"defaultEnabled": (g.agentTeamEnabled == nil || *g.agentTeamEnabled) && !slices.Contains(disabledPlugins, "tool-agent-team")}})

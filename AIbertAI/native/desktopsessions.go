@@ -80,6 +80,24 @@ func (l *acpLive) migrateDefaultWorkspaces() error {
 	return nil
 }
 
+// fileSharedDefaultSessions moves conversations already opened in the shared
+// default workspace under its 默认工作区 project, so the sidebar lists them
+// there like new ones.
+func (l *acpLive) fileSharedDefaultSessions(projectID string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, row := range l.sessions {
+		if !row.SharedDefault || row.ProjectID != "" || row.Workspace != "selected" || row.CWD != l.workspaces.shared {
+			continue
+		}
+		row.SharedDefault, row.ProjectID = false, projectID
+		if err := l.save(row); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func openDesktopSessions(profile, serverID, machineID, cwd string) (*acpLive, error) {
 	if !filepath.IsAbs(profile) || !filepath.IsAbs(cwd) || !validUUID(serverID) || !validUUID(machineID) {
 		return nil, errors.New("invalid_desktop_session_store")
@@ -182,6 +200,7 @@ func readDesktopSession(root *os.Root, id string) (acpSession, error) {
 	if session.ID != id || !validUUID(session.Operation) || !validUUID(session.Model) || !filepath.IsAbs(session.CWD) ||
 		(session.Workspace != "" && session.Workspace != "default" && session.Workspace != "selected") ||
 		(session.ProjectID != "" && (!validUUID(session.ProjectID) || session.Workspace != "selected")) ||
+		(session.SharedDefault && (session.Workspace != "selected" || session.ProjectID != "")) ||
 		(session.State != "idle" && session.State != "error" && session.State != "running") ||
 		session.Created.IsZero() || session.Updated.Before(session.Created) ||
 		(session.State == "running" && len(session.Turns) == 0) {

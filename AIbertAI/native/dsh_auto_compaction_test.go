@@ -107,7 +107,8 @@ func TestDSHAutoCompactionReopen(t *testing.T) {
 		row.Turns = append(row.Turns, turn)
 		return turn
 	}
-	for i := 0; i < 7 && summaries.Load() == 0; i++ {
+	// The 32K window keeps 4096+2048 tokens of answer room, so the trigger is 26,624.
+	for i := 0; i < 9 && summaries.Load() == 0; i++ {
 		run(fmt.Sprintf("EARLY_HISTORY_%d\n", i)+strings.Repeat("historical material ", 1100), i > 0)
 	}
 	if summaries.Load() == 0 {

@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { MarkdownDelegateProvider, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { PartialArguments } from 'sdk/util/values/src/partial-json.ts'
 import { GenericToolCard } from 'sdk/client/ui-tool/src/client/tool/toolviews/GenericToolCard.tsx'
@@ -10,6 +10,13 @@ import { markdownLabels } from 'sdk/client/ui-chat/src/client/markdown-labels.ts
 import { zh as chatZh, en as chatEn } from 'sdk/client/ui-chat/src/client/locale.ts'
 import { zh as toolsZh, en as toolsEn } from 'sdk/client/ui-conversation/src/client/locales.ts'
 import { DetailsRow } from 'sdk/client/ui-tool/src/client/tool/toolviews/details-row.tsx'
+import { FileMutationRow } from 'sdk/client/ui-tool/src/client/tool/toolviews/file-mutation-row.tsx'
+import { SearchRow } from 'sdk/client/ui-tool/src/client/tool/toolviews/search-row.tsx'
+import { WebRow } from 'sdk/client/ui-tool/src/client/tool/toolviews/web-row.tsx'
+import { ReadRow } from 'sdk/client/ui-tool/src/client/tool/toolviews/read-row.tsx'
+import { OfficeRow } from 'sdk/client/ui-tool/src/client/tool/toolviews/office-row.tsx'
+import { BashRow } from 'sdk/client/ui-tool/src/client/tool/toolviews/bash-sample.tsx'
+import { resolveWorkspacePath } from 'sdk/util/workspace-path/src/index.ts'
 import { installIconSprite } from 'sdk/client/ui-theme/src/client/icon-sprite.ts'
 export { PresentedFileCard } from 'sdk/client/ui-deliverables/src/client/PresentedFileCard.tsx'
 export { default as deliverableStyles } from 'sdk/client/ui-deliverables/src/client/Deliverables.module.css'
@@ -91,15 +98,30 @@ export function EmployeeTodoPanel({ todos, language, terminal = false }) {
 }
 
 const noMenu = () => undefined
+const noContextMenu = () => ({ getTriggerProps: noMenu })
 const presentation = selector => selector({ settledReasoningPreview: true })
 function useDisclosure() {
   const [expanded, setExpanded] = useState(false)
   return { expanded, toggle: () => setExpanded(value => !value) }
 }
 
+// DSH's own keyed toolviews (ui-tool `tool.call.toolview` registrations). The
+// SDK falls back to GenericToolCard only for names without a dedicated row, so
+// the employee transcript does the same. Rows that need DSH-hosted slots
+// (read_image gallery, todo history, question panels) keep the generic card or
+// the workbench's own surfaces.
+const toolRows = {
+  edit: FileMutationRow, write: FileMutationRow, apply_patch: FileMutationRow,
+  grep: SearchRow, glob: SearchRow,
+  web_search: WebRow, web_fetch: WebRow,
+  read: ReadRow,
+  office_render: OfficeRow, office_convert: OfficeRow, office_recalculate: OfficeRow,
+  bash: BashRow,
+}
+
 // Adapter for the persisted and streamed ACP call records. Only the SDK's
 // result metadata can describe an applied edit; the native card owns that rule.
-function Tool({ call, cwd, openFile, t, locale, interrupted }) {
+function Tool({ call, sessionId, cwd, openFile, t, locale, interrupted }) {
   const name = call.name ?? call.title
   const block = useMemo(() => {
     const input = call.input ?? call.rawInput
@@ -118,6 +140,14 @@ function Tool({ call, cwd, openFile, t, locale, interrupted }) {
       content: output ? [{ type: 'text', text: output }] : [],
       meta: call.dshResultMeta, isError: call.status === 'failed' || call.isError === true }
   }, [call, name, locale, interrupted])
+  const Row = toolRows[name]
+  const resolveFilePath = useCallback(path => resolveWorkspacePath(cwd, path), [cwd])
+  const useSessions = useCallback(select => select({ byId: { [sessionId]: { cwd } } }), [sessionId, cwd])
+  if (Row) {
+    return <Row toolName={name} callId={call.id} phase={'kind' in block ? 'result' : 'start'} block={block}
+      cwd={cwd} openFile={openFile} sessionId={sessionId} useSessions={useSessions}
+      useContextMenu={noContextMenu} resolveFilePath={resolveFilePath} useDisclosure={useDisclosure} t={t} />
+  }
   const Card = detailsTools.has(name) ? DetailsRow : GenericToolCard
   return <Card toolName={name} block={block} cwd={cwd} openFile={openFile}
     getFileTriggerProps={noMenu} useDisclosure={useDisclosure} t={t} />
@@ -184,7 +214,7 @@ export default function NativeReply({ message, sessionId, toolCalls, streaming, 
     if (part.type === 'tool_call') {
       const call = toolCalls[part.toolCallId]
       return call ? <Fragment key={part.toolCallId}>
-        <div data-dsh-tool={call.name ?? call.title}>{renderHostTool?.(call) ?? <Tool call={call} cwd={cwd} openFile={openFile} t={t} locale={locale} interrupted={interrupted} />}</div>
+        <div data-dsh-tool={call.name ?? call.title}>{renderHostTool?.(call) ?? <Tool call={call} sessionId={sessionId} cwd={cwd} openFile={openFile} t={t} locale={locale} interrupted={interrupted} />}</div>
         {renderToolAccessory?.(call)}</Fragment> : null
     }
     return renderHostPart(part)

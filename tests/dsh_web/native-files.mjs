@@ -21,6 +21,8 @@ const file = { path: '设计/结果.txt', fileRef: { device: 'fixture-device', p
 const directory = { name: '设计', path: '设计', kind: 'directory', children: [
   { path: file.path, name: '结果.txt', kind: 'file', file, children: [], operation: 'modified' },
 ] }
+// Platform data directories stay out of the tree unless hidden entries are shown, as in DSH.
+const internal = { name: '.aibertai', path: '.aibertai', kind: 'directory', children: [] }
 let selected, paged, refreshes = 0
 const labels = key => key
 function Fixture() {
@@ -28,7 +30,7 @@ function Fixture() {
   const [query, onQuery] = React.useState('')
   const [fileScope, onScope] = React.useState('all')
   return jsx.jsx(Files, {
-    sessionId: 'session-1', cwd: '/work', label: labels, language: 'zh', nodes: [directory], outsideNodes: [],
+    sessionId: 'session-1', cwd: '/work', label: labels, language: 'zh', nodes: [internal, directory], outsideNodes: [],
     directories: { '设计': { data: { nextOffset: 200 } } }, expanded, query, fileScope, git: true,
     selected: file.path, dragProps: node => ({ draggable: node.kind === 'file' }),
     onToggle: path => expand(prev => prev.has(path) ? new Set() : new Set([path])), onSelect: node => { selected = node },
@@ -45,6 +47,12 @@ try {
   assert.equal(refreshes, 1)
   await click('[data-files-search-toggle]')
   assert.equal(find('[data-files-search]'), document.activeElement)
+  assert.equal(find('[data-path=".aibertai"]'), null, 'hidden entries are left out by default')
+  await click('[data-files-show-hidden]')
+  assert.ok(find('[data-path=".aibertai"]'), 'the eye toggle shows hidden entries')
+  assert.equal(find('[data-files-show-hidden]').getAttribute('aria-pressed'), 'true')
+  await click('[data-files-show-hidden]')
+  assert.equal(find('[data-path=".aibertai"]'), null)
   await click('[data-files-entry="directory"] button')
   await click('[data-files-entry="file"] button')
   assert.equal(selected.file, file, 'keep the original host file reference and session identity')

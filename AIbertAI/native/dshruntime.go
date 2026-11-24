@@ -20,7 +20,9 @@ import (
 // The installer supplies the fixed SDK profile and persistence location; the
 // router supplies the authorized model route. Neither is enabled by default.
 type dshRuntimeConfig struct {
-	VerifiedResourceRoot   string
+	VerifiedResourceRoot string
+	// JournalRoot holds each session's model-call journal (<root>/<session>/pending.json).
+	JournalRoot            string
 	SharedPluginHome       string
 	ResolveDisabledPlugins func(context.Context, string) ([]string, error)
 	LeasePool              *dshLeasePool
@@ -41,6 +43,30 @@ type dshInstalledRuntime struct {
 	Patch             string
 	Env               []string
 	Provider          func(context.Context, acpSession) (string, string, error)
+}
+
+// dshTrustedLaunchKey marks a turn whose SDK child may start with a writable
+// DSH preset: a local, interactive turn whose caller holds files:write.
+// promptACP sets it; nothing else does.
+type dshTrustedLaunchKey struct{}
+
+// dshSessionPermissionMode is the DSH permission preset a fresh SDK session is
+// pinned to (DSH records it in the session and keeps it on resume), following
+// the conversation's level: 仅可查看 is read-only, 工作区内修改 is DSH's
+// default workspace-write, and 完全权限 is DSH's danger-full-access, whose
+// approval policy "never" runs tools without asking the host. Launches that
+// are not trusted (remote relay, background goals, callers without
+// files:write) stay read-only and escalate through the host.
+func dshSessionPermissionMode(ctx context.Context, session acpSession) string {
+	if trusted, _ := ctx.Value(dshTrustedLaunchKey{}).(bool); trusted {
+		switch session.permissionMode() {
+		case modeWorkspaceWrite:
+			return "workspace-write"
+		case modeFullAccess:
+			return "danger-full-access"
+		}
+	}
+	return "read-only"
 }
 
 func (r dshInstalledRuntime) config() (*dshRuntimeConfig, error) {
@@ -64,7 +90,7 @@ func (r dshInstalledRuntime) config() (*dshRuntimeConfig, error) {
 		}
 		cmd := exec.CommandContext(ctx, r.Executable, args...)
 		cmd.Dir = session.CWD
-		cmd.Env = append(append([]string{}, r.Env...), "DSH_HOME="+r.Home, "DSH_TELEMETRY_DISABLED=1", "DSH_PERMISSION_MODE=read-only")
+		cmd.Env = append(append([]string{}, r.Env...), "DSH_HOME="+r.Home, "DSH_TELEMETRY_DISABLED=1", "DSH_PERMISSION_MODE="+dshSessionPermissionMode(ctx, session))
 		if session.ExpertID == "" && r.StandardSkillsDir != "" {
 			cmd.Env = append(cmd.Env, "DSH_BUNDLED_SKILL_DIR="+r.StandardSkillsDir)
 		}
@@ -222,11 +248,15 @@ func (p *dshProcess) boundaryCall(ctx context.Context, method string, params map
 func dshWorkspaceToolReason(err error) string {
 	switch {
 	case strings.Contains(err.Error(), "dsh_connector_outcome_unknown"):
-		return "write_outcome_unknown: the previous file change may or may not have been applied. Do not repeat it blindly; read the file first, then decide whether to change it again."
+		return "write_outcome_unknown: this file change was interrupted and its outcome is unknown; it may or may not have been applied. Read the file first, then decide whether to change it again."
 	case strings.Contains(err.Error(), "dsh_connector_dispatch_uncertain"):
-		return "write_not_dispatched: the change was refused before it ran because an earlier write is unverified. Read the file to confirm its state, then continue."
+		return "write_not_dispatched: this change was not applied because another write in this turn is still unverified. Read the file to confirm its state, then continue."
 	case strings.Contains(err.Error(), "dsh_workspace_changed"), strings.Contains(err.Error(), "dsh_workspace_conflict"):
 		return "write_conflict: the file changed since it was read, so this change was not applied. Re-read and retry."
+	case errors.Is(err, errWorkspaceReadOnly):
+		return "read_only: this conversation is read-only, so the change was not applied. If the change is needed, call the tool again with sandbox_permissions \"workspace-write\" and a justification so the user can approve it, or explain the limitation to the user."
+	case errors.Is(err, errWorkspacePath):
+		return "outside_workspace: write and edit only change files inside this conversation's workspace, so this change was not applied. Use a path inside the workspace, or change the file with bash; outside the workspace bash needs sandbox_permissions with a justification unless the session already has full access."
 	}
 	return "workspace_mutation_denied: the change was not applied. Choose another approach or explain the limitation to the user."
 }
@@ -236,9 +266,9 @@ func dshWorkspaceToolReason(err error) string {
 func dshHostToolReason(err error) string {
 	switch {
 	case strings.Contains(err.Error(), "dsh_canvas_outcome_unknown"):
-		return "canvas_outcome_unknown: the previous canvas write may or may not have been applied. Do not repeat it; verify the canvas, try a different approach, or explain the limitation to the user."
+		return "canvas_outcome_unknown: this canvas write was interrupted and its outcome is unknown; it may or may not have been applied. Read the canvas first. Repeat the write only if it is missing, otherwise continue from what is there or explain the limitation to the user."
 	case strings.Contains(err.Error(), "dsh_connector_outcome_unknown"), strings.Contains(err.Error(), "dsh_connector_dispatch_uncertain"):
-		return "connector_outcome_unknown: the previous connector call may or may not have completed. Do not repeat it; try another tool or explain the limitation to the user."
+		return "connector_outcome_unknown: this connector call was interrupted and its outcome is unknown; the remote side may have completed it. Verify the remote state or ask the user before repeating it."
 	case strings.Contains(err.Error(), "tool_approval_unavailable"), strings.Contains(err.Error(), "tool_permission_cancelled"):
 		return "tool_denied: the approval channel was unavailable or the call was cancelled. The tool did not run; choose another approach or ask the user."
 	case strings.Contains(err.Error(), "dsh_canvas_atomic_guard_unavailable"), strings.Contains(err.Error(), "dsh_canvas_changed"), strings.Contains(err.Error(), "dsh_canvas_session_changed"):

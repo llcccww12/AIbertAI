@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 )
 
 // dshStuckModelOnlyTurn reports a failed turn that ran no tools and is blocked
@@ -101,4 +103,16 @@ func (h *relaySessionHost) settleStuckDSHModelTurn(ctx context.Context, id strin
 	item := &current.Turns[len(current.Turns)-1]
 	item.FailureCode, item.DSHModelFailureSettled = code, true
 	return live.save(current)
+}
+
+// dshModelCallPending reports whether the session's model-call journal still
+// holds an unsettled invocation. Such a call binds the session to its model
+// route and must be reconciled (its receipt rechecked) before another prompt
+// can be dispatched; any other earlier failure never blocks the next message.
+func (l *acpLive) dshModelCallPending(id string) bool {
+	if l.dsh == nil || l.dsh.JournalRoot == "" || !validUUID(id) {
+		return false
+	}
+	_, err := os.Lstat(filepath.Join(l.dsh.JournalRoot, id, "pending.json"))
+	return err == nil || !errors.Is(err, os.ErrNotExist)
 }

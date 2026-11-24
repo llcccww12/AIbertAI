@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Menu } from 'sdk/client/ui-primitives/src/Menu.tsx'
-import { IconChevronDownOutlineRegular } from 'sdk/client/ui-primitives/src/icons/index.tsx'
+import { IconChevronDownOutlineRegular, IconEyeOffOutlineRegular, IconEyeOutlineRegular } from 'sdk/client/ui-primitives/src/icons/index.tsx'
 import { FilesBody } from 'sdk/client/ui-sidebar-files/src/client/FilesBody.tsx'
 import { FileTree } from 'sdk/client/ui-sidebar-files/src/client/FileTree.tsx'
 import { en, zh } from 'sdk/client/ui-sidebar-files/src/client/locales.ts'
@@ -25,15 +25,27 @@ const emptyTrigger = { getTriggerProps: () => ({}) }
 const placeBeside = () => undefined
 
 // Keep the original node with its session/device grant. Display paths alone cannot open files.
-function entriesOf(nodes, expanded, entries = [], depth = 1, visible = true) {
+// Like DSH's navigator (search-rules isHiddenEntry, showHidden: false), dot
+// entries and everything below them are left out unless hidden entries are shown.
+function entriesOf(nodes, expanded, showHidden, entries = [], depth = 1, visible = true) {
   for (const node of nodes) {
+    const hidden = node.name.startsWith('.')
+    if (hidden && !showHidden) continue
     entries.push({
       path: node.path, name: node.name, node, depth, visible,
-      meta: { kind: node.kind === 'symlink' ? 'other' : node.kind, hidden: node.name.startsWith('.') },
+      meta: { kind: node.kind === 'symlink' ? 'other' : node.kind, hidden },
     })
-    entriesOf(node.children, expanded, entries, depth + 1, visible && expanded.has(node.path))
+    entriesOf(node.children, expanded, showHidden, entries, depth + 1, visible && expanded.has(node.path))
   }
   return entries
+}
+
+const showHiddenKey = 'aibertai.files.showHidden'
+function readShowHidden() {
+  try { return globalThis.localStorage?.getItem(showHiddenKey) === '1' } catch { return false }
+}
+function saveShowHidden(value) {
+  try { globalThis.localStorage?.setItem(showHiddenKey, value ? '1' : '0') } catch {}
 }
 
 function moveFocus(event, entry, expanded, toggle) {
@@ -78,11 +90,11 @@ function pagination(pane, path) {
   </button>
 }
 
-function EmployeeTree({ nodes, pane, translate }) {
+function EmployeeTree({ nodes, pane, translate, showHidden }) {
   const { expanded, directories, fileScope, query, label } = pane
   const listing = fileScope === 'all' && !query.trim()
   const [focusPath, setFocus] = useState()
-  const entries = useMemo(() => entriesOf(nodes, expanded), [nodes, expanded])
+  const entries = useMemo(() => entriesOf(nodes, expanded, showHidden), [nodes, expanded, showHidden])
   const visible = entries.filter(entry => entry.visible && entry.meta.kind !== 'other')
   const currentRef = useCallback(element => element?.scrollIntoView?.({ block: 'nearest' }), [])
   const activePath = [focusPath, pane.selected].find(path => visible.some(entry => entry.path === path)) ?? visible[0]?.path
@@ -121,6 +133,8 @@ export default function EmployeeFiles(pane) {
   const { sessionId, cwd, fileScope, onScope, query, onQuery, label } = pane
   const translate = key => (pane.language === 'en' ? en : zh)[key] ?? key
   const [searchShown, setSearchShown] = useState(Boolean(query))
+  const [showHidden, setShowHidden] = useState(readShowHidden)
+  const toggleHidden = () => setShowHidden(value => { saveShowHidden(!value); return !value })
   const input = useRef(null)
   const commands = useRef(null)
   const focus = () => { setSearchShown(true); input.current?.focus() }
@@ -149,16 +163,23 @@ export default function EmployeeFiles(pane) {
     {searchShown && <div className={styles.searchBar}><div className={styles.searchField}>
       <input type="search" ref={input} value={query} className={styles.searchInput} data-files-search
         aria-label={translate('search.placeholder')} placeholder={translate('search.placeholder')} onChange={event => onQuery(event.target.value)} />
+      <button type="button" className={styles.tool + ' ' + styles.searchTool} aria-pressed={showHidden}
+        aria-label={translate('search.showHidden')} title={translate('search.showHidden')} data-files-show-hidden
+        onClick={toggleHidden}>
+        {showHidden ? <IconEyeOutlineRegular /> : <IconEyeOffOutlineRegular />}
+      </button>
     </div></div>}
     <div className="dsh-employee-file-scroll" aria-busy={pane.loading}>
       {pane.loading && !pane.directories['']?.loading && !pane.nodes.length && <p role="status">{translate('loading')}</p>}
       {pane.error && <div role="alert">{label('workspace.files.loadError')} <button type="button" onClick={pane.onRefresh}>{label('session.retry')}</button></div>}
       {(pane.nodes.length > 0 || pane.directories['']?.loading || pane.directories['']?.error) &&
-        <EmployeeTree nodes={pane.nodes} pane={pane} translate={translate} />}
+        <EmployeeTree nodes={pane.nodes} pane={pane} translate={translate} showHidden={showHidden} />}
+      {!showHidden && pane.nodes.length > 0 && pane.nodes.every(node => node.name.startsWith('.')) &&
+        <p className="files-tree-empty" data-files-empty-hidden>{translate('emptyHidden')}</p>}
       {pagination(pane, '')}
       {pane.outsideNodes.length > 0 && <>
         <p className="files-tree-section">{label('workspace.fileTree.outside')}</p>
-        <EmployeeTree nodes={pane.outsideNodes} pane={pane} translate={translate} />
+        <EmployeeTree nodes={pane.outsideNodes} pane={pane} translate={translate} showHidden={showHidden} />
       </>}
       {!pane.nodes.length && !pane.outsideNodes.length && !pane.loading && !pane.error && !pane.directories['']?.error &&
         <p className="files-tree-empty">{label(query ? 'workspace.fileTree.noResults' : fileScope === 'session' ? 'workspace.fileTree.noSessionChanges'

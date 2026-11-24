@@ -27,6 +27,9 @@ const maxWorkspaceTextPreview = 1 << 20
 
 var errWorkspacePath = errors.New("invalid_path")
 
+// errWorkspaceReadOnly refuses a write in a 仅可查看 conversation.
+var errWorkspaceReadOnly = errors.New("workspace_read_only")
+
 func workspaceRelative(value string) (string, error) {
 	if value == "" || len(value) > 4096 || path.Clean(value) != value ||
 		strings.ContainsAny(value, "\\:") || strings.ContainsFunc(value, unicode.IsControl) {

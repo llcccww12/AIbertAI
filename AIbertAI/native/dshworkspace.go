@@ -184,8 +184,18 @@ func (h *relaySessionHost) dshWorkspaceBridge(ctx context.Context, ws *websocket
 			input["justification"] = *args.Justification
 			title = *args.Justification
 		}
-		approvalCtx := context.WithValue(ctx, dshNativeApprovalWaitKey{}, true)
-		counts, err := h.requestDSHToolApproval(approvalCtx, ws, session.ID, run.Call.ID, title, req.Name, "edit", input, true)
+		// As DSH's file sandbox: read-only refuses a write unless the model asks
+		// to escalate, workspace-write changes the workspace without asking,
+		// and any escalation is the user's call (完全权限 approves it).
+		mode := current.permissionMode()
+		if mode == modeReadOnly && args.Permissions == nil {
+			return nil, errWorkspaceReadOnly
+		}
+		var counts reportedPermissions
+		if mode != modeWorkspaceWrite || args.Permissions != nil {
+			approvalCtx := context.WithValue(ctx, dshNativeApprovalWaitKey{}, true)
+			counts, err = h.requestDSHToolApproval(approvalCtx, ws, session.ID, run.Call.ID, title, req.Name, "edit", input, true)
+		}
 		turn.Permissions.Asked += counts.Asked
 		turn.Permissions.Allowed += counts.Allowed
 		turn.Permissions.Denied += counts.Denied

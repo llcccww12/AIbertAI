@@ -240,17 +240,25 @@ func (l *acpLive) reserveTurn(id, op, clientID, prompt string, attachments []acp
 		}
 		return session, index, true, nil
 	}
+	// DSH never locks a conversation because an earlier turn failed: the agent
+	// loop records the failure, returns to idle and admits the next message.
+	// The guarantees this gate used to provide are enforced where they belong:
+	//   - the failed turn's SDK child is discarded, so no old reply can run on;
+	//   - a resumed turn reconciles any pending model invocation before it
+	//     prompts (runDSHSessionWithProfile), and fails that attempt only;
+	//   - on resume the SDK closes every unanswered tool call with an
+	//     "outcome unknown, verify before retrying" result (core/session repair),
+	//     so the model, not a lock, decides what to re-check;
+	//   - a replayed side-effecting call is still refused by its durable claim.
+	// The failed turn stays on disk unchanged, and the explicit recheck action
+	// remains available for billing receipts.
+	//
+	// One case still waits: the last turn's own model call is unsettled in the
+	// gateway journal and promptACP could not settle it just now. That call
+	// cannot be dispatched past, and keeping it the last turn is what lets the
+	// "重新核验" receipt check (and settleStuckDSHModelTurn) resolve it.
 	if n := len(session.Turns); !background && session.Engine == "dsh" && n > 0 {
-		last := session.Turns[n-1]
-		workspaceFailure := dshRecoverableWorkspaceFailure(last.FailureCode)
-		reconciled := last.DSHReconciled && (workspaceFailure || dshRecoverablePromptFailure(last.FailureCode) ||
-			last.FailureCode == "dsh_canvas_outcome_unknown" || last.FailureCode == "dsh_connector_reconciliation_required")
-		reviewed := (workspaceFailure || last.FailureCode == "dsh_canvas_outcome_unknown") && last.DSHUserReviewed
-		notAdmitted := last.DSHInputNotAdmitted && !last.DSHHasImages && len(last.ToolRuns) == 0
-		// A tool outcome never blocks the next message. The claim stays on disk as
-		// evidence, and only that same call is refused if it is replayed.
-		toolOutcome := last.FailureCode == "dsh_write_outcome_unknown" || last.FailureCode == "dsh_canvas_outcome_unknown" || last.FailureCode == "dsh_connector_outcome_unknown"
-		if last.Failed && !reconciled && !reviewed && !notAdmitted && !toolOutcome && !(last.DSHModelFailureSettled && dshTerminalModelFailure(last.FailureCode)) || last.Interrupted && !last.DSHCancelConfirmed {
+		if last := session.Turns[n-1]; (dshPendingModelFailure(last) || dshStuckModelOnlyTurn(last)) && l.dshModelCallPending(id) {
 			return session, 0, false, errors.New("dsh_reconciliation_required")
 		}
 	}
@@ -371,15 +379,13 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 		if err := h.preflightOwnedModel(turnCtx, id, op); err != nil {
 			return nil, err
 		}
+		// Settle a stale earlier failure when its evidence allows. This only
+		// tidies receipts; the next message is admitted either way.
+		_ = h.settleStuckDSHModelTurn(ctx, id)
+		_ = h.settleStaleCanvasTurn(id)
 	}
 	session, index, retry, err := live.reserveTurn(id, op, clientID, prompt, files, cancel, background, queued)
 	if errors.Is(err, errSessionReportPending) && h.retryPendingReport(ctx, id) == nil {
-		session, index, retry, err = live.reserveTurn(id, op, clientID, prompt, files, cancel, background, queued)
-	}
-	if err != nil && err.Error() == "dsh_reconciliation_required" && h.settleStuckDSHModelTurn(ctx, id) == nil {
-		session, index, retry, err = live.reserveTurn(id, op, clientID, prompt, files, cancel, background, queued)
-	}
-	if err != nil && err.Error() == "dsh_reconciliation_required" && h.settleStaleCanvasTurn(id) == nil {
 		session, index, retry, err = live.reserveTurn(id, op, clientID, prompt, files, cancel, background, queued)
 	}
 	if err != nil {
@@ -509,6 +515,9 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 						}
 						if !background && allowWrites {
 							turnCtx = context.WithValue(turnCtx, dshWorkspaceBridgeKey{}, h.dshWorkspaceBridge(turnCtx, ws, session, &turn))
+							if h.local != nil {
+								turnCtx = context.WithValue(turnCtx, dshTrustedLaunchKey{}, true)
+							}
 						}
 						project := func(update map[string]any) error {
 							live.mu.Lock()
@@ -1316,7 +1325,7 @@ func (h *relaySessionHost) requestToolApproval(ctx context.Context, ws *websocke
 
 	if allowBypass && h.local != nil && h.live != nil {
 		row, err := h.live.load(sessionID)
-		if err == nil && row.permissionMode() == "bypassPermissions" {
+		if err == nil && row.permissionMode() == modeFullAccess {
 			return reportedPermissions{}, publishCall(ctx)
 		}
 	}

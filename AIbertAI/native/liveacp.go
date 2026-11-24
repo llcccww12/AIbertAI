@@ -52,33 +52,36 @@ func (l *acpLive) authorization(ctx context.Context) (authorization, error) {
 
 type acpSession struct {
 	desktopSessionPresentation
-	ContextSummary       *desktopContextSummary `json:"contextSummary,omitempty"`
-	Goal                 *desktopGoal           `json:"goal,omitempty"`
-	LastGoalRequest      string                 `json:"lastGoalRequest,omitempty"`
-	GoalRun              string                 `json:"goalRun,omitempty"`
-	ID                   string                 `json:"sessionId"`
-	Engine               string                 `json:"engine,omitempty"`
-	DSHSessionID         string                 `json:"dshSessionId,omitempty"`
-	AgentTeamEnabled     *bool                  `json:"agentTeamEnabled,omitempty"`
-	AgentTeamAvailable   *bool                  `json:"agentTeamAvailable,omitempty"`
-	CWD                  string                 `json:"cwd"`
-	Workspace            string                 `json:"workspace,omitempty"`
-	ProjectID            string                 `json:"projectId,omitempty"`
-	ExpertID             string                 `json:"expertId,omitempty"`
-	ExpertName           string                 `json:"expertName,omitempty"`
-	Model                string                 `json:"model,omitempty"`
-	Mode                 string                 `json:"mode,omitempty"`
-	MediaImageModelID    string                 `json:"mediaImageModelId,omitempty"`
-	MediaVideoModelID    string                 `json:"mediaVideoModelId,omitempty"`
-	Thinking             *modelThinking         `json:"thinking,omitempty"`
-	Created              time.Time              `json:"createdAt"`
-	Updated              time.Time              `json:"updatedAt"`
-	State                string                 `json:"state"`
-	Operation            string                 `json:"operationId,omitempty"`
-	Turns                []acpTurn              `json:"turns,omitempty"`
-	ConnectorPreferences *connectorPreferences  `json:"connectorPreferences,omitempty"`
-	ResourceRevision     int                    `json:"resourceRevision,omitempty"`
-	Queue                desktopSessionQueue    `json:"queue,omitzero"`
+	ContextSummary     *desktopContextSummary `json:"contextSummary,omitempty"`
+	Goal               *desktopGoal           `json:"goal,omitempty"`
+	LastGoalRequest    string                 `json:"lastGoalRequest,omitempty"`
+	GoalRun            string                 `json:"goalRun,omitempty"`
+	ID                 string                 `json:"sessionId"`
+	Engine             string                 `json:"engine,omitempty"`
+	DSHSessionID       string                 `json:"dshSessionId,omitempty"`
+	AgentTeamEnabled   *bool                  `json:"agentTeamEnabled,omitempty"`
+	AgentTeamAvailable *bool                  `json:"agentTeamAvailable,omitempty"`
+	CWD                string                 `json:"cwd"`
+	Workspace          string                 `json:"workspace,omitempty"`
+	// SharedDefault marks a session opened in the shared default workspace
+	// (DSH default-workspace). It is still a granted "selected" folder.
+	SharedDefault        bool                  `json:"sharedDefaultWorkspace,omitempty"`
+	ProjectID            string                `json:"projectId,omitempty"`
+	ExpertID             string                `json:"expertId,omitempty"`
+	ExpertName           string                `json:"expertName,omitempty"`
+	Model                string                `json:"model,omitempty"`
+	Mode                 string                `json:"mode,omitempty"`
+	MediaImageModelID    string                `json:"mediaImageModelId,omitempty"`
+	MediaVideoModelID    string                `json:"mediaVideoModelId,omitempty"`
+	Thinking             *modelThinking        `json:"thinking,omitempty"`
+	Created              time.Time             `json:"createdAt"`
+	Updated              time.Time             `json:"updatedAt"`
+	State                string                `json:"state"`
+	Operation            string                `json:"operationId,omitempty"`
+	Turns                []acpTurn             `json:"turns,omitempty"`
+	ConnectorPreferences *connectorPreferences `json:"connectorPreferences,omitempty"`
+	ResourceRevision     int                   `json:"resourceRevision,omitempty"`
+	Queue                desktopSessionQueue   `json:"queue,omitzero"`
 	archivedTurns        int
 }
 
@@ -136,6 +139,7 @@ func (l *acpLive) createSessionWithTeam(operation, cwd, projectID, selected stri
 		return "", errors.New("invalid_session_parameters")
 	}
 	kind := ""
+	shared := false
 	if l.cloudWorkspace != "" && cwd == "" && projectID == "" {
 		cwd = l.cloudWorkspace
 	}
@@ -153,7 +157,13 @@ func (l *acpLive) createSessionWithTeam(operation, cwd, projectID, selected stri
 		kind = "selected"
 		if cwd == "" {
 			kind = "default"
+			// DSH opens one shared default workspace. If it cannot be
+			// prepared, fall back to a private per-session folder.
+			if path, err := l.workspaces.sharedDefault(); err == nil {
+				cwd, kind, projectID = path, "selected", l.workspaces.defaultProjectID()
+			}
 		}
+		shared = kind == "selected" && projectID == "" && l.workspaces.shared != "" && cwd == l.workspaces.shared
 	}
 	if id := l.operations[operation]; id != "" {
 		old := l.sessions[id]
@@ -186,7 +196,10 @@ func (l *acpLive) createSessionWithTeam(operation, cwd, projectID, selected stri
 			preference = &fallback
 		}
 	}
-	if err := l.save(acpSession{ID: id, Engine: engine, DSHSessionID: dshID, AgentTeamEnabled: teamEnabled, AgentTeamAvailable: teamAvailable, CWD: cwd, Workspace: kind, ProjectID: projectID,
+	if mode == "" {
+		mode = modeWorkspaceWrite
+	}
+	if err := l.save(acpSession{ID: id, Engine: engine, DSHSessionID: dshID, AgentTeamEnabled: teamEnabled, AgentTeamAvailable: teamAvailable, CWD: cwd, Workspace: kind, SharedDefault: shared, ProjectID: projectID,
 		Model: selected, Thinking: preference, Mode: mode, MediaImageModelID: media.Image, MediaVideoModelID: media.Video, ExpertID: expert.ID, ExpertName: expert.Name, Created: now, Updated: now, State: "idle", Operation: operation, ConnectorPreferences: &prefs}); err != nil {
 		return "", err
 	}
@@ -348,7 +361,6 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 		}
 		var result any
 		var fault error
-		var trusted *acpPermissionWaiter
 		code := -32602
 		if !initialized {
 			var p struct{ ProtocolVersion int }
@@ -674,19 +686,7 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 						result, fault = h.setDesktopSessionExpert(ctx, in.Params)
 					}
 				case "session/set_mode":
-					var p struct{ SessionID, ModeID string }
-					waitingID := ""
-					if json.Unmarshal(in.Params, &p) == nil && p.ModeID == "bypassPermissions" {
-						permissions.Range(func(key, value any) bool {
-							wait := value.(*acpPermissionWaiter)
-							if wait.sessionID == p.SessionID {
-								waitingID, trusted = wait.sessionID, wait
-								return false
-							}
-							return true
-						})
-					}
-					result, fault = h.setACPPermissionMode(r, in.Params, waitingID)
+					result, fault = h.setACPPermissionMode(r, in.Params)
 				case "_monkeyai/session/goal":
 					if h.local == nil || h.live == nil || h.acpScope(r, "session:control") != nil {
 						fault = errRelayAccess
@@ -868,9 +868,6 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 		if wsjson.Write(ctx, ws, reply) != nil {
 			return
 		}
-		if fault == nil && trusted != nil {
-			trusted.resolve(acpPermissionReply{Result: json.RawMessage(`{"outcome":{"outcome":"selected","optionId":"allow"}}`)})
-		}
 		if viewer && initialized && in.Method == "initialize" {
 			h.goals.addViewer(ws)
 			if h.interactions != nil {
@@ -882,7 +879,7 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 
 func (row acpSession) workspaceMetadata() map[string]any {
 	title, source := row.sessionTitle()
-	metadata := map[string]any{"cwd": row.CWD, "model": row.Model, "thinking": row.Thinking, "mode": row.permissionMode(), "mediaImageModelId": row.MediaImageModelID, "mediaVideoModelId": row.MediaVideoModelID, "expertId": row.ExpertID, "configurationRevision": row.ResourceRevision, "isDefaultWorkspace": row.Workspace != "selected", "projectId": row.ProjectID, "status": row.State, "goalModeAvailable": row.Workspace != "", "goal": goalView(row),
+	metadata := map[string]any{"cwd": row.CWD, "model": row.Model, "thinking": row.Thinking, "mode": row.permissionMode(), "mediaImageModelId": row.MediaImageModelID, "mediaVideoModelId": row.MediaVideoModelID, "expertId": row.ExpertID, "configurationRevision": row.ResourceRevision, "isDefaultWorkspace": row.Workspace != "selected" || row.SharedDefault, "projectId": row.ProjectID, "status": row.State, "goalModeAvailable": row.Workspace != "", "goal": goalView(row),
 		"title": title, "titleSource": source, "pinned": row.Pinned, "archivedAt": row.ArchivedAt, "readAt": row.ReadAt}
 	if row.Engine == "dsh" {
 		row.addDSHTodoMetadata(metadata)

@@ -37048,7 +37048,7 @@ const pse = (e, t) => ({
   title: "",
   thinking: null,
   configuring: !1,
-  mode: "auto",
+  mode: "workspace-write",
   status: "created",
   messages: [],
   toolCalls: {},
@@ -52759,7 +52759,7 @@ const zO = 20,
               expertId: Ce.expertId,
               thinking: Ce.thinking ?? null,
               design: Ie,
-              mode: me.modes?.currentModeId ?? "auto",
+              mode: me.modes?.currentModeId ?? "workspace-write",
             },
           },
         })),
@@ -114585,10 +114585,10 @@ const qwt = {
           "此操作尚不能在远程窗口执行，请在对应设备上操作。",
         idempotency_conflict: "请求标识已用于其他内容，请先确认原操作的结果。",
         outcome_unknown: "操作结果尚未确认，请先查看会话状态，避免重复提交。",
-        dsh_write_outcome_unknown: "文件操作结果未知，请先检查目标文件，确认后再继续。",
-        dsh_canvas_outcome_unknown: "画布操作结果未知，画布可能已经发生变化。请核验画布后再继续，避免重复操作。",
-        dsh_connector_outcome_unknown: "连接器结果未知，远端可能已经执行。请核实远端结果，避免重复操作。",
-        dsh_connector_reconciliation_required: "工具的执行结果需要核验。请保留当前会话，在恢复前先检查已有文件和画布。",
+        dsh_write_outcome_unknown: "文件操作结果未知。可以直接继续，模型会先读取目标文件再决定是否重改。",
+        dsh_canvas_outcome_unknown: "画布操作结果未知，画布可能已经变化。可以直接继续，模型会先读取画布再决定是否重做。",
+        dsh_connector_outcome_unknown: "连接器结果未知，远端可能已经执行。可以直接继续，模型会先核实远端结果，不会盲目重复。",
+        dsh_connector_reconciliation_required: "工具的执行结果未能确认。可以直接在本会话继续，模型会先检查已有文件和画布再操作。",
         dsh_model_access_denied: "模型访问被拒绝。检查登录状态或选择有权限的模型，然后在本会话继续。",
         dsh_model_quota: "模型额度不足。补充额度或更换模型后，可以在本会话继续。",
         dsh_model_rate_limited: "模型请求达到频率限制。稍后在本会话发送消息即可继续。",
@@ -114597,9 +114597,9 @@ const qwt = {
         dsh_model_stream_ended: "模型输出中断，已收到的内容已保留。用量已核验，在本会话发送“继续”即可接着处理。",
         dsh_model_output_limit: "本次输出已达到模型长度上限，已有内容已保留。在本会话发送“继续”即可接着处理。",
         dsh_model_content_refused: "模型的内容过滤器结束了本次输出。调整请求后，可以在本会话继续。",
-        dsh_model_outcome_unknown: "网关已结束连接，模型调用结果仍待核验。现有工具结果已保留，重新打开本会话可重查回执。",
-        dsh_model_response_interrupted: "模型输出中途断开，已收到的内容已保留。调用结果仍待核验，请保留本会话。",
-        dsh_reconciliation_required: "上次操作结果尚未核验，暂时无法继续。请先检查会话和操作结果，避免重复操作。",
+        dsh_model_outcome_unknown: "网关已结束连接，已收到的内容和工具结果已保留。发送消息即可继续；如提示仍待核验，点「重新核验」查询回执。",
+        dsh_model_response_interrupted: "模型输出中途断开，已收到的内容已保留。发送“继续”即可接着处理；如提示仍待核验，点「重新核验」查询回执。",
+        dsh_reconciliation_required: "上一次模型调用的结果还在等待网关回执，暂时不能发送新消息。点「重新核验」查询结果后即可继续。",
         model_vision_unavailable: "当前模型不支持图片输入，请切换支持图片的模型后重试。",
         attachment_image_invalid: "图片格式不受支持或文件已损坏，请检查附件后重试。",
         attachment_unavailable_or_too_large: "附件无法读取或会话内容过大，请检查文件、减少附件或新建会话后重试。",
@@ -115515,10 +115515,11 @@ const qwt = {
       progress: "第 {{current}} 题，共 {{total}} 题",
     },
     mode: {
-      auto: "按需确认",
+      "read-only": "仅可查看",
+      "workspace-write": "工作区内修改",
+      "full-access": "完全权限",
       default: "逐项确认",
       plan: "仅规划",
-      bypassPermissions: "完全信任",
     },
     composer: {
       actions: "更多操作",
@@ -115562,11 +115563,18 @@ const qwt = {
       permissions: "执行权限",
       switchMode: "点击切换为「{{mode}}」",
       currentMode: "当前",
+      modeLocked: "权限在会话开始时确定，如需更换请新建会话。",
       modeHelp: {
-        auto: "常规操作自动执行，受保护的操作会先征求你的确认。",
+        "read-only": "只读查看文件；修改文件或越出沙箱的命令需要你确认。",
+        "workspace-write": "可直接修改工作区内的文件、运行命令；工作区外的操作需要你确认。",
+        "full-access": "不使用沙箱，文件修改和命令直接执行，不再询问。",
         default: "执行操作前向你请求确认",
         plan: "先分析任务并制定计划",
-        bypassPermissions: "文件修改和命令自动执行，跳过常规授权确认。",
+      },
+      fullAccessConfirm: {
+        title: "确认启用完全权限？",
+        description: "启用完全权限后，智能体将减少确认步骤，并且可以直接执行更多操作，包括敏感操作、文件修改或外部命令。仅建议在你信任当前任务时使用。",
+        enable: "启用完全权限",
       },
       addAttachment: "添加附件",
       attachments: "待发送的附件",
@@ -117701,11 +117709,11 @@ Start with the conclusion, then explain the reasoning.`,
         outcome_unknown:
           "The operation result is unconfirmed. Check the session before submitting again.",
         dsh_write_outcome_unknown:
-          "The file operation result is unknown. Check the target file before continuing.",
-        dsh_canvas_outcome_unknown: "The canvas action may have completed. Check the canvas before continuing to avoid repeating it.",
+          "The file operation result is unknown. You can continue; the model reads the file before changing it again.",
+        dsh_canvas_outcome_unknown: "The canvas action may have completed. You can continue; the model reads the canvas before redoing anything.",
         dsh_connector_outcome_unknown:
-          "The connector result is unknown and the remote action may have run. Check the remote result to avoid repeating it.",
-        dsh_connector_reconciliation_required: "The tool result needs verification. Keep this session and check the existing files and canvas before resuming.",
+          "The connector result is unknown and the remote action may have run. You can continue; the model verifies the remote result before repeating it.",
+        dsh_connector_reconciliation_required: "The tool result could not be confirmed. You can continue in this chat; the model checks the existing files and canvas first.",
         dsh_model_access_denied: "Model access was denied. Check your sign-in or choose an available model, then continue in this chat.",
         dsh_model_quota: "The model quota is exhausted. Update the quota or choose another model, then continue in this chat.",
         dsh_model_rate_limited: "The model rate limit was reached. Send a message in this chat after a short wait to continue.",
@@ -117714,10 +117722,10 @@ Start with the conclusion, then explain the reasoning.`,
         dsh_model_stream_ended: "The model stream ended early. The partial response is saved and usage has been verified. Send “continue” in this chat to pick up from there.",
         dsh_model_output_limit: "The model reached its output limit. The partial response is saved. Send “continue” in this chat to pick up from there.",
         dsh_model_content_refused: "The model’s content filter ended this response. Adjust the request to continue in this chat.",
-        dsh_model_outcome_unknown: "The gateway connection ended before the model outcome could be verified. Existing tool results are saved. Reopen this chat to check its receipt.",
-        dsh_model_response_interrupted: "The model stream was interrupted. Received content is saved. Keep this chat while the call outcome is being verified.",
+        dsh_model_outcome_unknown: "The gateway connection ended. Received content and tool results are saved. Send a message to continue; if it still needs verification, use Recheck.",
+        dsh_model_response_interrupted: "The model stream was interrupted. Received content is saved. Send “continue” to resume; if it still needs verification, use Recheck.",
         dsh_reconciliation_required:
-          "The previous result has not been verified. Check the session and operation result before continuing to avoid repeating it.",
+          "The previous model call is still waiting for its gateway receipt, so a new message cannot be sent yet. Use Recheck to look it up, then continue.",
         model_vision_unavailable: "The current model does not support image input. Choose a vision-capable model and try again.",
         attachment_image_invalid: "The image format is unsupported or the file is damaged. Check the attachment and try again.",
         attachment_unavailable_or_too_large: "The attachment cannot be read or the session is too large. Check the file, reduce attachments, or start a new session.",
@@ -118732,10 +118740,11 @@ Start with the conclusion, then explain the reasoning.`,
       progress: "Question {{current}} of {{total}}",
     },
     mode: {
-      auto: "Ask when needed",
+      "read-only": "Read Only",
+      "workspace-write": "Workspace Write",
+      "full-access": "Full access",
       default: "Ask each time",
       plan: "Plan only",
-      bypassPermissions: "Full trust",
     },
     composer: {
       actions: "More actions",
@@ -118782,12 +118791,18 @@ Start with the conclusion, then explain the reasoning.`,
       permissions: "Permissions",
       switchMode: "Switch to {{mode}}",
       currentMode: "Current",
+      modeLocked: "The permission level is set when a conversation starts. Start a new conversation to change it.",
       modeHelp: {
-        auto: "Routine actions run automatically. Protected actions pause for your approval.",
+        "read-only": "Read files only. File changes and commands outside the sandbox need your approval.",
+        "workspace-write": "Edit files and run commands inside the workspace. Anything outside it needs your approval.",
+        "full-access": "No sandbox. File changes and commands run directly without asking.",
         default: "Ask for approval before taking action",
         plan: "Analyze the task and prepare a plan first",
-        bypassPermissions:
-          "File edits and commands run automatically, without the usual approval prompts.",
+      },
+      fullAccessConfirm: {
+        title: "Enable Full access?",
+        description: "Full access reduces confirmation steps and lets the agent perform more actions directly, including sensitive operations, file changes, or external commands. Only use it when you trust the current task.",
+        enable: "Enable Full access",
       },
       addAttachment: "Add attachment",
       attachments: "Attachments to send",
@@ -161609,15 +161624,14 @@ function FS({
     ],
   });
 }
-const VM = (e) => (e === "bypassPermissions" ? Kwe : Nnt),
-  T_e = (e) =>
-    e === "auto" || e === "bypassPermissions"
-      ? ["auto", "bypassPermissions"]
-      : [e, "auto", "bypassPermissions"];
+// DSH's three permission levels; a conversation keeps the level it started with.
+const VM = (e) => (e === "full-access" ? Kwe : e === "read-only" ? VH : Nnt),
+  T_e = () => ["read-only", "workspace-write", "full-access"];
 function wTt({ mode: e, disabled: t, onChange: n }) {
   const { t: r } = Xe(),
-    s = r("mode." + e, { defaultValue: e });
-  return l.jsxs(Cs, {
+    s = r("mode." + e, { defaultValue: e }),
+    [c, u] = y.useState(!1);
+  return l.jsxs(l.Fragment, { children: [l.jsxs(Cs, {
     modal: !1,
     children: [
       l.jsxs(Ms, {
@@ -161656,7 +161670,7 @@ function wTt({ mode: e, disabled: t, onChange: n }) {
         children: l.jsxs(Ic, {
           value: e,
           onValueChange: (i) => {
-            i !== e && n(i);
+            i !== e && (i === "full-access" ? u(!0) : n(i));
           },
           children: [
             l.jsx(P1, { children: r("composer.permissions") }),
@@ -161697,13 +161711,38 @@ function wTt({ mode: e, disabled: t, onChange: n }) {
         }),
       }),
     ],
-  });
+  }),
+    l.jsx(b0, {
+      open: c,
+      onOpenChange: (i) => !i && u(!1),
+      children: l.jsxs(x0, {
+        children: [
+          l.jsxs(v0, {
+            children: [
+              l.jsx(k0, { children: r("composer.fullAccessConfirm.title") }),
+              l.jsx(C0, { children: r("composer.fullAccessConfirm.description") }),
+            ],
+          }),
+          l.jsxs(w0, {
+            children: [
+              l.jsx(A0, { children: r("common.cancel") }),
+              l.jsx(S0, {
+                variant: "destructive",
+                onClick: () => {
+                  (u(!1), n("full-access"));
+                },
+                children: r("composer.fullAccessConfirm.enable"),
+              }),
+            ],
+          }),
+        ],
+      }),
+    })] });
 }
 function kTt({ mode: e, disabled: t, onChange: n }) {
   const { t: r } = Xe(),
-    s = e === "auto" ? "bypassPermissions" : "auto",
     i = r("mode." + e, { defaultValue: e }),
-    o = r("composer.switchMode", { mode: r("mode." + s) });
+    o = r("composer.modeLocked");
   return l.jsxs(ui, {
     children: [
       l.jsxs(di, {
@@ -161713,11 +161752,8 @@ function kTt({ mode: e, disabled: t, onChange: n }) {
           size: "icon-sm",
           className: "composer-tool composer-permission",
           "data-mode": e,
-          disabled: t,
+          "aria-disabled": !0,
           "aria-label": r("composer.permissions") + ": " + i + " · " + o,
-          onClick: () => {
-            t || n(s);
-          },
         }),
         children: [
           l.jsx(ke, {
@@ -161737,14 +161773,14 @@ function kTt({ mode: e, disabled: t, onChange: n }) {
         align: "center",
         sideOffset: 8,
         className: "composer-tooltip composer-permission-tooltip",
-        children: l.jsx(CTt, { mode: e, nextMode: s }),
+        children: l.jsx(CTt, { mode: e }),
       }),
     ],
   });
 }
-function CTt({ mode: e, nextMode: t }) {
+function CTt({ mode: e }) {
   const { t: n } = Xe(),
-    r = T_e(e);
+    r = T_e();
   return l.jsxs("div", {
     className: "space-y-3",
     children: [
@@ -161790,7 +161826,7 @@ function CTt({ mode: e, nextMode: t }) {
       }),
       l.jsx("p", {
         className: "opacity-60",
-        children: n("composer.switchMode", { mode: n("mode." + t) }),
+        children: n("composer.modeLocked"),
       }),
     ],
   });
@@ -164617,12 +164653,14 @@ function YTt({
                   b && (u(!1), i(b));
                 },
                 children: [
-                  l.jsx(Qa, {
-                    value: "__no_project__",
-                    closeOnClick: !0,
-                    children: a("composer.noProject"),
-                  }),
-                  l.jsx(Hi, {}),
+                  // With 默认工作区 listed, every conversation has a project.
+                  !e.some((g) => g.isDefault) &&
+                    l.jsx(Qa, {
+                      value: "__no_project__",
+                      closeOnClick: !0,
+                      children: a("composer.noProject"),
+                    }),
+                  !e.some((g) => g.isDefault) && l.jsx(Hi, {}),
                   l.jsxs(D1, {
                     children: [
                       l.jsx(P1, { children: a("projects.title") }),
@@ -165774,7 +165812,7 @@ function fhe() {
   const draftTeamAvailable = !customTeamPreset || (expertTeam?.expertId === $ && expertTeam.agentTeamAvailable === true);
   const [se, ie] = y.useState(),
     [le, ae] = y.useState(null),
-    [pe, ue] = y.useState("auto"),
+    [pe, ue] = y.useState("workspace-write"),
     [me, be] = y.useState({}),
     Ce = _?.models.all.filter(X1) ?? [],
     xe = (Je) => {
@@ -165808,7 +165846,11 @@ function fhe() {
   const Ee = JSON.stringify([o, m, p]),
     [Ke, ot] = y.useState(),
     X = Ke?.context === Ee ? Ke : void 0,
-    ve = X ? X.projectId : (m ?? g.find((Je) => Je.cwd === p)?.id),
+    ve = X
+      ? X.projectId
+      : (m ??
+        g.find((Je) => Je.cwd === p)?.id ??
+        (p ? void 0 : g.find((Je) => Je.isDefault)?.id)),
     We = g.find((Je) => Je.id === ve),
     je = We?.cwd ?? X?.cwd ?? p,
     Oe = y.useRef(null);
@@ -188647,7 +188689,8 @@ function GIt({ ask: e, cwd: t, disabled: n, onAnswer: r, permissions: s }) {
     g = y.useRef(null),
     b = y.useRef(null),
     [v, w] = y.useState(!1),
-    C = !!(s && s.mode !== "bypassPermissions"),
+    // The level is fixed once a conversation starts (DSH pins its preset).
+    C = !1,
     S = C && v;
   if (
     (y.useLayoutEffect(() => {
@@ -188805,50 +188848,6 @@ function GIt({ ask: e, cwd: t, disabled: n, onAnswer: r, permissions: s }) {
           className:
             "col-span-full mx-4 mb-4 select-text break-words text-sm text-destructive",
           children: u,
-        }),
-      C &&
-        s &&
-        l.jsxs(ui, {
-          children: [
-            l.jsx(di, {
-              render: l.jsx(Te, {
-                ref: g,
-                type: "button",
-                variant: S ? "outline" : "ghost",
-                className:
-                  "permission-trust cursor-pointer px-3 shadow-none hover:bg-muted focus-visible:ring-inset active:not-aria-[haspopup]:translate-y-0 " +
-                  (S
-                    ? "col-start-2 row-start-2 mb-4 mr-4 h-9 rounded-[8px]"
-                    : "h-11 w-full rounded-none border-0 border-t border-border bg-muted/50"),
-                disabled: B,
-                onClick: () => {
-                  q(() => s.onChange("bypassPermissions"));
-                },
-              }),
-              children: l.jsxs("span", {
-                ref: b,
-                className: "inline-flex w-max shrink-0 items-center gap-2",
-                children: [
-                  l.jsx(ke, {
-                    icon: Kwe,
-                    size: 14,
-                    strokeWidth: 1.6,
-                    className: "size-3.5",
-                    "aria-hidden": "true",
-                  }),
-                  i("session.trustConversation"),
-                ],
-              }),
-            }),
-            l.jsx(fi, {
-              side: "top",
-              align: S ? "end" : "center",
-              sideOffset: 8,
-              className:
-                "permission-trust-tooltip max-w-[min(280px,calc(100vw-32px))] whitespace-normal leading-relaxed",
-              children: i("session.trustConversationHint"),
-            }),
-          ],
         }),
     ],
   });

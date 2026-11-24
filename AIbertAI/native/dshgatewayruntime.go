@@ -73,7 +73,7 @@ func newDSHGatewayRuntime(installation dshInstalledRuntime, journalRoot string, 
 		}
 		return dshDisabledPlugins(expert.DSHPlugins)
 	}
-	return &dshRuntimeConfig{SharedPluginHome: installation.Home, ResolveDisabledPlugins: resolvePlugins, ValidateLease: validate, BindLease: bind, Prepare: func(ctx context.Context, session acpSession) (*exec.Cmd, string, string, *dshLocalGateway, func(), error) {
+	return &dshRuntimeConfig{JournalRoot: journalRoot, SharedPluginHome: installation.Home, ResolveDisabledPlugins: resolvePlugins, ValidateLease: validate, BindLease: bind, Prepare: func(ctx context.Context, session acpSession) (*exec.Cmd, string, string, *dshLocalGateway, func(), error) {
 		selected, err := validate(ctx, session)
 		if err != nil {
 			return nil, "", "", nil, nil, err

@@ -413,6 +413,16 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 	if err != nil {
 		return err
 	}
+	// New conversations without a project share one visible folder, as in DSH.
+	live.workspaces.shared = dshDefaultWorkspaceDirectory()
+	// Like DSH's first-use workspace, it is listed as the 默认工作区 project.
+	if project, err := live.workspaces.seedDefaultProject(); err != nil {
+		fmt.Fprintf(os.Stderr, "default workspace project unavailable: %v\n", err)
+	} else if project != "" {
+		if err := live.fileSharedDefaultSessions(project); err != nil {
+			fmt.Fprintf(os.Stderr, "default workspace sessions not filed: %v\n", err)
+		}
+	}
 	live.client, live.source, live.key, live.protocol = c, source, key.Value, model.Protocol
 	live.modelBudget = model.inputBudget()
 	live.modelLocked = modelLocked
