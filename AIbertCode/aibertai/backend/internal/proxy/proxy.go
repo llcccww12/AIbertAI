@@ -120,7 +120,7 @@ func NewProxy(resolver Resolver, logger *slog.Logger) *Proxy {
 	transport.ResponseHeaderTimeout = upstreamHeaderTimeout
 	p.reverse = &httputil.ReverseProxy{
 		ErrorLog:       logging.ErrorLog(p.logger),
-		Transport:      withUpstreamTimeouts(outboundTransport{direct: transport}),
+		Transport:      withUpstreamTimeouts(dialRetryTransport{base: outboundTransport{direct: transport}}),
 		Rewrite:        p.rewrite,
 		ModifyResponse: p.modifyResponse,
 		ErrorHandler:   p.errorHandler,
