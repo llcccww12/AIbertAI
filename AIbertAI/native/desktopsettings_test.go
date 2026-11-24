@@ -1,10 +1,13 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -81,6 +84,53 @@ func TestDesktopBillingUsesPrivateAccountAndFilters(t *testing.T) {
 		if b, err := json.Marshal(result); err != nil || string(b) != tc.want {
 			t.Fatalf("response %s, want %s (%v)", b, tc.want, err)
 		}
+	}
+}
+
+func TestDesktopAvatarUploadAndClear(t *testing.T) {
+	var got []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/me/avatar" || r.Header.Get("Authorization") != "Bearer fixture" {
+			http.NotFound(w, r)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		got = append(got, r.Method+" "+r.Header.Get("Content-Type")+" "+string(body))
+		switch {
+		case r.Method == http.MethodPut && string(body) == "bad":
+			w.WriteHeader(http.StatusBadRequest)
+		case r.Method == http.MethodPut:
+			_, _ = w.Write([]byte(`{"user":{"id":"u1","name":"员工","avatar_url":"https://x/a.webp"},"custom_avatar_url":"https://x/a.webp"}`))
+		default:
+			_, _ = w.Write([]byte(`{"user":{"id":"u1","name":"员工"},"custom_avatar_url":""}`))
+		}
+	}))
+	defer server.Close()
+	host := &relaySessionHost{live: &acpLive{client: &client{server.URL, server.Client()}, auth: authorization{Access: "fixture"}}}
+	query := func(input string) (string, error) {
+		result, err := host.localQuery(t.Context(), "_monkeyai/profile/avatar", json.RawMessage(input))
+		if err != nil {
+			return "", err
+		}
+		data, err := json.Marshal(result)
+		return string(data), err
+	}
+	image := base64.StdEncoding.EncodeToString([]byte("png-bytes"))
+	if out, err := query(`{"image":"` + image + `","mime":"image/png"}`); err != nil || out != `{"user":{"id":"u1","name":"员工","avatar_url":"https://x/a.webp"}}` {
+		t.Fatalf("upload = %s, %v", out, err)
+	}
+	if out, err := query(`{"clear":true}`); err != nil || out != `{"user":{"id":"u1","name":"员工"}}` {
+		t.Fatalf("clear = %s, %v", out, err)
+	}
+	if _, err := query(`{"image":"` + base64.StdEncoding.EncodeToString([]byte("bad")) + `","mime":"image/png"}`); err == nil || err.Error() != "invalid_avatar" {
+		t.Fatalf("bad image error = %v", err)
+	}
+	if _, err := query(`{"image":"x","mime":"image/gif"}`); err == nil || err.Error() != "invalid_avatar" {
+		t.Fatalf("gif error = %v", err)
+	}
+	want := []string{"PUT image/png png-bytes", "DELETE  ", "PUT image/png bad"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("requests = %q", got)
 	}
 }
 

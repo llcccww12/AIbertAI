@@ -60,6 +60,12 @@ func (s *Service) uploadAvatar(w http.ResponseWriter, r *http.Request) {
 	if !s.profileMutation(w, r) {
 		return
 	}
+	s.putAvatar(w, r)
+}
+
+// putAvatar stores the request body as the caller's custom avatar. Browser
+// routes guard it with CSRF; agent routes rely on the bearer token instead.
+func (s *Service) putAvatar(w http.ResponseWriter, r *http.Request) {
 	if s.avatars == nil {
 		writeError(r.Context(), w, 503, "storage_unavailable", "头像存储暂不可用")
 		return
@@ -106,6 +112,10 @@ func (s *Service) clearAvatar(w http.ResponseWriter, r *http.Request) {
 	if !s.profileMutation(w, r) {
 		return
 	}
+	s.deleteAvatar(w, r)
+}
+
+func (s *Service) deleteAvatar(w http.ResponseWriter, r *http.Request) {
 	user, _ := UserFromContext(r.Context())
 	ctx, cancel := profileContext(r)
 	defer cancel()

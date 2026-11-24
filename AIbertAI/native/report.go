@@ -30,6 +30,25 @@ type reportedPermissions struct {
 	Denied  int `json:"denied"`
 }
 
+type reportedFiles struct {
+	Created int `json:"created"`
+	Updated int `json:"updated"`
+	Deleted int `json:"deleted"`
+}
+
+// turnReportFacts are the optional facts the backend accepts beside usage and tools.
+type turnReportFacts struct {
+	Tokens        turnTokenFacts
+	Permissions   *reportedPermissions
+	ContextUsed   *int64
+	ContextWindow *int64
+	Files         *reportedFiles
+	Compactions   int
+}
+
+// The backend rejects a turn with more tool facts than this.
+const maxReportedTools = 500
+
 type reportedInput struct {
 	Kind          string `json:"kind"`
 	Text          string `json:"text,omitempty"`
@@ -76,10 +95,60 @@ func (c *client) registerSession(ctx context.Context, auth authorization, machin
 }
 
 func (c *client) report(ctx context.Context, auth authorization, machine, session string, started, ended time.Time, stop string, usage modelUsage, tools ...reportedTool) error {
-	return c.reportTurn(ctx, auth, machine, session, modelID, 1, 0, started, ended, stop, usage, turnReportInput(""), nil, tools...)
+	return c.reportTurn(ctx, auth, machine, session, modelID, 1, 0, started, ended, stop, usage, turnReportInput(""), turnReportFacts{}, tools...)
 }
 
-func (c *client) reportTurn(ctx context.Context, auth authorization, machine, session, selected string, index, after int, started, ended time.Time, stop string, usage modelUsage, input reportedInput, permissions *reportedPermissions, tools ...reportedTool) error {
+// turnReportUsage follows model_calls: input_tokens include cache reads and
+// writes, which DSH counts outside inputTokens. Team member usage is split out
+// when it is a consistent part of the merged total.
+func turnReportUsage(usage modelUsage, tokens turnTokenFacts) (map[string]*int64, map[string]*int64) {
+	if tokens == (turnTokenFacts{}) || usage.Input == nil || usage.Output == nil {
+		return map[string]*int64{"input_tokens": usage.Input, "output_tokens": usage.Output}, nil
+	}
+	input, output := *usage.Input, *usage.Output
+	read, write := tokens.CacheRead, tokens.CacheWrite
+	var subagent map[string]*int64
+	if member := tokens.SubagentInput != 0 || tokens.SubagentOutput != 0 || tokens.SubagentCacheRead != 0 || tokens.SubagentCacheWrite != 0; member && input >= tokens.SubagentInput && output >= tokens.SubagentOutput {
+		input, output = input-tokens.SubagentInput, output-tokens.SubagentOutput
+		memberInput := tokens.SubagentInput + tokens.SubagentCacheRead + tokens.SubagentCacheWrite
+		subagent = map[string]*int64{"input_tokens": &memberInput, "output_tokens": &tokens.SubagentOutput,
+			"cache_read_input_tokens": &tokens.SubagentCacheRead, "cache_creation_input_tokens": &tokens.SubagentCacheWrite}
+	} else {
+		read, write = read+tokens.SubagentCacheRead, write+tokens.SubagentCacheWrite
+	}
+	input += read + write
+	return map[string]*int64{"input_tokens": &input, "output_tokens": &output,
+		"cache_read_input_tokens": &read, "cache_creation_input_tokens": &write}, subagent
+}
+
+// turnReportTools merges facts that share a category, name and resource, and
+// truncates what still exceeds the backend limit.
+func turnReportTools(tools []reportedTool) ([]reportedTool, bool) {
+	facts := make([]reportedTool, 0, len(tools))
+	seen := make(map[[3]string]int)
+	for _, tool := range tools {
+		// Canvas and knowledge are desktop capabilities. Keep their local categories
+		// for receipt verification, and report them as built-ins to the backend.
+		if tool.Category == "canvas" || tool.Category == "knowledge" {
+			tool.Category = "builtin"
+		}
+		key := [3]string{tool.Category, tool.Name, tool.ResourceID}
+		if i, ok := seen[key]; ok {
+			facts[i].Calls += tool.Calls
+			facts[i].Failed += tool.Failed
+			facts[i].DurationMS += tool.DurationMS
+			continue
+		}
+		seen[key] = len(facts)
+		facts = append(facts, tool)
+	}
+	if len(facts) > maxReportedTools {
+		return facts[:maxReportedTools], true
+	}
+	return facts, false
+}
+
+func (c *client) reportTurn(ctx context.Context, auth authorization, machine, session, selected string, index, after int, started, ended time.Time, stop string, usage modelUsage, input reportedInput, facts turnReportFacts, tools ...reportedTool) error {
 	if selected == "" {
 		selected = modelID
 	}
@@ -89,22 +158,30 @@ func (c *client) reportTurn(ctx context.Context, auth authorization, machine, se
 		"stop_reason": stop, "model_id": selected, "resources_snapshot_id": snapshot,
 		"client_version": version, "engine_version": version,
 		"input": input,
-		"usage": map[string]*int64{"input_tokens": usage.Input, "output_tokens": usage.Output},
+	}
+	reported, subagent := turnReportUsage(usage, facts.Tokens)
+	turn["usage"] = reported
+	if subagent != nil {
+		turn["subagent_usage"] = subagent
 	}
 	if len(tools) != 0 {
-		// Canvas and knowledge are desktop capabilities. Keep their local categories
-		// for receipt verification, and report them as built-ins to the backend.
-		facts := make([]reportedTool, len(tools))
-		for i, tool := range tools {
-			if tool.Category == "canvas" || tool.Category == "knowledge" {
-				tool.Category = "builtin"
-			}
-			facts[i] = tool
+		reportedTools, truncated := turnReportTools(tools)
+		turn["tools"] = reportedTools
+		if truncated {
+			turn["truncated"] = true
 		}
-		turn["tools"] = facts
 	}
-	if permissions != nil {
-		turn["permissions"] = permissions
+	if facts.Permissions != nil {
+		turn["permissions"] = facts.Permissions
+	}
+	if facts.ContextUsed != nil && facts.ContextWindow != nil {
+		turn["context_used"], turn["context_window"] = facts.ContextUsed, facts.ContextWindow
+	}
+	if facts.Files != nil {
+		turn["files_changed"] = facts.Files
+	}
+	if facts.Compactions > 0 {
+		turn["compactions"] = facts.Compactions
 	}
 	payload, err := json.Marshal(map[string]any{
 		"facts_version": 1, "turns": []any{turn},

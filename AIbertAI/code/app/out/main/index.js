@@ -1245,6 +1245,7 @@ const AIBERTAI_METHODS = {
   capabilitiesList: request("_monkeyai/capabilities/list", "在线能力与注册表 revision", shape({})),
   // ---------- 当前账号积分（只读） ----------
   billingAccount: request("_monkeyai/billing/account", "当前用户的积分与计费状态", shape({ refresh: "boolean?" })),
+  profileAvatar: request("_monkeyai/profile/avatar", "上传或清除本人自定义头像；image 为压缩后的 base64", shape({ image: "string?", mime: "string?", clear: "boolean?" })),
   environmentsList: request("_monkeyai/environments/list", "当前账号的云电脑分页；不缓存", shape({ serverUrl: "string", userId: "string", page: "number", page_size: "number" })),
   environmentsGet: request("_monkeyai/environments/get", "云电脑目标、观察代次与连接就绪状态", shape({ serverUrl: "string", userId: "string", id: "string" })),
   environmentsOperations: request("_monkeyai/environments/operations", "云电脑操作记录分页", shape({ serverUrl: "string", userId: "string", id: "string", page: "number", page_size: "number" })),
@@ -1829,6 +1830,7 @@ const ACCOUNT_REQUEST_METHODS = [
   "_monkeyai/environments/change",
   "_monkeyai/billing/account",
   "_monkeyai/billing/entries",
+  "_monkeyai/profile/avatar",
   "_monkeyai/session/goal",
   "session/cancel",
   "_monkeyai/drafts",
@@ -22173,6 +22175,17 @@ function setupRuntimeInstaller() {
     throw new Error("download_not_configured");
   });
 }
+// 头像改动后同步本机账号索引，侧栏与切换账号列表重启后仍显示新头像。
+function rememberAccountAvatar(user) {
+  const f = accountsState(), current = statusOf(f).account;
+  if (!current || !isUser(user) || user.id !== current.user.id) return statusOf(f);
+  const avatarUrl = typeof user.avatar_url === "string" ? user.avatar_url : "";
+  const nextUser = { ...current.user, avatar_url: avatarUrl };
+  if (!avatarUrl) delete nextUser.avatar_url;
+  const auth = readAuth(current.id);
+  if (auth) writeAuth(current.id, { ...auth, user: nextUser });
+  return statusOf(writeAccounts({ ...f, accounts: f.accounts.map((a) => a.id === current.id ? { ...a, user: nextUser } : a) }));
+}
 function setupAccountRequests() {
   handle("account:request", (args) => {
     const method2 = text(args[0], ErrorCode.invalidRequest, 128);
@@ -22180,7 +22193,9 @@ function setupAccountRequests() {
     return [method2, args[1]];
   }, async (event, method2, params) => {
     try {
-      return { result: await accountRuntimeRequest(event.sender, method2, params) };
+      const result = await accountRuntimeRequest(event.sender, method2, params);
+      if (method2 === "_monkeyai/profile/avatar") return { result: { ...result, status: rememberAccountAvatar(result?.user) } };
+      return { result };
     } catch (cause) {
       const error = cause;
       return { error: {

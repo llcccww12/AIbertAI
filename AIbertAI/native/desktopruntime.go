@@ -160,6 +160,8 @@ func (h *relaySessionHost) localQuery(ctx context.Context, method string, raw js
 		return h.employeeConfig(ctx)
 	case "_monkeyai/billing/account", "_monkeyai/billing/entries":
 		return h.desktopBilling(ctx, method, raw)
+	case "_monkeyai/profile/avatar":
+		return h.desktopAvatar(ctx, raw)
 	case "_monkeyai/environments/list", "_monkeyai/environments/get", "_monkeyai/environments/operations", "_monkeyai/environments/change":
 		return h.desktopEnvironment(ctx, method, raw)
 	case "_monkeyai/preferences/model-thinking/set":

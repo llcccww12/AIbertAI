@@ -128,7 +128,8 @@ function EmployeeTree({ nodes, pane, translate, showHidden }) {
 }
 
 // DSH owns the path header, toolbar and tree. The employee shell supplies the
-// session-scoped navigator slot, including its git and session change sources.
+// session-scoped navigator slot, including its scope picker and the git and
+// session change sources.
 export default function EmployeeFiles(pane) {
   const { sessionId, cwd, fileScope, onScope, query, onQuery, label } = pane
   const translate = key => (pane.language === 'en' ? en : zh)[key] ?? key
@@ -160,6 +161,7 @@ export default function EmployeeFiles(pane) {
       <span>{label('workspace.fileTree.' + fileScope)}</span><IconChevronDownOutlineRegular size={12}/>
     </button>} />
   const navigator = <div className="dsh-employee-navigator">
+    <div className="dsh-employee-file-scope-row">{scopePicker}</div>
     {searchShown && <div className={styles.searchBar}><div className={styles.searchField}>
       <input type="search" ref={input} value={query} className={styles.searchInput} data-files-search
         aria-label={translate('search.placeholder')} placeholder={translate('search.placeholder')} onChange={event => onQuery(event.target.value)} />
@@ -195,7 +197,7 @@ export default function EmployeeFiles(pane) {
       useSessions={select => select({ byId: { [sessionId]: { cwd: root } } })}
       useStore={select => select({ byPane: { [sessionId]: { searchBarOpen: searchShown } } })}
       actions={{ searchBarShown }} refresh={pane.onRefresh} focus={focus} placeBeside={placeBeside} t={translate}
-      renderFactorySlot={() => navigator} renderSlot={() => <>{scopePicker}{pane.reveal}</>} />
+      renderFactorySlot={() => navigator} renderSlot={() => pane.reveal} />
   </div>
 }
 

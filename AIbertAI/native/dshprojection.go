@@ -57,7 +57,11 @@ func projectDSHTool(turn *acpTurn, raw json.RawMessage) (map[string]any, error) 
 		call := &modelToolUse{ID: fmt.Sprintf("%s-tool-%d", turn.Operation, len(turn.ToolRuns)+1), Type: "function"}
 		call.Function.Name = d.Name
 		call.Function.Arguments = d.Arguments
-		turn.ToolRuns = append(turn.ToolRuns, workspaceToolRun{DSHCallID: d.CallID, Pending: true, Call: call, Report: reportedTool{Category: "builtin", Name: d.Name, ResourceID: d.Name, Calls: 1}})
+		category := "builtin"
+		if dshAgentTools[d.Name] {
+			category = "agent"
+		}
+		turn.ToolRuns = append(turn.ToolRuns, workspaceToolRun{DSHCallID: d.CallID, Pending: true, Call: call, Report: reportedTool{Category: category, Name: d.Name, ResourceID: d.Name, Calls: 1}})
 		var input any
 		if json.Unmarshal([]byte(d.Arguments), &input) != nil {
 			input = d.Arguments
@@ -141,6 +145,13 @@ func projectDSHTool(turn *acpTurn, raw json.RawMessage) (map[string]any, error) 
 		return update, nil
 	}
 	return nil, nil
+}
+
+// DSH subagent and agent-team tools delegate work to other agents.
+var dshAgentTools = map[string]bool{
+	"subagent": true, "subagent_fork": true, "list_subagent_models": true,
+	"send_message": true, "wait_agent": true, "interrupt_agent": true, "list_agents": true,
+	"team_task_create": true, "team_task_get": true, "team_task_list": true, "team_task_update": true,
 }
 
 // These fields belong to DSH's display cards. Private connector or plugin

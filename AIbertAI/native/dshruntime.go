@@ -611,8 +611,10 @@ type dshEvent struct {
 				Kind string `json:"kind"`
 			} `json:"reason"`
 			Usage *struct {
-				Input  int64 `json:"inputTokens"`
-				Output int64 `json:"outputTokens"`
+				Input      int64  `json:"inputTokens"`
+				Output     int64  `json:"outputTokens"`
+				CacheRead  *int64 `json:"cacheReadTokens"`
+				CacheWrite *int64 `json:"cacheWriteTokens"`
 			} `json:"usage"`
 		} `json:"data"`
 	} `json:"event"`
@@ -642,6 +644,7 @@ type dshHostTool struct {
 	Title       string          `json:"-"`
 	Kind        string          `json:"-"`
 	Category    string          `json:"-"`
+	ResourceID  string          `json:"-"`
 }
 
 type dshHostToolBridge struct {
@@ -1160,6 +1163,7 @@ func runDSHSessionWithProfile(ctx context.Context, cfg *dshRuntimeConfig, sessio
 	var answer, reason, lastAttempt string
 	var input, output int64
 	var hasUsage bool
+	var tokens turnTokenFacts
 	if local != nil && !reconcileOnly {
 		p.team.begin(session.DSHSessionID, p.leaseOperation)
 		defer func() { p.teamSettled = nil }()
@@ -1198,8 +1202,9 @@ func runDSHSessionWithProfile(ctx context.Context, cfg *dshRuntimeConfig, sessio
 				}
 			}
 			input, output, hasUsage = input+in, output+out, true
+			tokens.member(in, out, receipt.Usage.CacheRead, receipt.Usage.CacheWrite)
 			totalIn, totalOut := input, output
-			turn.Usage = modelUsage{Input: &totalIn, Output: &totalOut}
+			turn.Usage, turn.Tokens = modelUsage{Input: &totalIn, Output: &totalOut}, tokens
 			if project != nil {
 				if err := project(nil); err != nil {
 					return err
@@ -1209,8 +1214,9 @@ func runDSHSessionWithProfile(ctx context.Context, cfg *dshRuntimeConfig, sessio
 		}
 	}
 	type compactUsage struct {
-		seq           int64
-		input, output int64
+		seq                   int64
+		input, output         int64
+		cacheRead, cacheWrite *int64
 	}
 	compactPending := map[string]compactUsage{}
 	failedCompact := map[string]dshFailedCompactionReceipt{}
@@ -1348,9 +1354,10 @@ func runDSHSessionWithProfile(ctx context.Context, cfg *dshRuntimeConfig, sessio
 				input += *failure.Usage.Input
 				output += *failure.Usage.Output
 				hasUsage = true
+				tokens.cache(failure.Usage.CacheRead, failure.Usage.CacheWrite)
 				delete(failedCompact, failure.InvocationID)
 				in, out := input, output
-				turn.Usage = modelUsage{Input: &in, Output: &out}
+				turn.Usage, turn.Tokens = modelUsage{Input: &in, Output: &out}, tokens
 				if project != nil {
 					if err := project(nil); err != nil {
 						return err
@@ -1364,10 +1371,11 @@ func runDSHSessionWithProfile(ctx context.Context, cfg *dshRuntimeConfig, sessio
 				input += pending.input
 				output += pending.output
 				hasUsage = true
+				tokens.cache(pending.cacheRead, pending.cacheWrite)
 				delete(compactPending, receipt.InvocationID)
 				delete(failedCompact, receipt.InvocationID)
 				in, out := input, output
-				turn.Usage = modelUsage{Input: &in, Output: &out}
+				turn.Usage, turn.Tokens = modelUsage{Input: &in, Output: &out}, tokens
 				if project != nil {
 					if err := project(nil); err != nil {
 						return err
@@ -1402,6 +1410,7 @@ func runDSHSessionWithProfile(ctx context.Context, cfg *dshRuntimeConfig, sessio
 		return nil
 	}
 	var deliveryTurn int64
+	toolStarted := map[string]time.Time{}
 	var previousTurnAnswer string
 	var continuationStart bool
 	event := func(raw json.RawMessage) error {
@@ -1449,12 +1458,9 @@ func runDSHSessionWithProfile(ctx context.Context, cfg *dshRuntimeConfig, sessio
 				Event struct {
 					Seq  *int64 `json:"seq"`
 					Data struct {
-						InvocationID string `json:"invocationId"`
-						OperationID  string `json:"operationId"`
-						Usage        *struct {
-							Input  *int64 `json:"inputTokens"`
-							Output *int64 `json:"outputTokens"`
-						} `json:"usage"`
+						InvocationID string         `json:"invocationId"`
+						OperationID  string         `json:"operationId"`
+						Usage        *dshTokenUsage `json:"usage"`
 					} `json:"data"`
 				} `json:"event"`
 			}
@@ -1472,12 +1478,9 @@ func runDSHSessionWithProfile(ctx context.Context, cfg *dshRuntimeConfig, sessio
 				Event struct {
 					Seq  *int64 `json:"seq"`
 					Data struct {
-						LLMStreamCall bool   `json:"llmStreamCall"`
-						InvocationID  string `json:"invocationId"`
-						Usage         *struct {
-							Input  *int64 `json:"inputTokens"`
-							Output *int64 `json:"outputTokens"`
-						} `json:"usage"`
+						LLMStreamCall bool           `json:"llmStreamCall"`
+						InvocationID  string         `json:"invocationId"`
+						Usage         *dshTokenUsage `json:"usage"`
 					} `json:"data"`
 				} `json:"event"`
 			}
@@ -1495,7 +1498,7 @@ func runDSHSessionWithProfile(ctx context.Context, cfg *dshRuntimeConfig, sessio
 				return errors.New("dsh_compaction_usage_invalid")
 			}
 			compactSeen[data.InvocationID] = true
-			compactPending[data.InvocationID] = compactUsage{seq: *summary.Event.Seq, input: *data.Usage.Input, output: *data.Usage.Output}
+			compactPending[data.InvocationID] = compactUsage{seq: *summary.Event.Seq, input: *data.Usage.Input, output: *data.Usage.Output, cacheRead: data.Usage.CacheRead, cacheWrite: data.Usage.CacheWrite}
 		case "assistant/message":
 			lastAttempt = e.Event.Data.InvocationID
 			var thoughtIdentity struct {
@@ -1533,13 +1536,14 @@ func runDSHSessionWithProfile(ctx context.Context, cfg *dshRuntimeConfig, sessio
 				hasUsage = true
 				input += e.Event.Data.Usage.Input
 				output += e.Event.Data.Usage.Output
+				tokens.cache(e.Event.Data.Usage.CacheRead, e.Event.Data.Usage.CacheWrite)
 			}
 			turn.Answer = answer
 			turn.DSHStreamed = streamAwaitCommit && streamID != ""
 			streamAwaitCommit = false
 			if hasUsage {
 				in, out := input, output
-				turn.Usage = modelUsage{Input: &in, Output: &out}
+				turn.Usage, turn.Tokens = modelUsage{Input: &in, Output: &out}, tokens
 			}
 			if project != nil {
 				meta := map[string]any{"dshParts": dshRenderedParts(turn.DSHParts, answer)}
@@ -1629,11 +1633,26 @@ func runDSHSessionWithProfile(ctx context.Context, cfg *dshRuntimeConfig, sessio
 				return err
 			}
 			if e.Event.Type == "tool/call" && len(turn.ToolRuns) > previous {
+				toolStarted[turn.ToolRuns[len(turn.ToolRuns)-1].DSHCallID] = time.Now()
+			}
+			if e.Event.Type == "tool/result" {
+				for i := range turn.ToolRuns {
+					run := &turn.ToolRuns[i]
+					if started, ok := toolStarted[run.DSHCallID]; ok && !run.Pending {
+						run.Report.DurationMS = time.Since(started).Milliseconds()
+						delete(toolStarted, run.DSHCallID)
+					}
+				}
+			}
+			if e.Event.Type == "tool/call" && len(turn.ToolRuns) > previous {
 				run := &turn.ToolRuns[len(turn.ToolRuns)-1]
 				if tool, ok := hostToolViews[run.Report.Name]; ok {
 					run.DisplayName, run.DisplayKind = tool.Title, tool.Kind
 					if tool.Category != "" {
 						run.Report.Category = tool.Category
+					}
+					if tool.ResourceID != "" {
+						run.Report.ResourceID = tool.ResourceID
 					}
 					if update != nil && tool.Title != "" {
 						update["title"] = tool.Title
@@ -1950,7 +1969,7 @@ func runDSHSessionWithProfile(ctx context.Context, cfg *dshRuntimeConfig, sessio
 	}
 	turn.Answer = answer
 	if hasUsage {
-		turn.Usage = modelUsage{Input: &input, Output: &output}
+		turn.Usage, turn.Tokens = modelUsage{Input: &input, Output: &output}, tokens
 	}
 	if reason != "completed" {
 		if (reason == "error" || reason == "max-tokens") && local != nil && !opts.Query && !slices.ContainsFunc(turn.ToolRuns, func(run workspaceToolRun) bool { return run.Pending }) {

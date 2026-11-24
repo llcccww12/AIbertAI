@@ -184,7 +184,7 @@ func (h *relaySessionHost) dshRemoteTurnConnectorTools(ctx context.Context, ws *
 				return nil, err
 			}
 			tool := catalog.tools[item.Name]
-			tools = append(tools, dshHostTool{Name: item.Name, Description: item.Description, InputSchema: schema, Title: tool.ConnectorName + " / " + tool.Name, Kind: "other", Category: "connector"})
+			tools = append(tools, dshHostTool{Name: item.Name, Description: item.Description, InputSchema: schema, Title: tool.ConnectorName + " / " + tool.Name, Kind: "other", Category: "connector", ResourceID: tool.ConnectorID})
 		}
 		if len(tools) > 0 {
 			bridges = append(bridges, dshHostToolBridge{Tools: tools, Handle: h.dshConnectorBridge(ctx, ws, request, session, turn, catalog.tools, catalog.local, catalog.reauthorize)})

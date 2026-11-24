@@ -274,6 +274,7 @@ func dshRebuildPromptTurn(session string, original acpTurn, events []dshConnecto
 						run.DisplayName = old.DisplayName
 						run.DisplayKind = old.DisplayKind
 						run.Report.Category = old.Report.Category
+						run.Report.ResourceID, run.Report.DurationMS = old.Report.ResourceID, old.Report.DurationMS
 					}
 				}
 			}

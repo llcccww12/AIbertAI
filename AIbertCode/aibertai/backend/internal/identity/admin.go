@@ -42,6 +42,8 @@ func (s *Service) RegisterAgent(router chi.Router) {
 		user, _ := UserFromContext(r.Context())
 		writeJSON(r.Context(), w, http.StatusOK, user)
 	})
+	router.Put("/me/avatar", s.putAvatar)
+	router.Delete("/me/avatar", s.deleteAvatar)
 }
 
 func (s *Service) getUser(w http.ResponseWriter, r *http.Request) {

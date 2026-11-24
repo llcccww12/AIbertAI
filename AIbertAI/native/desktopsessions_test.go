@@ -137,6 +137,8 @@ func TestDesktopRetriesDisconnectedReportBeforeAcceptingNextTurn(t *testing.T) {
 		t.Fatalf("completed answer should remain available while reporting is pending: %v, %v", snapshot, err)
 	}
 	allowReport = true
+	// Recovery covers sessions whose model is no longer the default.
+	modelID = "5b0b6a1e-2c3d-4e5f-8a9b-0c1d2e3f4a5b"
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	go func() {

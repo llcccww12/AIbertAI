@@ -794,6 +794,7 @@ described({ manifest: "object" }, "manifest 按 capability-manifest.schema.json 
   capabilitiesList: request("_monkeyai/capabilities/list", "在线能力与注册表 revision", shape({})),
   // ---------- 当前账号积分（只读） ----------
   billingAccount: request("_monkeyai/billing/account", "当前用户的积分与计费状态", shape({ refresh: "boolean?" })),
+  profileAvatar: request("_monkeyai/profile/avatar", "上传或清除本人自定义头像；image 为压缩后的 base64", shape({ image: "string?", mime: "string?", clear: "boolean?" })),
   environmentsList: request("_monkeyai/environments/list", "当前账号的云电脑分页；不缓存", shape({ serverUrl: "string", userId: "string", page: "number", page_size: "number" })),
   environmentsGet: request("_monkeyai/environments/get", "云电脑目标、观察代次与连接就绪状态", shape({ serverUrl: "string", userId: "string", id: "string" })),
   environmentsOperations: request("_monkeyai/environments/operations", "云电脑操作记录分页", shape({ serverUrl: "string", userId: "string", id: "string", page: "number", page_size: "number" })),

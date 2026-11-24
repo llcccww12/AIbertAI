@@ -30355,6 +30355,11 @@ const kKe = md(
       "当前用户的积分与计费状态",
       qt({ refresh: "boolean?" }),
     ),
+    profileAvatar: Vt(
+      "_monkeyai/profile/avatar",
+      "上传或清除本人自定义头像；image 为压缩后的 base64",
+      qt({ image: "string?", mime: "string?", clear: "boolean?" }),
+    ),
     environmentsList: Vt(
       "_monkeyai/environments/list",
       "当前账号的云电脑分页；不缓存",
@@ -31317,6 +31322,7 @@ const DKe = [
   "_monkeyai/environments/change",
   "_monkeyai/billing/account",
   "_monkeyai/billing/entries",
+  "_monkeyai/profile/avatar",
   "_monkeyai/session/goal",
   "session/cancel",
   "_monkeyai/drafts",
@@ -111902,6 +111908,18 @@ const qwt = {
     },
   },
   Ywt = {
+    cycleDaily: "今日积分",
+    cycleWeekly: "本周积分",
+    cycleMonthly: "本月积分",
+    remaining: "剩余积分",
+    remainingPercent: "剩余 {{percent}}%",
+    resetsIn: "{{time}}后重置",
+    resetSoon: "即将重置",
+    resetAt: "{{date}} 重置额度",
+    durationDayHour: "{{days}} 天 {{hours}} 小时",
+    durationHourMinute: "{{hours}} 小时 {{minutes}} 分钟",
+    durationMinute: "{{minutes}} 分钟",
+    quotaSummary: "{{cycle}}剩余 {{balance}} / {{quota}}，{{reset}}。查看积分详情",
     credits: "积分",
     balance: "当前余额",
     quota: "本周期额度",
@@ -111981,6 +111999,18 @@ const qwt = {
     },
   },
   Zwt = {
+    cycleDaily: "Today's credits",
+    cycleWeekly: "This week's credits",
+    cycleMonthly: "This month's credits",
+    remaining: "Remaining",
+    remainingPercent: "{{percent}}% left",
+    resetsIn: "Resets in {{time}}",
+    resetSoon: "Resetting soon",
+    resetAt: "Allowance resets {{date}}",
+    durationDayHour: "{{days}}d {{hours}}h",
+    durationHourMinute: "{{hours}}h {{minutes}}m",
+    durationMinute: "{{minutes}}m",
+    quotaSummary: "{{cycle}}: {{balance}} of {{quota}} left, {{reset}}. View credit details",
     credits: "Credits",
     balance: "Balance",
     quota: "Period allowance",
@@ -113465,6 +113495,23 @@ const qwt = {
     },
     account: {
       hint: "查看当前账号及服务器信息，管理此设备上的登录账号。",
+      avatar: {
+        label: "选择头像图片",
+        upload: "上传头像",
+        replace: "更换头像",
+        uploading: "正在上传…",
+        clear: "移除",
+        saved: "头像已更新",
+        cleared: "已恢复默认头像",
+        hint: "支持 JPG、PNG、WebP，自动居中裁剪为正方形。",
+        errors: {
+          unsupported: "请选择 JPG、PNG 或 WebP 图片。",
+          tooLarge: "图片过大，请选择 20 MB、2500 万像素以内的图片。",
+          invalidImage: "图片无法读取，请换一张试试。",
+          serverUnsupported: "当前服务器暂不支持修改头像，请联系管理员升级后台。",
+          failed: "头像保存失败，请稍后重试。",
+        },
+      },
       user: "当前账号",
       hideIdentityHint:
         "侧栏和切换账号列表里的名字、邮箱会打码。这一页仍显示完整身份，方便核对。",
@@ -114380,6 +114427,7 @@ const qwt = {
       home: "首页",
       search: "搜索会话和项目",
       showSidebar: "展开侧边栏",
+      hideSidebar: "收起侧边栏",
       sidebarRail: "拖动调整侧边栏宽度",
       account: "账号",
       logout: "退出登录",
@@ -116454,6 +116502,23 @@ const qwt = {
     },
     account: {
       hint: "View account and server details, and manage signed-in accounts on this device.",
+      avatar: {
+        label: "Choose avatar image",
+        upload: "Upload avatar",
+        replace: "Change avatar",
+        uploading: "Uploading…",
+        clear: "Remove",
+        saved: "Avatar updated",
+        cleared: "Default avatar restored",
+        hint: "JPG, PNG or WebP. Cropped to a centered square.",
+        errors: {
+          unsupported: "Choose a JPG, PNG or WebP image.",
+          tooLarge: "This image is too large. Use one under 20 MB and 25 megapixels.",
+          invalidImage: "This image can't be read. Try another one.",
+          serverUnsupported: "This server doesn't support changing avatars yet. Ask your admin to update the backend.",
+          failed: "Couldn't save the avatar. Try again later.",
+        },
+      },
       user: "Signed in as",
       hideIdentityHint:
         "Masks the name and email in the sidebar and the account switcher. This page still shows the full identity so you can check it.",
@@ -117463,6 +117528,7 @@ Start with the conclusion, then explain the reasoning.`,
       home: "Home",
       search: "Search",
       showSidebar: "Show sidebar",
+      hideSidebar: "Hide sidebar",
       sidebarRail: "Drag to resize the sidebar",
       account: "Account",
       logout: "Sign out",
@@ -130995,6 +131061,162 @@ function MF(e, t) {
     action: `${n}${r ? "reLogin" : "switch"}`,
   };
 }
+// 用户头像：居中裁成正方形并压成 512px WebP，再经运行时上传到后台。
+async function prepareUserAvatar(e) {
+  if (!"image/png,image/jpeg,image/webp".split(",").includes(e.type)) throw new Error("unsupported");
+  if (!e.size) throw new Error("invalidImage");
+  if (e.size > 20 * 1024 * 1024) throw new Error("tooLarge");
+  let t;
+  try {
+    t = await createImageBitmap(e);
+  } catch {
+    throw new Error("invalidImage");
+  }
+  try {
+    if (!t.width || !t.height) throw new Error("invalidImage");
+    if (t.width * t.height > 25e6) throw new Error("tooLarge");
+    const n = Math.min(t.width, t.height),
+      r = Math.min(512, n),
+      s = document.createElement("canvas");
+    ((s.width = r), (s.height = r));
+    const i = s.getContext("2d");
+    if (!i) throw new Error("invalidImage");
+    ((i.imageSmoothingQuality = "high"),
+      i.drawImage(t, (t.width - n) / 2, (t.height - n) / 2, n, n, 0, 0, r, r));
+    const o = s.toDataURL("image/webp", 0.9),
+      a = "data:image/webp;base64,";
+    if (!o.startsWith(a)) throw new Error("invalidImage");
+    return { image: o.slice(a.length), mime: "image/webp" };
+  } finally {
+    t.close();
+  }
+}
+function AccountAvatarField({ account: e }) {
+  const { t } = Xe(),
+    n = y.useRef(null),
+    r = y.useRef(!0),
+    [s, i] = y.useState(null),
+    [o, a] = y.useState("");
+  y.useEffect(
+    () => (
+      (r.current = !0),
+      () => {
+        r.current = !1;
+      }
+    ),
+    [],
+  );
+  async function u(h) {
+    if (s) return;
+    (i(h ? "upload" : "clear"), a(""));
+    try {
+      const p = h ? await prepareUserAvatar(h) : { clear: !0 };
+      await a4(wi.profileAvatar.name, p);
+      (await ir.getState().hydrate(),
+        r.current && rn.success(t(h ? "settings.account.avatar.saved" : "settings.account.avatar.cleared")));
+    } catch (p) {
+      const m = p instanceof Error ? p.message : "";
+      r.current &&
+        a(
+          ["unsupported", "tooLarge", "invalidImage"].includes(m)
+            ? m
+            : m === "avatar_too_large"
+              ? "tooLarge"
+              : m === "invalid_avatar"
+                ? "invalidImage"
+                : m === "avatar_unsupported"
+                  ? "serverUnsupported"
+                  : "failed",
+        );
+    } finally {
+      r.current && i(null);
+    }
+  }
+  const d = (e.user.avatar_url ?? e.user.avatarUrl)?.trim(),
+    f = e.user.name;
+  return l.jsxs("div", {
+    className: "account-avatar-field",
+    "aria-busy": !!s,
+    children: [
+      l.jsx("input", {
+        ref: n,
+        type: "file",
+        hidden: !0,
+        accept: "image/png,image/jpeg,image/webp",
+        "aria-label": t("settings.account.avatar.label"),
+        onChange: (h) => {
+          const p = h.currentTarget.files?.[0];
+          ((h.currentTarget.value = ""), p && u(p));
+        },
+      }),
+      l.jsxs("button", {
+        type: "button",
+        className: "account-avatar-preview",
+        disabled: !!s,
+        "aria-label": t(d ? "settings.account.avatar.replace" : "settings.account.avatar.upload"),
+        title: t("settings.account.avatar.hint"),
+        onClick: () => n.current?.click(),
+        children: [
+          l.jsx(Gfe, {
+            user: e.user,
+            server: e.server,
+            className: "account-avatar-image",
+            "aria-hidden": "true",
+          }),
+          l.jsx("span", {
+            className: "account-avatar-overlay",
+            "aria-hidden": "true",
+            children: s ? l.jsx(Kn, { className: "size-4" }) : l.jsx(ke, { icon: ake, size: 16, strokeWidth: 1.6 }),
+          }),
+        ],
+      }),
+      l.jsxs("div", {
+        className: "account-avatar-body",
+        children: [
+          l.jsx("span", { className: "account-avatar-name", children: f }),
+          e.user.email &&
+            l.jsx("span", {
+              className: "account-avatar-email",
+              children: e.user.email,
+            }),
+          l.jsxs("div", {
+            className: "account-avatar-actions",
+            children: [
+              l.jsx(Te, {
+                type: "button",
+                variant: "outline",
+                size: "sm",
+                disabled: !!s,
+                onClick: () => n.current?.click(),
+                children: t(
+                  s === "upload"
+                    ? "settings.account.avatar.uploading"
+                    : d
+                      ? "settings.account.avatar.replace"
+                      : "settings.account.avatar.upload",
+                ),
+              }),
+              d &&
+                l.jsx(Te, {
+                  type: "button",
+                  variant: "ghost",
+                  size: "sm",
+                  disabled: !!s,
+                  onClick: () => u(null),
+                  children: t("settings.account.avatar.clear"),
+                }),
+            ],
+          }),
+          l.jsx("span", {
+            className: Vr("account-avatar-hint", o && "is-error"),
+            role: o ? "alert" : void 0,
+            children: t(o ? `settings.account.avatar.errors.${o}` : "settings.account.avatar.hint"),
+          }),
+        ],
+      }),
+    ],
+  });
+}
 function CAt() {
   const { t: e } = Xe(),
     { workspaceName: t } = Bp(),
@@ -131037,6 +131259,7 @@ function CAt() {
       l.jsxs("section", {
         className: "flex flex-col gap-3",
         children: [
+          r && l.jsx(AccountAvatarField, { account: r }),
           l.jsxs("dl", {
             className: "grid grid-cols-[auto_1fr] gap-x-8 gap-y-3 text-sm",
             children: [
@@ -153066,7 +153289,10 @@ function U7t({
   });
 }
 function W7t({ children: e }) {
-  const t = Bp();
+  const t = Bp(),
+    { t: n } = Xe(),
+    { state: r } = vx(),
+    s = n(r === "collapsed" ? "nav.showSidebar" : "nav.hideSidebar");
   return l.jsxs(Bwt, {
     className: "sidebar-brand h-12 flex-row items-center gap-2 px-3",
     children: [
@@ -153094,7 +153320,14 @@ function W7t({ children: e }) {
       }),
       l.jsxs("div", {
         className: "sidebar-brand-actions flex shrink-0 items-center gap-0.5",
-        children: [e, l.jsx(yZ, { className: "shrink-0" })],
+        children: [
+          e,
+          l.jsx(yZ, {
+            className: "shrink-0 sidebar-toggle",
+            "aria-label": s,
+            title: s,
+          }),
+        ],
       }),
     ],
   });
@@ -153604,8 +153837,14 @@ function K7t(e) {
     n
   );
 }
+function userAvatarInitial(name) {
+  const text = typeof name === "string" ? name.trim() : "";
+  if (!text) return "";
+  const first = Array.from(text)[0];
+  return /[a-z]/i.test(first) ? first.toUpperCase() : first;
+}
 function Gfe({ user: e, server: t, ...n }) {
-  const r = e?.avatarUrl?.trim() ?? "",
+  const r = (e?.avatar_url ?? e?.avatarUrl)?.trim() ?? "",
     [s, i] = y.useState(() =>
       r && RT.has(r) ? { url: r, src: RT.get(r) } : null,
     );
@@ -153639,7 +153878,15 @@ function Gfe({ user: e, server: t, ...n }) {
           (RT.delete(r), yC.delete(r), i(null), n.onError?.(c));
         },
       })
-    : l.jsx(h4, { ...n, branding: a, alt: "", draggable: !1 });
+    : e && userAvatarInitial(e.name)
+      ? l.jsx("span", {
+          ...n,
+          className: Vr(n.className, "user-avatar-initial"),
+          role: n["aria-hidden"] ? void 0 : "img",
+          "aria-label": n["aria-hidden"] ? void 0 : e.name,
+          children: userAvatarInitial(e.name),
+        })
+      : l.jsx(h4, { ...n, branding: a, alt: "", draggable: !1 });
 }
 function s_e({ trigger: e } = {}) {
   const { t } = Xe(),
@@ -153833,6 +154080,187 @@ function s_e({ trigger: e } = {}) {
       });
 }
 const Y7t = ["light", "dark", "century-blue", "textured-gray", "system"];
+// 侧栏积分：剩余 / 本周期额度、重置倒计时；折叠时由头像外圈表示剩余比例。
+function sidebarQuotaInfo(e, t, n, r) {
+  if (!e || e.policy?.enabled === !1) return null;
+  let s, i;
+  try {
+    ((s = uj(e.account.balance)), (i = uj(e.account.quota)));
+  } catch {
+    return null;
+  }
+  const o = i > 0n ? Number(((s < 0n ? 0n : s > i ? i : s) * 1000n) / i) / 10 : 0,
+    a = btt(e),
+    c = e.policy?.quota_refresh_cycle,
+    u = Date.parse(e.account.period_end_at),
+    d = Number.isFinite(u) ? Math.max(0, u - r) : null;
+  let f = "";
+  if (d !== null) {
+    const g = Math.max(1, Math.ceil(d / 6e4)),
+      h = Math.floor(g / 1440),
+      p = Math.floor((g % 1440) / 60),
+      m = g % 60;
+    f =
+      d < 6e4
+        ? t("billing.resetSoon")
+        : t("billing.resetsIn", {
+            time:
+              h > 0
+                ? t("billing.durationDayHour", { days: h, hours: p })
+                : p > 0
+                  ? t("billing.durationHourMinute", { hours: p, minutes: m })
+                  : t("billing.durationMinute", { minutes: m }),
+          });
+  }
+  return {
+    percent: o,
+    status: a,
+    label: t(
+      c === "daily"
+        ? "billing.cycleDaily"
+        : c === "monthly"
+          ? "billing.cycleMonthly"
+          : "billing.cycleWeekly",
+    ),
+    balance: ytt(e.account.balance, n),
+    quota: ytt(e.account.quota, n).integer,
+    reset: f,
+    resetAt: Number.isFinite(u)
+      ? new Intl.DateTimeFormat(n, {
+          ...(d !== null && d > 6 * 864e5 ? { month: "numeric", day: "numeric" } : { weekday: "short" }),
+          hour: "2-digit",
+          minute: "2-digit",
+        }).format(new Date(u))
+      : "",
+  };
+}
+function useSidebarQuota() {
+  const { t: e, i18n: t } = Xe(),
+    n = oo((o) => o.overview),
+    [r, s] = y.useState(() => Date.now());
+  y.useEffect(() => {
+    const o = setInterval(() => s(Date.now()), 3e4);
+    return () => clearInterval(o);
+  }, []);
+  const i = y.useMemo(
+    () => sidebarQuotaInfo(n, e, t.language, r),
+    [n, e, t.language, r],
+  );
+  return i;
+}
+function SidebarQuotaBar({ info: e, className: t }) {
+  return l.jsx("span", {
+    className: Vr("sidebar-quota-bar", t),
+    "data-status": e.status,
+    "aria-hidden": "true",
+    children: l.jsx("span", {
+      className: "sidebar-quota-bar-fill",
+      style: { width: `${e.percent}%` },
+    }),
+  });
+}
+function SidebarQuota() {
+  const { t: e } = Xe(),
+    t = Jt((o) => o.ready),
+    { show: n } = Ly(),
+    r = useSidebarQuota(),
+    s = ir((o) => o.account);
+  return l.jsxs(l.Fragment, {
+    children: [
+      l.jsx(m8t, { ready: t && !!s }),
+      r &&
+        l.jsx(aw, {
+          className: "sidebar-quota-item",
+          children: l.jsxs("button", {
+            type: "button",
+            className: "sidebar-quota",
+            "data-status": r.status,
+            "aria-label": e("billing.quotaSummary", {
+              cycle: r.label,
+              balance: r.balance.comparison + r.balance.integer,
+              quota: r.quota,
+              reset: r.reset,
+            }),
+            title: r.resetAt ? e("billing.resetAt", { date: r.resetAt }) : void 0,
+            onClick: () => n("billing"),
+            children: [
+              l.jsxs("span", {
+                className: "sidebar-quota-head",
+                children: [
+                  l.jsx("span", { className: "sidebar-quota-label", children: r.label }),
+                  l.jsxs("span", {
+                    className: "sidebar-quota-value",
+                    children: [
+                      l.jsx("strong", { children: r.balance.comparison + r.balance.integer }),
+                      l.jsxs("span", { children: [" / ", r.quota] }),
+                    ],
+                  }),
+                ],
+              }),
+              l.jsx(SidebarQuotaBar, { info: r }),
+              r.reset &&
+                l.jsx("span", { className: "sidebar-quota-reset", children: r.reset }),
+            ],
+          }),
+        }),
+    ],
+  });
+}
+function SidebarAccountQuota({ onOpen: e }) {
+  const { t } = Xe(),
+    n = useSidebarQuota();
+  return n
+    ? l.jsxs(l.Fragment, {
+        children: [
+          l.jsxs("div", {
+            className: "sidebar-account-status",
+            "data-status": n.status,
+            children: [
+              l.jsxs(hn, {
+                className: "sidebar-account-figures",
+                onClick: e,
+                children: [
+                  l.jsxs("span", {
+                    className: "sidebar-account-figure",
+                    children: [
+                      l.jsx("span", { className: "sidebar-account-figure-label", children: t("billing.remaining") }),
+                      l.jsxs("span", {
+                        className: "sidebar-account-figure-value",
+                        children: [
+                          n.balance.comparison + n.balance.integer,
+                          l.jsx("small", { children: n.balance.fraction }),
+                        ],
+                      }),
+                    ],
+                  }),
+                  l.jsxs("span", {
+                    className: "sidebar-account-figure",
+                    children: [
+                      l.jsx("span", { className: "sidebar-account-figure-label", children: n.label }),
+                      l.jsx("span", { className: "sidebar-account-figure-value", children: n.quota }),
+                    ],
+                  }),
+                ],
+              }),
+              l.jsx(SidebarQuotaBar, { info: n, className: "sidebar-account-quota-bar" }),
+              l.jsxs("p", {
+                className: "sidebar-account-note",
+                children: [
+                  l.jsx("span", { children: t("billing.remainingPercent", { percent: Math.floor(n.percent) }) }),
+                  n.reset &&
+                    l.jsx("span", {
+                      title: n.resetAt ? t("billing.resetAt", { date: n.resetAt }) : void 0,
+                      children: n.reset,
+                    }),
+                ],
+              }),
+            ],
+          }),
+          l.jsx(Hi, {}),
+        ],
+      })
+    : null;
+}
 function Z7t() {
   const { t: e } = Xe(),
     t = La(),
@@ -153866,14 +154294,19 @@ function Z7t() {
             N === "switched" && t("/", { replace: !0 });
           }));
     };
+  const quotaInfo = useSidebarQuota();
   return (
     y.useEffect(() => {
       s.error && rn.error(s.error);
     }, [s.error]),
-    l.jsx(u6, {
-      children: l.jsxs(aw, {
+    l.jsxs(u6, {
+      children: [
+      l.jsx(SidebarQuota, {}),
+      l.jsxs(aw, {
         className: "sidebar-user",
         "data-menu-open": f || void 0,
+        "data-quota-status": quotaInfo?.status,
+        style: quotaInfo ? { "--sidebar-quota": quotaInfo.percent } : void 0,
         children: [
           l.jsxs(Cs, {
             open: f,
@@ -153898,6 +154331,11 @@ function Z7t() {
                         className: "sidebar-user-avatar",
                         "aria-hidden": "true",
                       }),
+                      quotaInfo &&
+                        l.jsx("span", {
+                          className: "sidebar-user-quota-ring",
+                          "aria-hidden": "true",
+                        }),
                       l.jsx(vZ, {
                         status: c,
                         className: "absolute top-0 right-0 ring-2 ring-sidebar",
@@ -153926,6 +154364,7 @@ function Z7t() {
                 sideOffset: 8,
                 className: "sidebar-popup sidebar-account-card",
                 children: [
+                  l.jsx(SidebarAccountQuota, { onOpen: () => o("billing") }),
                   l.jsxs(hn, {
                     onClick: () => o("account"),
                     children: [
@@ -154162,6 +154601,7 @@ function Z7t() {
           }),
         ],
       }),
+      ],
     })
   );
 }
@@ -155557,7 +155997,7 @@ function o9t({ onResize: e } = {}) {
     ut = be?.kind === "project" ? c.find((_e) => _e.id === be.id) : void 0;
   return l.jsxs(Lwt, {
     collapsible: "icon",
-    expandOnHover: !0,
+    expandOnHover: !1,
     className: "app-sidebar",
     rail: l.jsx(Pwt, {
       onResize: e,
@@ -155588,6 +156028,7 @@ function o9t({ onResize: e } = {}) {
               l.jsx(aw, {
                 children: l.jsxs(lw, {
                   className: "sidebar-compose",
+                  tooltip: t("nav.newSession"),
                   onClick: r,
                   children: [
                     l.jsx(ke, { icon: gnt, size: 16, strokeWidth: 1.6 }),
@@ -155599,6 +156040,7 @@ function o9t({ onResize: e } = {}) {
                 children: [
                   l.jsxs(lw, {
                     className: "sidebar-compose sidebar-remote",
+                    tooltip: t("nav.remoteConnection"),
                     "aria-haspopup": "dialog",
                     onClick: () => s("devices"),
                     children: [
@@ -160766,6 +161208,7 @@ const EmployeeTeamMode = nativeChatControl("EmployeeTeamMode");
 const EmployeeTodoPanel = nativeChatControl("EmployeeTodoPanel");
 const EmployeeTeamConfirmation = nativeChatControl("EmployeeTeamConfirmation");
 const EmployeeRunningStatus = nativeChatControl("EmployeeRunningStatus");
+const EmployeeTurnNavigator = nativeChatControl("EmployeeTurnNavigator");
 function E_e({
   teamMode,
   models: e,
@@ -197162,6 +197605,7 @@ function sOt({
             streamingId: p ? e.messages.at(-1)?.id : void 0,
           }),
           l.jsx(uOt, { view: e }),
+          d && l.jsx(DshTurnRail, { view: e }),
           l.jsx(cOt, { view: e }),
         ],
       }),
@@ -197790,6 +198234,84 @@ function cOt({ view: e }) {
     }, [i, t, r, s, n, e.id]),
     null
   );
+}
+function dshTurnText(message, limit) {
+  const text = message.parts
+    .filter((part) => part.type === "text")
+    .map((part) => (message.role === "user" ? Ype(part.text).body : part.text))
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > limit ? text.slice(0, limit) + "…" : text;
+}
+// DSH's turn rail: one mark per loaded user message, previewing the prompt and
+// the first assistant text that answers it.
+function DshTurnRail({ view: e }) {
+  const { i18n } = Xe(),
+    { scrollRef: r } = Sx(),
+    reveal = Jt((o) => o.revealMessage),
+    [height, setHeight] = y.useState(0),
+    [active, setActive] = y.useState(null),
+    items = y.useMemo(() => {
+      const list = [];
+      for (const message of e.messages) {
+        if (message.role === "user")
+          list.push({
+            turn: list.length + 1,
+            prompt: dshTurnText(message, 200),
+            response: "",
+            anchor: { kind: "loaded", key: message.id },
+          });
+        else if (message.role === "assistant" && list.length && !list.at(-1).response)
+          list.at(-1).response = dshTurnText(message, 400);
+      }
+      return list;
+    }, [e.messages]);
+  y.useEffect(() => {
+    const el = r.current;
+    if (!el) return;
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      setHeight(el.clientHeight);
+      let turn = items[0]?.turn ?? null;
+      if (el.scrollHeight - el.scrollTop - el.clientHeight <= 2) turn = items.at(-1)?.turn ?? null;
+      else {
+        const edge = el.getBoundingClientRect().top + el.clientHeight / 3;
+        for (const item of items) {
+          const node = r9(el, item.anchor.key);
+          if (!node || node.getBoundingClientRect().top > edge) break;
+          turn = item.turn;
+        }
+      }
+      setActive(turn);
+    };
+    const schedule = () => {
+      frame ||= requestAnimationFrame(measure);
+    };
+    measure();
+    el.addEventListener("scroll", schedule, { passive: !0 });
+    const observer = typeof ResizeObserver > "u" ? null : new ResizeObserver(schedule);
+    observer?.observe(el);
+    return () => {
+      cancelAnimationFrame(frame);
+      el.removeEventListener("scroll", schedule);
+      observer?.disconnect();
+    };
+  }, [r, items]);
+  const navigate = y.useCallback((item) => reveal(e.id, item.anchor.key), [reveal, e.id]);
+  return items.length < 2 || !height
+    ? null
+    : l.jsx(y.Suspense, {
+        fallback: null,
+        children: l.jsx(EmployeeTurnNavigator, {
+          items,
+          activeTurn: active,
+          onNavigate: navigate,
+          viewportHeight: height,
+          language: i18n.language,
+        }),
+      });
 }
 function uOt({ view: e }) {
   const { t } = Xe(),

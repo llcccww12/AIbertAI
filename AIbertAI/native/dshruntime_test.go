@@ -99,9 +99,14 @@ func TestDSHMockProcess(t *testing.T) {
 				time.Sleep(700 * time.Millisecond)
 				_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "method": "session.event", "params": map[string]any{"sessionId": req.Params.SessionID, "event": map[string]any{"type": "tool/result", "data": map[string]any{"message": map[string]any{"source": map[string]string{"callId": "call-1"}, "content": []any{map[string]string{"type": "text", "text": "read output"}}}}}}})
 			}
+			if name := os.Getenv("DSH_MOCK_TOOL"); name != "" {
+				_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "method": "session.event", "params": map[string]any{"sessionId": req.Params.SessionID, "event": map[string]any{"type": "tool/call", "data": map[string]any{"callId": "call-1", "name": name, "arguments": "{}"}}}})
+				time.Sleep(50 * time.Millisecond)
+				_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "method": "session.event", "params": map[string]any{"sessionId": req.Params.SessionID, "event": map[string]any{"type": "tool/result", "data": map[string]any{"message": map[string]any{"source": map[string]string{"callId": "call-1"}, "content": []any{map[string]string{"type": "text", "text": "done"}}}}}}})
+			}
 			_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "method": "session.event", "params": map[string]any{"sessionId": "other", "event": map[string]any{"type": "assistant/message", "data": map[string]any{"message": map[string]any{"content": []map[string]string{{"type": "text", "text": "wrong"}}}}}}})
 			for i, txt := range []string{"first", "final"} {
-				_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "method": "session.event", "params": map[string]any{"sessionId": req.Params.SessionID, "event": map[string]any{"type": "assistant/message", "seq": i + 10, "data": map[string]any{"message": map[string]any{"content": []map[string]string{{"type": "text", "text": txt}}}, "usage": map[string]int{"inputTokens": 1, "outputTokens": 2}}}}})
+				_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "method": "session.event", "params": map[string]any{"sessionId": req.Params.SessionID, "event": map[string]any{"type": "assistant/message", "seq": i + 10, "data": map[string]any{"message": map[string]any{"content": []map[string]string{{"type": "text", "text": txt}}}, "usage": map[string]int{"inputTokens": 1, "outputTokens": 2, "cacheReadTokens": 5, "cacheWriteTokens": 1}}}}})
 			}
 			_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "method": "session.event", "params": map[string]any{"sessionId": req.Params.SessionID, "event": map[string]any{"type": "turn/end", "data": map[string]any{"reason": map[string]string{"kind": "completed"}}}}})
 		}
@@ -189,6 +194,10 @@ func TestDSHRuntimeLifecycle(t *testing.T) {
 		if turn.Answer != "final" || *turn.Usage.Input != 2 || *turn.Usage.Output != 4 {
 			t.Fatalf("unexpected turn: %+v", turn)
 		}
+		// Goal budgets read Usage; DSH cache tokens are kept beside it.
+		if turn.Tokens != (turnTokenFacts{CacheRead: 10, CacheWrite: 2}) {
+			t.Fatalf("cache tokens: %+v", turn.Tokens)
+		}
 	}
 	for _, id := range []string{"crash", "missing"} {
 		turn := acpTurn{Prompt: "hello"}
@@ -203,6 +212,43 @@ func TestDSHRuntimeLifecycle(t *testing.T) {
 	turn := acpTurn{Prompt: "again"}
 	if err := runDSHTurn(ctx, mockDSH(), acpSession{DSHSessionID: "one"}, &turn, true, nil); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDSHToolFactsCarryDurationCategoryAndResource(t *testing.T) {
+	connector := "44444444-4444-4444-8444-444444444444"
+	for _, tc := range []struct {
+		name string
+		want reportedTool
+	}{
+		{"subagent", reportedTool{Category: "agent", Name: "subagent", ResourceID: "subagent", Calls: 1}},
+		{"connector_tool", reportedTool{Category: "connector", Name: "connector_tool", ResourceID: connector, Calls: 1}},
+	} {
+		cfg := mockDSH()
+		base := cfg.Command
+		cfg.Command = func(ctx context.Context, s acpSession) (*exec.Cmd, error) {
+			cmd, err := base(ctx, s)
+			cmd.Env = append(cmd.Env, "DSH_MOCK_TOOL="+tc.name)
+			return cmd, err
+		}
+		bridge := dshHostToolBridge{Tools: []dshHostTool{{Name: "connector_tool", InputSchema: json.RawMessage(`{"type":"object"}`), Category: "connector", ResourceID: connector}},
+			Handle: func(json.RawMessage) (any, error) { return nil, errors.New("unused") }}
+		ctx := context.WithValue(t.Context(), dshHostToolBridgesKey{}, []dshHostToolBridge{bridge})
+		turn := acpTurn{Prompt: "hello"}
+		if err := runDSHTurn(ctx, cfg, acpSession{DSHSessionID: "session"}, &turn, false, nil); err != nil {
+			t.Fatal(err)
+		}
+		if len(turn.ToolRuns) != 1 {
+			t.Fatalf("%s: tool runs %+v", tc.name, turn.ToolRuns)
+		}
+		got := turn.ToolRuns[0].Report
+		if got.DurationMS < 50 {
+			t.Fatalf("%s: duration %d", tc.name, got.DurationMS)
+		}
+		got.DurationMS = 0
+		if got != tc.want {
+			t.Fatalf("%s: fact %+v", tc.name, got)
+		}
 	}
 }
 

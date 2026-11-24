@@ -43,6 +43,8 @@ try {
   await render(jsx.jsx(Fixture, {}))
   assert.ok(find('[data-files-page]'))
   assert.equal(find('[data-path-label]').getAttribute('title'), '/work')
+  assert.ok(find('[data-files-path]').checkVisibility?.() ?? true, 'the header shows the workspace path like DSH')
+  assert.ok(find('.dsh-employee-navigator [data-files-scope]'), 'the scope picker sits under the path header')
   await click('[data-files-reload]')
   assert.equal(refreshes, 1)
   await click('[data-files-search-toggle]')

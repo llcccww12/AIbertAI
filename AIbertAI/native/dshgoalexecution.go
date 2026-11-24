@@ -253,7 +253,8 @@ func (h *relaySessionHost) runDSHGoalTurn(ctx context.Context, ws *websocket.Con
 	if err != nil {
 		return err
 	}
-	turn.Usage = usage
+	// The goal ledger replaces per-run accounting; its calls carry no cache split.
+	turn.Usage, turn.Tokens = usage, turnTokenFacts{}
 	if err := h.live.finishDSHGoal(session.ID, goalID, *turn); err != nil {
 		return err
 	}
@@ -436,7 +437,8 @@ func (h *relaySessionHost) finishRecoveredDSHGoal(ctx context.Context, row acpSe
 	if err != nil {
 		return err
 	}
-	turn.Usage = usage
+	// The goal ledger replaces per-run accounting; its calls carry no cache split.
+	turn.Usage, turn.Tokens = usage, turnTokenFacts{}
 	if err := h.live.finishDSHGoal(row.ID, row.Goal.ID, turn); err != nil {
 		return err
 	}

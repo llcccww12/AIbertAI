@@ -2151,6 +2151,53 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/EmailAuthError"
+  /api/v1/me/avatar:
+    put:
+      summary: 上传本人自定义头像（桌面端）
+      description: 与浏览器端 /api/auth/v1/profile/avatar 同一校验与存储，使用 Bearer access token 确定用户，不需要 CSRF；runtime 用途令牌不可调用。请求体直接发送 JPG、PNG 或 WebP 二进制，最多 5 MiB、2500 万像素且单边不超过 8192 像素。仅更新 custom_avatar_url，不修改 OAuth 同步的 avatar_url。
+      requestBody:
+        required: true
+        content:
+          image/jpeg:
+            schema: {type: string, format: binary}
+          image/png:
+            schema: {type: string, format: binary}
+          image/webp:
+            schema: {type: string, format: binary}
+      responses:
+        '200':
+          description: 头像已保存，user.avatar_url 为生效头像
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AvatarUpdate'}
+        '400':
+          description: invalid_image，图片格式、尺寸或内容无效
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '401':
+          description: 未登录
+        '413':
+          description: image_too_large，图片超过 5 MiB
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '503':
+          description: storage_unavailable，头像存储不可用
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+    delete:
+      summary: 清除本人自定义头像（桌面端）
+      description: 仅清空 custom_avatar_url，恢复 OAuth 同步头像；同步头像也为空时客户端显示默认头像。
+      responses:
+        '200':
+          description: 已恢复同步头像或默认头像
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AvatarUpdate'}
+        '401':
+          description: 未登录
   /api/v1/billing/account:
     get:
       summary: 查询当前用户积分状态
@@ -6046,6 +6093,12 @@ components:
         email_code_auto_registration_enabled:
           type: boolean
           description: 邮箱验证码自动注册开关，默认 false；开启后新邮箱通过验证码登录时自动创建普通账号。
+    AvatarUpdate:
+      type: object
+      required: [user, custom_avatar_url]
+      properties:
+        user: {$ref: '#/components/schemas/EmailAuthUser'}
+        custom_avatar_url: {type: string}
     EmailAuthUser:
       type: object
       required:
