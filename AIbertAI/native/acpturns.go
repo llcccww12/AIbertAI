@@ -376,6 +376,9 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 	if errors.Is(err, errSessionReportPending) && h.retryPendingReport(ctx, id) == nil {
 		session, index, retry, err = live.reserveTurn(id, op, clientID, prompt, files, cancel, background, queued)
 	}
+	if err != nil && err.Error() == "dsh_reconciliation_required" && h.settleStuckDSHModelTurn(ctx, id) == nil {
+		session, index, retry, err = live.reserveTurn(id, op, clientID, prompt, files, cancel, background, queued)
+	}
 	if err != nil && err.Error() == "dsh_reconciliation_required" && h.settleStaleCanvasTurn(id) == nil {
 		session, index, retry, err = live.reserveTurn(id, op, clientID, prompt, files, cancel, background, queued)
 	}
@@ -1579,6 +1582,10 @@ func (session acpSession) responseMessage(index int, calls map[string]any) map[s
 			if files := turn.presentedFiles(session.CWD); len(files) > 0 {
 				message["dshDeliverables"] = files
 			}
+		}
+		// The client lists files changed in this conversation from the message.
+		if files := turn.mutatedFiles(session.CWD); len(files) > 0 {
+			message["files"] = files
 		}
 		if !turn.Started.IsZero() {
 			message["startedAt"] = turn.Started.UnixMilli()

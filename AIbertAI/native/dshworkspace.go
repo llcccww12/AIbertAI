@@ -129,7 +129,14 @@ func (h *relaySessionHost) dshWorkspaceBridge(ctx context.Context, ws *websocket
 		if decodeWorkspaceTool(req.Arguments, &args) != nil || req.Name == "write" && (!validDSHWorkspaceText(args.Content, limit) || args.Old != nil || args.New != nil) || req.Name == "edit" && (args.Content != nil || !validDSHWorkspaceText(args.Old, limit) || !validDSHWorkspaceText(args.New, limit) || *args.Old == "") {
 			return nil, errors.New("dsh_workspace_request_invalid")
 		}
-		if args.Permissions != nil && (*args.Permissions != "workspace-write" || args.Justification == nil || strings.TrimSpace(*args.Justification) == "") || args.Permissions == nil && args.Justification != nil && strings.TrimSpace(*args.Justification) != "" {
+		var permission, justification any
+		if args.Permissions != nil {
+			permission = *args.Permissions
+		}
+		if args.Justification != nil {
+			justification = *args.Justification
+		}
+		if !dshSandboxEscalationValid(permission, justification) {
 			return nil, errors.New("dsh_workspace_request_invalid")
 		}
 		relative := args.Path
@@ -317,6 +324,10 @@ func (h *relaySessionHost) dshWorkspaceBridge(ctx context.Context, ws *websocket
 		}
 		if err = writeWorkspaceTextIfUnchangedLimit(ctx, root, relative, content, before.File, limit); err != nil {
 			return nil, errors.Join(errors.New("dsh_connector_outcome_unknown"), err)
+		}
+		run.FileOperation = "updated"
+		if before.File == nil {
+			run.FileOperation = "created"
 		}
 		if err = effect.completeWorkspace(value); err != nil {
 			return nil, err

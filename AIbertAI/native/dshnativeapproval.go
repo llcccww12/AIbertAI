@@ -6,9 +6,29 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/coder/websocket"
 )
+
+// DSH accepts read-only, workspace-write and danger-full-access, and requires a
+// justification whenever an escalation is requested. An ordinary call omits both.
+func dshSandboxEscalationValid(mode, justification any) bool {
+	if mode == nil {
+		return justification == nil
+	}
+	value, ok := mode.(string)
+	if !ok {
+		return false
+	}
+	switch value {
+	case "read-only", "workspace-write", "danger-full-access":
+	default:
+		return false
+	}
+	text, ok := justification.(string)
+	return ok && strings.TrimSpace(text) != ""
+}
 
 const dshApprovalNotExecuted = "Approval unavailable; the tool was not executed."
 
@@ -57,7 +77,7 @@ func (h *relaySessionHost) dshNativeApproval(ctx context.Context, ws *websocket.
 			if title == "" || !validUUID(turn.Operation) || req.OperationID != turn.Operation || !h.dshPluginManagerBound(ctx, session) {
 				return "rejected", nil
 			}
-		} else if input["sandbox_permissions"] != "workspace-write" || input["run_in_background"] == true {
+		} else if !dshSandboxEscalationValid(input["sandbox_permissions"], input["justification"]) {
 			return "rejected", nil
 		} else if title == "" {
 			title = "执行命令"

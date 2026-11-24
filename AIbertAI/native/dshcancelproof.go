@@ -112,8 +112,16 @@ func dshCancelProof(record dshLocalRecord, original acpTurn, events []dshConnect
 // verify the same SDK history, tool boundary, and account receipt for both
 // immediate cancellation and later recovery of an interrupted desktop run.
 func (h *relaySessionHost) verifiedDSHCancelReceipt(ctx context.Context, p *dshProcess, local *dshLocalGateway, session acpSession, turn acpTurn, record dshLocalRecord, seq int64) (dshCancelledReceipt, error) {
-	if err := dshConnectorAssertSettled(h.live.store.Root, session.ID); err != nil {
+	if err := h.dshCancelHistoryProof(ctx, p, session, turn, record, seq); err != nil {
 		return dshCancelledReceipt{}, err
+	}
+	return local.verifyCancelledAccounting(ctx, record, false)
+}
+
+// dshCancelHistoryProof checks only the SDK's durable record of the stop.
+func (h *relaySessionHost) dshCancelHistoryProof(ctx context.Context, p *dshProcess, session acpSession, turn acpTurn, record dshLocalRecord, seq int64) error {
+	if err := dshConnectorAssertSettled(h.live.store.Root, session.ID); err != nil {
+		return err
 	}
 	var events []dshConnectorHistoryEvent
 	_, err := dshRepairHistory(ctx, session.DSHSessionID, -1, p.historyCall, func(_ int64, raw json.RawMessage) error {
@@ -125,9 +133,9 @@ func (h *relaySessionHost) verifiedDSHCancelReceipt(ctx context.Context, p *dshP
 		return nil
 	})
 	if err != nil || dshCancelProof(record, turn, events, seq) != nil {
-		return dshCancelledReceipt{}, errDSHCancelProof
+		return errDSHCancelProof
 	}
-	return local.verifyCancelledAccounting(ctx, record, false)
+	return nil
 }
 
 func (h *relaySessionHost) confirmStoppedDSHReply(ctx context.Context, session acpSession, turn *acpTurn) bool {
@@ -144,11 +152,25 @@ func (h *relaySessionHost) confirmStoppedDSHReply(ctx context.Context, session a
 	confirmed := false
 	options := dshSDKOptions{CheckCancelled: func(ctx context.Context, p *dshProcess, local *dshLocalGateway, pending *dshLocalRecord, seq int64) error {
 		if pending == nil {
-			return errDSHCancelProof
+			// The SDK's failed settlement may already have archived the call.
+			if local.abandonedFailure(turn.Operation) == "" {
+				return errDSHCancelProof
+			}
+			confirmed = true
+			return nil
 		}
-		receipt, err := h.verifiedDSHCancelReceipt(ctx, p, local, session, *turn, *pending, seq)
-		if err != nil {
+		if err := h.dshCancelHistoryProof(ctx, p, session, *turn, *pending, seq); err != nil {
 			return err
+		}
+		receipt, err := local.verifyCancelledAccounting(ctx, *pending, false)
+		if err != nil {
+			// DSH ends a stopped request with its turn. The SDK has proved the
+			// stop; the platform ledger may never reach a final state.
+			if err := local.abandonFailed(pending.CallID); err != nil {
+				return err
+			}
+			confirmed = true
+			return nil
 		}
 		if err := local.archiveCancelled(*pending, receipt, seq); err != nil {
 			return err

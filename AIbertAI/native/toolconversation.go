@@ -68,6 +68,7 @@ type workspaceToolRun struct {
 	Call          *modelToolUse     `json:"call,omitempty"`
 	Report        reportedTool      `json:"report"`
 	Output        string            `json:"output,omitempty"`
+	FileOperation string            `json:"fileOperation,omitempty"`
 	ResponseItems []json.RawMessage `json:"responseItems,omitempty"`
 
 	dshSourceInvocation string

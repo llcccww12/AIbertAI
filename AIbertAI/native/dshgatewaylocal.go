@@ -39,6 +39,7 @@ type dshLocalGateway struct {
 	// Set only for a version-pinned SDK that supplies persisted invocation IDs.
 	requireInvocationID bool
 	ackSignal           chan struct{}
+	serving             chan struct{} // closed when the in-flight model handler returns
 	dispatchGate        chan struct{}
 	admitGoalInvocation func(string) error
 	requestTooLarge     bool
@@ -60,6 +61,9 @@ type dshLocalRecord struct {
 	Transaction   string `json:"transaction,omitempty"`
 	GatewayCode   string `json:"gateway_code,omitempty"`
 	FailureCode   string `json:"failure_code,omitempty"`
+	// Unverified marks a failure settled from the SDK record alone, without a
+	// final platform ledger receipt.
+	Unverified bool `json:"unverified,omitempty"`
 }
 
 // newDSHLocalGateway requires a private, per-session journal directory. An
@@ -171,10 +175,32 @@ func syncDSHJournal(path string) error {
 func (g *dshLocalGateway) Ack(callID string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	// The SDK can settle on [DONE] before the upstream connection closes and
+	// the handler records delivery. Wait for that handler to finish.
+	if g.pending != nil && g.pending.State != "delivered" {
+		g.waitServedLocked(callID)
+	}
 	if g.pending == nil || g.pending.CallID != callID || g.pending.State != "delivered" {
 		return errors.New("dsh_gateway_not_delivered")
 	}
 	return g.archivePendingLocked(callID)
+}
+
+// waitServedLocked releases g.mu while the handler serving callID finishes.
+// It reports false if the handler is still running after the wait.
+func (g *dshLocalGateway) waitServedLocked(callID string) bool {
+	served := g.serving
+	if served == nil || g.pending == nil || g.pending.CallID != callID {
+		return true
+	}
+	g.mu.Unlock()
+	defer g.mu.Lock()
+	select {
+	case <-served:
+		return true
+	case <-time.After(10 * time.Second):
+		return false
+	}
 }
 
 func (g *dshLocalGateway) archivePendingLocked(callID string) error {
@@ -375,6 +401,16 @@ func (g *dshLocalGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	record := &dshLocalRecord{SessionID: g.session, OperationID: g.operationID, CallID: id, ModelID: g.model, Protocol: g.protocol, UpstreamModel: upstreamModel, Body: body, State: "dispatched"}
 	g.pending = record
 	g.ackSignal = make(chan struct{})
+	served := make(chan struct{})
+	g.serving = served
+	defer func() {
+		g.mu.Lock()
+		if g.serving == served {
+			g.serving = nil
+		}
+		g.mu.Unlock()
+		close(served)
+	}()
 	if err = g.writePending(record); err != nil {
 		g.mu.Unlock()
 		http.Error(w, "journal unavailable", http.StatusInternalServerError)

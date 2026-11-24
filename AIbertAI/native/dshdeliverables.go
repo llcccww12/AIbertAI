@@ -84,3 +84,43 @@ func (t acpTurn) presentedFiles(cwd string) []dshPresentedFile {
 	}
 	return files
 }
+
+// mutatedFiles lists the workspace files this turn changed, in the shape the
+// client's changed-file list expects.
+func (t acpTurn) mutatedFiles(cwd string) []map[string]string {
+	var files []map[string]string
+	seen := make(map[string]bool)
+	for _, run := range t.ToolRuns {
+		if run.Call == nil || run.Report.Failed != 0 {
+			continue
+		}
+		if name := run.Call.Function.Name; name != "write" && name != "edit" {
+			continue
+		}
+		var args struct {
+			Path string `json:"file_path"`
+		}
+		if json.Unmarshal([]byte(run.Call.Function.Arguments), &args) != nil || args.Path == "" {
+			continue
+		}
+		path := args.Path
+		if filepath.IsAbs(path) && filepath.IsAbs(cwd) {
+			relative, err := filepath.Rel(cwd, path)
+			if err != nil {
+				continue
+			}
+			path = relative
+		}
+		path = filepath.ToSlash(path)
+		if seen[path] {
+			continue
+		}
+		seen[path] = true
+		operation := run.FileOperation
+		if operation == "" {
+			operation = "updated"
+		}
+		files = append(files, map[string]string{"path": path, "operation": operation})
+	}
+	return files
+}

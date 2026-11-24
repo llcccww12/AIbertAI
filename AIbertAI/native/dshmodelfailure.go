@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -55,10 +56,23 @@ func dshTerminalModelFailure(code string) bool {
 }
 
 // Keep the original invocation id and request body. A refused request is
-// retried only if our platform explicitly attests that it was never forwarded.
+// retried only if our platform explicitly attests that it was never forwarded,
+// or if the connection to the platform could not be opened at all.
 func (g *dshLocalGateway) invokeWithPreflightRetry(ctx context.Context, call dshGatewayCall) (*http.Response, error) {
 	for attempt := 0; ; attempt++ {
 		resp, err := g.gateway.invoke(ctx, call)
+		if err != nil && dshDialFailed(err) {
+			// Nothing reached the platform, so the call is a proven non-dispatch.
+			if attempt == 2 || ctx.Err() != nil {
+				return nil, &dshPreflightError{err}
+			}
+			select {
+			case <-ctx.Done():
+				return nil, &dshPreflightError{err}
+			case <-time.After(time.Duration(attempt+1) * 500 * time.Millisecond):
+			}
+			continue
+		}
 		if err != nil || attempt == 2 || resp.Header.Get(dshNotDispatchedHeader) != call.CallID || resp.Header.Get("X-Billing-Transaction-ID") != "" || resp.StatusCode != 429 && resp.StatusCode != 502 && resp.StatusCode != 503 && resp.StatusCode != 504 {
 			return resp, err
 		}
@@ -128,7 +142,7 @@ func (g *dshLocalGateway) archivedFailure(operation, call, finish string) string
 
 // An HTTP status describes the transport, not whether the model was charged.
 // Require both the exact persisted SDK failure and the account's terminal record.
-func (g *dshLocalGateway) acceptModelSettlement(ctx context.Context, session, call, state string, seq int64) error {
+func (g *dshLocalGateway) verifyModelSettlement(ctx context.Context, session, call, state string, seq int64) error {
 	if state != "failed" || !g.requireInvocationID || session != g.session || !validUUID(call) || seq <= 0 {
 		return g.acceptSDKSettlement(session, call, state, seq)
 	}
@@ -246,6 +260,81 @@ func (g *dshLocalGateway) acceptMemberInterrupt(ctx context.Context, operation s
 		return err
 	}
 	return g.archiveVerifiedModelRecord(record, filepath.Join(g.journal, r.InvocationID+".json"), data)
+}
+
+// acceptModelSettlement follows DSH: a model request the SDK durably recorded as
+// failed ends only its own turn. When the platform ledger cannot prove the
+// outcome, the call is archived as unverified so the next prompt can proceed.
+// The ledger keeps its unknown transaction for administrative reconciliation.
+func (g *dshLocalGateway) acceptModelSettlement(ctx context.Context, session, call, state string, seq int64) error {
+	err := g.verifyModelSettlement(ctx, session, call, state, seq)
+	if err == nil || state != "failed" || seq <= 0 || !g.requireInvocationID || session != g.session || !validUUID(call) {
+		return err
+	}
+	if code := err.Error(); code != "dsh_model_outcome_unknown" && code != "dsh_model_response_interrupted" {
+		return err
+	}
+	if abandonErr := g.abandonFailed(call); abandonErr != nil {
+		return err
+	}
+	return nil
+}
+
+// abandonFailed archives the pending call as an unverified terminal failure.
+// It waits for the call's HTTP handler so a late journal write cannot recreate
+// the pending record after it is archived.
+func (g *dshLocalGateway) abandonFailed(call string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.waitServedLocked(call) {
+		return errors.New("dsh_model_outcome_unknown")
+	}
+	if g.pending == nil || g.pending.CallID != call || g.pending.State == "rejected" {
+		return errors.New("dsh_model_outcome_unknown")
+	}
+	next := *g.pending
+	next.State, next.Unverified = "rejected", true
+	next.FailureCode = "dsh_model_service_unavailable"
+	if next.Status >= 200 && next.Status < 300 {
+		next.FailureCode = "dsh_model_stream_ended"
+	}
+	if err := g.writePending(&next); err != nil {
+		return err
+	}
+	*g.pending = next
+	return g.archivePendingLocked(call)
+}
+
+// abandonedFailure returns the code of an unverified failure archived for the
+// operation, or "" when there is none.
+func (g *dshLocalGateway) abandonedFailure(operation string) string {
+	if !validUUID(operation) {
+		return ""
+	}
+	entries, err := os.ReadDir(g.journal)
+	if err != nil {
+		return ""
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if !entry.Type().IsRegular() || !strings.HasSuffix(name, ".json") || !validUUID(strings.TrimSuffix(name, ".json")) {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(g.journal, name))
+		var r dshLocalRecord
+		if err != nil || json.Unmarshal(data, &r) != nil {
+			continue
+		}
+		if r.SessionID == g.session && r.OperationID == operation && r.CallID+".json" == name && r.State == "rejected" && r.Unverified && dshTerminalModelFailure(r.FailureCode) {
+			return r.FailureCode
+		}
+	}
+	return ""
+}
+
+func dshDialFailed(err error) bool {
+	var op *net.OpError
+	return errors.As(err, &op) && (op.Op == "dial" || op.Op == "proxyconnect")
 }
 
 func dshPendingModelFailure(t acpTurn) bool {

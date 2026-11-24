@@ -201,6 +201,12 @@ func (h *relaySessionHost) handleQueue(ctx context.Context, ws *websocket.Conn, 
 		h.uploads.mu.Unlock()
 	}
 	live := h.live
+	if p.Action == "add" || p.Action == "resume" {
+		// A turn recorded before DSH failure semantics may still block the
+		// queue; settle it from the SDK record when possible. Otherwise the
+		// existing checks below report the blocked session.
+		_ = h.settleStuckDSHModelTurn(ctx, p.SessionID)
+	}
 	live.mu.Lock()
 	row, ok := live.sessions[p.SessionID]
 	if !ok || live.restarting {
