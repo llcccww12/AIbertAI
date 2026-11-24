@@ -102,7 +102,16 @@ try {
   const liveParts = [...message.parts.slice(0, 2), { type: 'text', text: notice.previousAnswer }, ...message.parts.slice(2)];
   await render({ parts: liveParts, dshMemberNotices: [{ ...notice, liveAfterParts: 3 }] });
   assert.equal(document.body.textContent.split(notice.previousAnswer).length, 2, 'the lead answer appears once during live handoff');
-  console.log('Verified native DSH chat, tool diff, team board, file navigation and gated media.');
+  const { EmployeeTurnNavigator } = await import('../../AIbertAI/code/web/dsh/native-chat/reply.js');
+  const turns = [1, 2].map(turn => ({ turn, prompt: '问题 ' + turn, response: '回答 ' + turn, anchor: { kind: 'loaded', key: 'm' + turn } }));
+  await React.act(() => root.render(React.createElement(EmployeeTurnNavigator,
+    { items: turns, activeTurn: 2, onNavigate: () => {}, viewportHeight: 600, language: 'zh-CN' })));
+  assert.ok(find('[data-employee-turn-rail] nav[aria-label="轮次导航"]'), 'DSH turn rail renders over the transcript');
+  assert.equal(find('[data-employee-turn-rail]').style.getPropertyValue('--dsh-conversation-viewport-height'), '600px');
+  await React.act(() => root.render(React.createElement(EmployeeTurnNavigator,
+    { items: turns.slice(0, 1), activeTurn: 1, onNavigate: () => {}, viewportHeight: 600, language: 'zh-CN' })));
+  assert.equal(find('[data-employee-turn-rail] nav'), null, 'a single turn needs no rail');
+  console.log('Verified native DSH chat, tool diff, team board, file navigation, turn rail and gated media.');
 } finally {
   await React.act(() => root.unmount());
   window.close();

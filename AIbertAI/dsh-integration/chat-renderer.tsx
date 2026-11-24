@@ -6,6 +6,7 @@ import { RunningStatus } from 'sdk/client/ui-chat/src/client/chat/RunningStatus.
 import { ReasoningRow } from 'sdk/client/ui-chat/src/client/chat/ReasoningRow.tsx'
 import { TurnTriggerNodeView } from 'sdk/client/ui-chat/src/client/chat/TurnTriggerNodeView.tsx'
 import { TurnProcessNodeView } from 'sdk/client/ui-chat/src/client/chat/TurnProcessNodeView.tsx'
+import { TurnNavigator } from 'sdk/client/ui-chat/src/client/chat/TurnNavigator.tsx'
 import { markdownLabels } from 'sdk/client/ui-chat/src/client/markdown-labels.ts'
 import { zh as chatZh, en as chatEn } from 'sdk/client/ui-chat/src/client/locale.ts'
 import { zh as toolsZh, en as toolsEn } from 'sdk/client/ui-conversation/src/client/locales.ts'
@@ -95,6 +96,16 @@ export function EmployeeTodoPanel({ todos, language, terminal = false }) {
     '--dsh-composer-side-clearance': '0px', '--dsh-composer-dock-inset': '0px',
     '--dsh-composer-card-max-width': '100%', marginBottom: '8px',
   }}><TodoPanel todos={todos} t={t} /></div>
+}
+
+// DSH's turn rail over the employee transcript. The transcript owns its scroll
+// area, so the host passes that area's height and the composer sits below it.
+export function EmployeeTurnNavigator({ items, activeTurn, onNavigate, viewportHeight, language }) {
+  const t = useMemo(() => translate(labels[language?.startsWith('zh') ? 'zh' : 'en']), [language])
+  return <div className="dsh-native-theme" data-employee-turn-rail style={{
+    display: 'contents', '--dsh-composer-side-clearance': '0px', '--dsh-composer-height': '0px',
+    '--dsh-conversation-viewport-height': viewportHeight + 'px',
+  }}><TurnNavigator items={items} activeTurn={activeTurn} busyTurn={null} onNavigate={onNavigate} t={t} /></div>
 }
 
 const noMenu = () => undefined

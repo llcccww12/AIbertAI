@@ -160766,6 +160766,7 @@ const EmployeeTeamMode = nativeChatControl("EmployeeTeamMode");
 const EmployeeTodoPanel = nativeChatControl("EmployeeTodoPanel");
 const EmployeeTeamConfirmation = nativeChatControl("EmployeeTeamConfirmation");
 const EmployeeRunningStatus = nativeChatControl("EmployeeRunningStatus");
+const EmployeeTurnNavigator = nativeChatControl("EmployeeTurnNavigator");
 function E_e({
   teamMode,
   models: e,
@@ -197162,6 +197163,7 @@ function sOt({
             streamingId: p ? e.messages.at(-1)?.id : void 0,
           }),
           l.jsx(uOt, { view: e }),
+          d && l.jsx(DshTurnRail, { view: e }),
           l.jsx(cOt, { view: e }),
         ],
       }),
@@ -197790,6 +197792,84 @@ function cOt({ view: e }) {
     }, [i, t, r, s, n, e.id]),
     null
   );
+}
+function dshTurnText(message, limit) {
+  const text = message.parts
+    .filter((part) => part.type === "text")
+    .map((part) => (message.role === "user" ? Ype(part.text).body : part.text))
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > limit ? text.slice(0, limit) + "…" : text;
+}
+// DSH's turn rail: one mark per loaded user message, previewing the prompt and
+// the first assistant text that answers it.
+function DshTurnRail({ view: e }) {
+  const { i18n } = Xe(),
+    { scrollRef: r } = Sx(),
+    reveal = Jt((o) => o.revealMessage),
+    [height, setHeight] = y.useState(0),
+    [active, setActive] = y.useState(null),
+    items = y.useMemo(() => {
+      const list = [];
+      for (const message of e.messages) {
+        if (message.role === "user")
+          list.push({
+            turn: list.length + 1,
+            prompt: dshTurnText(message, 200),
+            response: "",
+            anchor: { kind: "loaded", key: message.id },
+          });
+        else if (message.role === "assistant" && list.length && !list.at(-1).response)
+          list.at(-1).response = dshTurnText(message, 400);
+      }
+      return list;
+    }, [e.messages]);
+  y.useEffect(() => {
+    const el = r.current;
+    if (!el) return;
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      setHeight(el.clientHeight);
+      let turn = items[0]?.turn ?? null;
+      if (el.scrollHeight - el.scrollTop - el.clientHeight <= 2) turn = items.at(-1)?.turn ?? null;
+      else {
+        const edge = el.getBoundingClientRect().top + el.clientHeight / 3;
+        for (const item of items) {
+          const node = r9(el, item.anchor.key);
+          if (!node || node.getBoundingClientRect().top > edge) break;
+          turn = item.turn;
+        }
+      }
+      setActive(turn);
+    };
+    const schedule = () => {
+      frame ||= requestAnimationFrame(measure);
+    };
+    measure();
+    el.addEventListener("scroll", schedule, { passive: !0 });
+    const observer = typeof ResizeObserver > "u" ? null : new ResizeObserver(schedule);
+    observer?.observe(el);
+    return () => {
+      cancelAnimationFrame(frame);
+      el.removeEventListener("scroll", schedule);
+      observer?.disconnect();
+    };
+  }, [r, items]);
+  const navigate = y.useCallback((item) => reveal(e.id, item.anchor.key), [reveal, e.id]);
+  return items.length < 2 || !height
+    ? null
+    : l.jsx(y.Suspense, {
+        fallback: null,
+        children: l.jsx(EmployeeTurnNavigator, {
+          items,
+          activeTurn: active,
+          onNavigate: navigate,
+          viewportHeight: height,
+          language: i18n.language,
+        }),
+      });
 }
 function uOt({ view: e }) {
   const { t } = Xe(),
