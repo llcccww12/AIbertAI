@@ -96,7 +96,7 @@ func (h *relaySessionHost) employeeConfig(ctx context.Context) (any, error) {
 	}
 	if h.local != nil && h.designBridge != nil {
 		expertSummaries = append(expertSummaries, map[string]any{
-			"id": designExpertID, "name": "设计专家", "description": "网页原型、演示文稿、海报、Logo 与视频分镜", "skills": empty, "builtin": true,
+			"id": designExpertID, "name": "创作模式", "description": "在画布上生成图片、视频、网页原型、演示文稿和 Logo", "skills": empty, "builtin": true,
 		})
 	}
 	localMCP := []any{}

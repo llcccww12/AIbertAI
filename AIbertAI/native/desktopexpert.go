@@ -99,7 +99,7 @@ func (h *relaySessionHost) setDesktopSessionExpert(ctx context.Context, raw json
 		if workspaceDesign(root, p.SessionID) == nil {
 			return nil, errors.New("invalid_design_workspace")
 		}
-		expert.expertSelection = expertSelection{ID: designExpertID, Name: "设计专家"}
+		expert.expertSelection = expertSelection{ID: designExpertID, Name: "创作模式"}
 	}
 	l := h.live
 	l.mu.Lock()

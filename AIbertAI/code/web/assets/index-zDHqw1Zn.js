@@ -114351,7 +114351,7 @@ const qwt = {
       enableCanvas: "启用设计画布",
       enablingCanvas: "正在启用…",
       canvasDescription:
-        "此任务尚未启用画布。启用后将切换到设计专家，并保留当前对话。",
+        "此任务尚未启用画布。启用后进入创作模式，可在画布上生成图片、视频、网页、演示文稿和 Logo，并保留当前对话。",
       canvasWait: "请先等待当前任务结束并处理待回答的问题。",
     },
     colorPicker: {
@@ -114939,8 +114939,8 @@ const qwt = {
       starting: "正在创建…",
       generalExpert: "通用助理",
       standardMode: "标准模式",
-      standardModeHint: "处理代码、文件和资料，适合大多数任务。Agent 会按需使用检索、编辑和终端等工具。",
-      designExpert: "设计专家",
+      standardModeHint: "处理代码、文件和资料，也能生成图片，适合大多数任务。Agent 会按需使用检索、编辑和终端等工具。",
+      designExpert: "创作模式",
       generalExpertHint: "解答问题、撰写内容、分析资料和编写代码。",
       expertSource: {
         builtin: "引擎内置",
@@ -115068,10 +115068,10 @@ const qwt = {
       styleCard: {
         ariaLabel: "选择设计风格",
         title: "选择网页的视觉风格",
-        hint: "需求确认后，选一个风格；也可以交给设计专家决定。",
+        hint: "需求确认后，选一个风格；也可以交给 Agent 决定。",
         deckTitle: "选择演示文稿的视觉风格",
-        deckHint: "做页之前选一个风格；也可以交给设计专家决定。",
-        skip: "跳过，由设计专家决定",
+        deckHint: "做页之前选一个风格；也可以交给 Agent 决定。",
+        skip: "跳过，由 Agent 决定",
         nextBatch: "换一批",
       },
       nextStep: {
@@ -117450,7 +117450,7 @@ Start with the conclusion, then explain the reasoning.`,
       enableCanvas: "Enable design canvas",
       enablingCanvas: "Enabling…",
       canvasDescription:
-        "This task has no canvas yet. Enabling it switches to the design expert and keeps this conversation.",
+        "This task has no canvas yet. Enabling it turns on creative mode, where images, videos, web pages, slides and logos are made on the canvas, and keeps this conversation.",
       canvasWait:
         "Wait for the current task to finish and answer any pending questions first.",
     },
@@ -118150,8 +118150,8 @@ Start with the conclusion, then explain the reasoning.`,
       starting: "Creating…",
       generalExpert: "General assistant",
       standardMode: "Standard mode",
-      standardModeHint: "Work with code, files, and information. Suitable for most tasks, with search, editing, terminal commands, and other tools available as needed.",
-      designExpert: "Design expert",
+      standardModeHint: "Work with code, files, and information, and generate images. Suitable for most tasks, with search, editing, terminal commands, and other tools available as needed.",
+      designExpert: "Creative mode",
       generalExpertHint:
         "Answer questions, draft content, analyze information, and write code.",
       expertSource: {
@@ -118282,11 +118282,11 @@ Start with the conclusion, then explain the reasoning.`,
       styleCard: {
         ariaLabel: "Choose a design style",
         title: "Choose a visual style for the website",
-        hint: "After confirming the requirements, choose a style—or let the design expert decide.",
+        hint: "After confirming the requirements, choose a style—or let the agent decide.",
         deckTitle: "Choose a visual style for the deck",
         deckHint:
-          "Choose a style before any slide—or let the design expert decide.",
-        skip: "Skip; let the design expert decide",
+          "Choose a style before any slide—or let the agent decide.",
+        skip: "Skip; let the agent decide",
         nextBatch: "More",
       },
       nextStep: {
