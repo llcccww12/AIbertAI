@@ -22733,7 +22733,10 @@ async function answerRuntimeDesignTool(proc, server, event) {
     reply.result = result;
   } catch (error) {
     const reason = error instanceof Error ? error.message : "";
-    reply.error = /^[a-z][a-z0-9_]{1,70}$/.test(reason) ? "design_" + reason.replace(/^design_/, "") : "design_tool_failed";
+    // Keep the leading code of detailed reasons ("media_generation_unknown:task_id=…")
+    // so the runtime can tell a definite worker answer from an opaque failure.
+    const code = /^([a-z][a-z0-9_]{1,70})(?::|$)/.exec(reason)?.[1];
+    reply.error = code ? "design_" + code.replace(/^design_/, "") : "design_tool_failed";
   } finally {
     runtimeImageCalls.delete(id);
   }

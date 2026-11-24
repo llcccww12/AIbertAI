@@ -233,10 +233,21 @@ func dshCanvasSettleClaim(root *os.Root, sessionID string, claim dshConnectorCla
 	return syncConnectorDir(root, "dsh-connector-dispatch/"+sessionID)
 }
 
-// dshCanvasDefiniteRejection reports a design-service refusal that is known to
-// happen before anything is generated or written.
+// dshCanvasDefiniteRejection reports an explicit answer from the design worker
+// that it did not complete the call. The worker saves media and applies canvas
+// changes only on success, and canvas changes are still checked against the
+// pre-dispatch digest. A timeout, an opaque failure or an oversized result is
+// not definite: the call may have completed.
 func dshCanvasDefiniteRejection(err error) bool {
-	return err != nil && err.Error() == "design_media_model_unavailable"
+	if err == nil {
+		return false
+	}
+	switch code := err.Error(); code {
+	case "design_tool_unavailable", "design_tool_failed", "design_tool_result_too_large":
+		return false
+	default:
+		return strings.HasPrefix(code, "design_") && !strings.ContainsAny(code, " \n")
+	}
 }
 
 // dshCanvasReleaseRejected settles the claim of a rejected guarded write as not

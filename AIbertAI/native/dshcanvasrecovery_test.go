@@ -192,8 +192,17 @@ func TestDSHCanvasReleaseRejectedSettlesNotApplied(t *testing.T) {
 		call      = "cccccccc-3333-4333-8333-333333333333"
 		canvasID  = "dddddddd-4444-4444-8444-444444444444"
 	)
-	if !dshCanvasDefiniteRejection(errors.New("design_media_model_unavailable")) || dshCanvasDefiniteRejection(errors.New("design_tool_unavailable")) {
-		t.Fatal("only a known pre-execution refusal is definite")
+	for code, want := range map[string]bool{
+		"design_media_model_unavailable":  true,
+		"design_media_generation_unknown": true,  // the worker answered; the gateway tracks billing
+		"design_tool_unavailable":         false, // host timeout: the call may still complete
+		"design_tool_failed":              false,
+		"design_tool_result_too_large":    false, // the result exists but was not delivered
+		"dsh_connector_outcome_unknown":   false,
+	} {
+		if got := dshCanvasDefiniteRejection(errors.New(code)); got != want {
+			t.Errorf("dshCanvasDefiniteRejection(%q) = %v, want %v", code, got, want)
+		}
 	}
 	for _, tc := range []struct {
 		name, canvas string
