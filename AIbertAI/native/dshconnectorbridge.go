@@ -60,6 +60,12 @@ func dshConnectorDispatch(root *os.Root, session, operation, call string) error 
 		return errors.New("dsh_connector_dispatch_uncertain")
 	}
 	for _, claim := range claims {
+		// A claim from an operation that already ended stays on disk as evidence
+		// of an unknown outcome, but it may only refuse that same call. Blocking
+		// every later call would turn one failed tool into a dead session.
+		if claim.OperationID != operation && claim.CallID != call {
+			continue
+		}
 		if claim.State != "reconciled" && claim.State != "user_reviewed" || (claim.OperationID == operation || claim.State == "user_reviewed") && claim.CallID == call {
 			return errors.New("dsh_connector_dispatch_uncertain")
 		}
@@ -71,6 +77,16 @@ func dshConnectorDispatch(root *os.Root, session, operation, call string) error 
 	}
 	// The per-session exclusive sentinel serializes claims across processes.
 	pending := dir + "/.pending"
+	// A sentinel left behind by an ended operation must not lock the session
+	// either; its claim file keeps the unknown outcome on record.
+	if stale, e := readConnectorClaim(root, pending, session); e == nil && stale.OperationID != operation {
+		if e = root.Remove(pending); e != nil {
+			return errors.New("dsh_connector_dispatch_uncertain")
+		}
+		if e = syncConnectorDir(root, dir); e != nil {
+			return errors.New("dsh_connector_dispatch_uncertain")
+		}
+	}
 	f, err := root.OpenFile(pending, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return errors.New("dsh_connector_dispatch_uncertain")

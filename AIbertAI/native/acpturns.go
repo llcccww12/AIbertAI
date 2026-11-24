@@ -245,9 +245,12 @@ func (l *acpLive) reserveTurn(id, op, clientID, prompt string, attachments []acp
 		workspaceFailure := dshRecoverableWorkspaceFailure(last.FailureCode)
 		reconciled := last.DSHReconciled && (workspaceFailure || dshRecoverablePromptFailure(last.FailureCode) ||
 			last.FailureCode == "dsh_canvas_outcome_unknown" || last.FailureCode == "dsh_connector_reconciliation_required")
-		reviewed := workspaceFailure && last.DSHUserReviewed
+		reviewed := (workspaceFailure || last.FailureCode == "dsh_canvas_outcome_unknown") && last.DSHUserReviewed
 		notAdmitted := last.DSHInputNotAdmitted && !last.DSHHasImages && len(last.ToolRuns) == 0
-		if last.Failed && !reconciled && !reviewed && !notAdmitted && !(last.DSHModelFailureSettled && dshTerminalModelFailure(last.FailureCode)) || last.Interrupted && !last.DSHCancelConfirmed {
+		// A tool outcome never blocks the next message. The claim stays on disk as
+		// evidence, and only that same call is refused if it is replayed.
+		toolOutcome := last.FailureCode == "dsh_write_outcome_unknown" || last.FailureCode == "dsh_canvas_outcome_unknown" || last.FailureCode == "dsh_connector_outcome_unknown"
+		if last.Failed && !reconciled && !reviewed && !notAdmitted && !toolOutcome && !(last.DSHModelFailureSettled && dshTerminalModelFailure(last.FailureCode)) || last.Interrupted && !last.DSHCancelConfirmed {
 			return session, 0, false, errors.New("dsh_reconciliation_required")
 		}
 	}
@@ -371,6 +374,9 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 	}
 	session, index, retry, err := live.reserveTurn(id, op, clientID, prompt, files, cancel, background, queued)
 	if errors.Is(err, errSessionReportPending) && h.retryPendingReport(ctx, id) == nil {
+		session, index, retry, err = live.reserveTurn(id, op, clientID, prompt, files, cancel, background, queued)
+	}
+	if err != nil && err.Error() == "dsh_reconciliation_required" && h.settleStaleCanvasTurn(id) == nil {
 		session, index, retry, err = live.reserveTurn(id, op, clientID, prompt, files, cancel, background, queued)
 	}
 	if err != nil {
@@ -579,10 +585,9 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 			turn.Answer = ""
 			err = errors.New("session_answer_too_large")
 		}
+		// An unresolved write stays on disk as evidence, but it must not fail an
+		// otherwise completed turn: the tool result already told the model.
 		unsettledWrite := session.Engine == "dsh" && live.store != nil && dshUnsettledWorkspaceWrite(live.store.Root, id, turn)
-		if unsettledWrite && err == nil {
-			err = errors.New("dsh_write_outcome_unknown")
-		}
 		memberStopped := turn.DSHMemberID != "" && turn.DSHCancelConfirmed && errors.Is(err, context.Canceled)
 		turn.Interrupted = err != nil && !notAdmitted && ctx.Err() == nil && (turnCtx.Err() == context.Canceled || memberStopped)
 		if session.Engine == "dsh" && turn.Interrupted && !turn.DSHCancelConfirmed {

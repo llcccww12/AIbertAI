@@ -325,7 +325,7 @@ func (h *relaySessionHost) dshCanvasBridge(ctx context.Context, ws *websocket.Co
 				}
 				return nil, err
 			}
-			if err = dshCanvasMarkClaim(effect); err != nil {
+			if err = dshCanvasMarkClaim(effect, fmt.Sprintf("%x", before)); err != nil {
 				return nil, errors.Join(errors.New("dsh_canvas_outcome_unknown"), err)
 			}
 		}

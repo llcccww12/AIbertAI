@@ -217,20 +217,34 @@ func (p *dshProcess) boundaryCall(ctx context.Context, method string, params map
 	}
 }
 
-func dshHostRequestFatal(ctx context.Context, err error) bool {
-	for _, reason := range []string{"dsh_connector_dispatch_uncertain", "dsh_connector_outcome_unknown"} {
-		if strings.Contains(err.Error(), reason) {
-			return true
-		}
+// A file change that may have applied is reported, not replayed. The model must
+// inspect the file before deciding; the harness never repeats the mutation.
+func dshWorkspaceToolReason(err error) string {
+	switch {
+	case strings.Contains(err.Error(), "dsh_connector_outcome_unknown"):
+		return "write_outcome_unknown: the previous file change may or may not have been applied. Do not repeat it blindly; read the file first, then decide whether to change it again."
+	case strings.Contains(err.Error(), "dsh_connector_dispatch_uncertain"):
+		return "write_not_dispatched: the change was refused before it ran because an earlier write is unverified. Read the file to confirm its state, then continue."
+	case strings.Contains(err.Error(), "dsh_workspace_changed"), strings.Contains(err.Error(), "dsh_workspace_conflict"):
+		return "write_conflict: the file changed since it was read, so this change was not applied. Re-read and retry."
 	}
-	if ctx.Err() == nil {
-		for _, reason := range []string{"tool_approval_unavailable", "tool_permission_cancelled"} {
-			if strings.Contains(err.Error(), reason) {
-				return true
-			}
-		}
+	return "workspace_mutation_denied: the change was not applied. Choose another approach or explain the limitation to the user."
+}
+
+// The model, not the session, decides what a failed tool means. The reason is
+// model-facing, so it states what happened and what may not be repeated.
+func dshHostToolReason(err error) string {
+	switch {
+	case strings.Contains(err.Error(), "dsh_canvas_outcome_unknown"):
+		return "canvas_outcome_unknown: the previous canvas write may or may not have been applied. Do not repeat it; verify the canvas, try a different approach, or explain the limitation to the user."
+	case strings.Contains(err.Error(), "dsh_connector_outcome_unknown"), strings.Contains(err.Error(), "dsh_connector_dispatch_uncertain"):
+		return "connector_outcome_unknown: the previous connector call may or may not have completed. Do not repeat it; try another tool or explain the limitation to the user."
+	case strings.Contains(err.Error(), "tool_approval_unavailable"), strings.Contains(err.Error(), "tool_permission_cancelled"):
+		return "tool_denied: the approval channel was unavailable or the call was cancelled. The tool did not run; choose another approach or ask the user."
+	case strings.Contains(err.Error(), "dsh_canvas_atomic_guard_unavailable"), strings.Contains(err.Error(), "dsh_canvas_changed"), strings.Contains(err.Error(), "dsh_canvas_session_changed"):
+		return "canvas_conflict: the canvas changed underneath this call, so it was not applied. Re-read the canvas and retry."
 	}
-	return false
+	return "host_tool_denied: the tool failed before it could apply. It is safe to use a different tool or approach."
 }
 
 // Reads notifications in wire order before the response. Native approvals are
@@ -418,20 +432,26 @@ func (p *dshProcess) call(ctx context.Context, method string, params any, event 
 								if cancelErr := beginCancel(); cancelErr != nil {
 									return nil, err
 								}
-							} else if strings.Contains(err.Error(), "dsh_connector_dispatch_uncertain") || strings.Contains(err.Error(), "dsh_connector_outcome_unknown") {
+							}
+							// A failed file change is a tool outcome, not a session
+							// failure. The model receives the reason and decides.
+							if ctx.Err() != nil {
 								return nil, err
 							}
-							response["error"] = map[string]any{"code": -32603, "message": "workspace_mutation_denied"}
+							response["error"] = map[string]any{"code": -32603, "message": dshWorkspaceToolReason(err)}
 						} else {
 							response["result"] = result
 						}
 					} else if f.Method == "aibertai/host-tool" && p.hostTool != nil {
 						result, err := p.hostTool(f.Params)
 						if err != nil {
-							if dshHostRequestFatal(ctx, err) {
+							// The SDK reports a failed tool as an isError result and the
+							// model chooses the next step. Only a dead context may end
+							// the run; a tool outcome never may.
+							if ctx.Err() != nil {
 								return nil, err
 							}
-							response["error"] = map[string]any{"code": -32603, "message": "host_tool_denied"}
+							response["error"] = map[string]any{"code": -32603, "message": dshHostToolReason(err)}
 						} else {
 							response["result"] = result
 						}

@@ -52573,10 +52573,11 @@ const zO = 20,
           null,
         );
         const J = t().views[P];
-        if ([Se.dshConnectorReconciliationRequired, Se.dshReconciliationRequired, Se.dshModelOutcomeUnknown, Se.dshModelResponseInterrupted].includes(J?.error) && et.kind === "electron" && ts()?.transport !== "relay" && !J.configuring) {
-          const epoch = p.epoch();
+        if ([Se.dshConnectorReconciliationRequired, Se.dshReconciliationRequired, Se.dshModelOutcomeUnknown, Se.dshModelResponseInterrupted, Se.dshCanvasOutcomeUnknown].includes(J?.error) && et.kind === "electron" && ts()?.transport !== "relay" && !J.configuring) {
+          const epoch = p.epoch(),
+            _cv = J?.error === Se.dshCanvasOutcomeUnknown;
           try {
-            const result = await L(P, "_aibertai/session/reconcile-workspace", { sessionId: P });
+            const result = await L(P, _cv ? "_aibertai/session/reconcile-canvas" : "_aibertai/session/reconcile-workspace", { sessionId: P });
             if (!p.current(epoch)) return;
             if (result?.reconciled) await z(P, "refresh", null);
           } catch (error) {

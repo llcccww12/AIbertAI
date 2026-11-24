@@ -2,9 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
+	"time"
 )
 
 // History-only recovery. The caller must authorize and exclude concurrent turns.
@@ -126,13 +131,93 @@ func dshVerifyCanvasResult(ctx context.Context, claim dshConnectorClaim, run wor
 	return nil
 }
 
+// Derived from the dispatch allowlist so a newly guarded canvas write can never
+// succeed at the bridge yet stay unreconcilable after an unknown outcome.
 func dshRecoverableCanvasTool(name string) bool {
-	switch name {
-	case designTextTool, designCreateHTMLTool, designCommitHTMLTool, designPreparePPTXTool, "canvas_create_image":
-		return true
-	default:
-		return false
+	return dshCanvasGuarded(name) && designWriteTool(name)
+}
+
+// A guarded write that never produced a result cannot be proven by SDK history.
+// The local canvas is the remaining evidence: if it still matches the digest
+// captured before dispatch, nothing was applied.
+func dshCanvasSettlementDecision(root *os.Root, session acpSession, claim dshConnectorClaim) (string, error) {
+	fail := errors.New("dsh_canvas_reconciliation_required")
+	if root == nil || claim.Kind != "canvas" || claim.State != "dispatch_claimed" || claim.CanvasBefore == nil {
+		return "", fail
 	}
+	var marker struct{ CanvasID string }
+	if design := workspaceDesign(root, session.ID); len(design) == 0 || json.Unmarshal(design, &marker) != nil || marker.CanvasID == "" || filepath.Base(marker.CanvasID) != marker.CanvasID {
+		return "", fail
+	}
+	canvas := readDesignJSON(root, filepath.Join(workspaceDataDir, "design", marker.CanvasID, "canvas.json"), maxDesktopSessionBytes)
+	if canvas == nil {
+		return "", fail
+	}
+	if fmt.Sprintf("%x", sha256.Sum256(canvas)) == *claim.CanvasBefore {
+		return "observed_not_applied", nil
+	}
+	return "observed_applied", nil
+}
+
+// Admission-time settlement. The user's next message is refused while a canvas
+// write is unresolved, so the same evidence check runs before rejecting it.
+func (h *relaySessionHost) settleStaleCanvasTurn(id string) error {
+	fail := errors.New("dsh_canvas_reconciliation_required")
+	if h.live == nil || h.live.store == nil || h.live.store.Root == nil || !validUUID(id) {
+		return fail
+	}
+	live := h.live
+	live.mu.Lock()
+	defer live.mu.Unlock()
+	row, ok := live.sessions[id]
+	if !ok || live.restarting || live.compacting[id] || live.activeTurns[id] != nil || !dshCanvasRecoveryAvailable(row) || !row.Turns[len(row.Turns)-1].Acked {
+		return fail
+	}
+	settled, err := dshSettleStaleCanvasWrite(live.store.Root, row)
+	if err != nil || !settled {
+		return fail
+	}
+	row.Turns = append([]acpTurn(nil), row.Turns...)
+	row.Turns[len(row.Turns)-1].DSHUserReviewed = true
+	return live.save(row)
+}
+
+// Settles an unrecoverable canvas write into user_reviewed so the session can
+// accept the next message. It never replays the write and never invents a
+// result: the decision records what the canvas showed.
+func dshSettleStaleCanvasWrite(root *os.Root, session acpSession) (bool, error) {
+	if root == nil || len(session.Turns) == 0 || !validUUID(session.ID) {
+		return false, nil
+	}
+	last := session.Turns[len(session.Turns)-1]
+	if !last.Failed || !last.Acked || last.DSHReconciled || last.DSHUserReviewed || last.FailureCode != "dsh_canvas_outcome_unknown" || len(last.ToolRuns) == 0 || !validUUID(last.Operation) {
+		return false, nil
+	}
+	run := last.ToolRuns[len(last.ToolRuns)-1]
+	if run.Call == nil || run.DSHCallID == "" || !dshRecoverableCanvasTool(run.Call.Function.Name) {
+		return false, nil
+	}
+	claim, err := connectorPending(root, session.ID, last.Operation, run.DSHCallID)
+	if err != nil || claim.State != "dispatch_claimed" || claim.Kind != "canvas" || claim.CanvasBefore == nil {
+		return false, nil
+	}
+	decision, err := dshCanvasSettlementDecision(root, session, claim)
+	if err != nil {
+		return false, err
+	}
+	sum := sha256.Sum256([]byte(strings.Join([]string{session.ID, claim.OperationID, claim.CallID, decision, *claim.CanvasBefore}, "\x00")))
+	claim.Review = &dshUserSideEffectReview{Decision: decision, Fingerprint: fmt.Sprintf("%x", sum), ReviewedAt: time.Now().UTC()}
+	claim.State = "user_reviewed"
+	if err = writeConnectorClaim(root, claim); err != nil {
+		return false, err
+	}
+	if err = root.Remove("dsh-connector-dispatch/" + session.ID + "/.pending"); err != nil {
+		return false, err
+	}
+	if err = syncConnectorDir(root, "dsh-connector-dispatch/"+session.ID); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func dshPendingCanvasWrite(turn acpTurn) bool {
@@ -192,6 +277,27 @@ func (h *relaySessionHost) recoverDSHCanvasSession(ctx context.Context, id strin
 	live.compacting[id] = true
 	live.mu.Unlock()
 	defer func() { live.mu.Lock(); delete(live.compacting, id); live.mu.Unlock() }()
+	// A write that never produced a result cannot be proven by SDK history. The
+	// canvas decides instead, so the session is never locked without an exit.
+	settled, settleErr := dshSettleStaleCanvasWrite(live.store.Root, detached)
+	if settleErr != nil {
+		return fail()
+	}
+	if settled {
+		live.mu.Lock()
+		defer live.mu.Unlock()
+		current, ok := live.sessions[id]
+		currentBytes, err := json.Marshal(current)
+		if !ok || err != nil || string(currentBytes) != string(snapshot) {
+			return fail()
+		}
+		current.Turns = append([]acpTurn(nil), current.Turns...)
+		current.Turns[len(current.Turns)-1].DSHUserReviewed = true
+		if live.save(current) != nil {
+			return fail()
+		}
+		return nil
+	}
 	var rebuilt acpTurn
 	var projectionSeq int64
 	options := dshSDKOptions{AfterReconcile: func(ctx context.Context, p *dshProcess) error {

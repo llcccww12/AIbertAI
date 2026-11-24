@@ -33,6 +33,7 @@ type dshConnectorClaim struct {
 	SDKSeq            *int64                   `json:"sdkSeq,omitempty"`
 	Target            *dshConnectorTarget      `json:"target,omitempty"`
 	Review            *dshUserSideEffectReview `json:"review,omitempty"`
+	CanvasBefore      *string                  `json:"canvasBefore,omitempty"`
 }
 
 func connectorClaimPath(session, operation, call string) string {
@@ -84,6 +85,14 @@ func readConnectorClaim(root *os.Root, name, session string) (dshConnectorClaim,
 	if claim.Kind != "" && claim.Kind != "workspace" && claim.Kind != "canvas" && claim.Kind != "native" {
 		return dshConnectorClaim{}, errors.New("dsh_connector_claim_invalid")
 	}
+	// The pre-dispatch canvas digest is the only evidence left when a guarded
+	// write never produced a result, so it is bound to canvas claims alone.
+	if claim.CanvasBefore != nil {
+		before, beforeErr := hex.DecodeString(*claim.CanvasBefore)
+		if claim.Kind != "canvas" || beforeErr != nil || len(before) != sha256.Size || hex.EncodeToString(before) != *claim.CanvasBefore {
+			return dshConnectorClaim{}, errors.New("dsh_connector_claim_invalid")
+		}
+	}
 	switch claim.State {
 	case "dispatch_claimed":
 		if claim.Output != nil || claim.SDKSeq != nil || (claim.Kind != "" && claim.Kind != "canvas" && claim.Kind != "native") {
@@ -94,7 +103,7 @@ func readConnectorClaim(root *os.Root, name, session string) (dshConnectorClaim,
 			return dshConnectorClaim{}, errors.New("dsh_connector_claim_invalid")
 		}
 	case "user_reviewed":
-		if claim.Kind != "workspace" || claim.Target != nil || claim.SDKSeq != nil || claim.Review == nil || !validDSHUserSideEffectReview(*claim.Review) || claim.Output != nil && len(*claim.Output) > dshConnectorMaxResult {
+		if (claim.Kind != "workspace" && claim.Kind != "canvas") || claim.Target != nil || claim.SDKSeq != nil || claim.Review == nil || !validDSHUserSideEffectReview(*claim.Review) || claim.Output != nil && len(*claim.Output) > dshConnectorMaxResult {
 			return dshConnectorClaim{}, errors.New("dsh_connector_claim_invalid")
 		}
 	case "reconciled":

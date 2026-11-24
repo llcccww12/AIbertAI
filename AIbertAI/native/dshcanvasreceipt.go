@@ -12,7 +12,7 @@ func dshCanvasResultDigest(output string) string {
 	return fmt.Sprintf("v1:%d:%x", len(output), sum)
 }
 
-func dshCanvasMarkClaim(effect *dshSideEffect) error {
+func dshCanvasMarkClaim(effect *dshSideEffect, before string) error {
 	if effect == nil {
 		return errors.New("dsh_connector_outcome_unknown")
 	}
@@ -20,7 +20,7 @@ func dshCanvasMarkClaim(effect *dshSideEffect) error {
 	if err != nil || claim.State != "dispatch_claimed" || claim.Kind != "" {
 		return errors.New("dsh_connector_outcome_unknown")
 	}
-	claim.Kind = "canvas"
+	claim.Kind, claim.CanvasBefore = "canvas", &before
 	if err = writeConnectorClaim(effect.root, claim); err != nil {
 		return errors.Join(errors.New("dsh_connector_outcome_unknown"), err)
 	}
