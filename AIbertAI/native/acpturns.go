@@ -102,6 +102,7 @@ type acpTurn struct {
 	Ended                  time.Time             `json:"endedAt,omitzero"`
 	Prompt                 string                `json:"prompt"`
 	ReportText             bool                  `json:"reportText,omitempty"`
+	Resources              []turnResource        `json:"resources,omitempty"`
 	ModelInput             string                `json:"modelInput,omitempty"`
 	DSHHasImages           bool                  `json:"dshHasImages,omitempty"`
 	DSHInputNotAdmitted    bool                  `json:"dshInputNotAdmitted,omitempty"`
@@ -337,7 +338,7 @@ func (h *relaySessionHost) submitACPTurn(ctx context.Context, id string, index i
 }
 
 func (t acpTurn) reportFacts(cwd string) turnReportFacts {
-	facts := turnReportFacts{Tokens: t.Tokens, Permissions: &t.Permissions}
+	facts := turnReportFacts{Tokens: t.Tokens, Permissions: &t.Permissions, Resources: t.Resources, SkillEvents: t.skillEvents()}
 	if t.DSHContext.valid() {
 		window := t.DSHContext.Window
 		facts.ContextUsed, facts.ContextWindow = t.DSHContext.Used, &window
@@ -470,6 +471,9 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 						var releaseExpert func()
 						turnCtx, releaseExpert, err = h.bindDSHExpert(turnCtx, session)
 						defer releaseExpert()
+					}
+					if err == nil {
+						turn.recordDSHResources(turnCtx, session)
 					}
 					var modelPrompt string
 					if err == nil && !background {

@@ -665,6 +665,7 @@ type dshHostToolBridge struct {
 
 type dshExpertInstructionsKey struct{}
 type dshRuleInstructionsKey struct{}
+type dshAppliedRulesKey struct{}
 type dshHostToolBridgesKey struct{}
 type dshSideEffectRootKey struct{}
 

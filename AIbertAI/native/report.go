@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -47,6 +46,8 @@ type turnReportFacts struct {
 	ContextWindow *int64
 	Files         *reportedFiles
 	Compactions   int
+	Resources     []turnResource
+	SkillEvents   []map[string]any
 }
 
 // The backend rejects a turn with more tool facts than this.
@@ -161,7 +162,7 @@ func (c *client) reportTurn(ctx context.Context, auth authorization, machine, se
 	if selected == "" {
 		selected = modelID
 	}
-	snapshot := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("[]")))
+	snapshot, items := resourceSnapshot(facts.Resources)
 	turn := map[string]any{
 		"turn_index": index, "input_seq": index, "started_at": started, "ended_at": ended,
 		"stop_reason": stop, "model_id": selected, "resources_snapshot_id": snapshot,
@@ -192,9 +193,12 @@ func (c *client) reportTurn(ctx context.Context, auth authorization, machine, se
 	if facts.Compactions > 0 {
 		turn["compactions"] = facts.Compactions
 	}
+	if len(facts.SkillEvents) != 0 {
+		turn["skill_events"] = facts.SkillEvents
+	}
 	payload, err := json.Marshal(map[string]any{
 		"facts_version": 1, "turns": []any{turn},
-		"snapshots": []any{map[string]any{"snapshot_id": snapshot, "items": []any{}}},
+		"snapshots": []any{map[string]any{"snapshot_id": snapshot, "items": items}},
 	})
 	if err != nil {
 		return err

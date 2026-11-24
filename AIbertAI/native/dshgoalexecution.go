@@ -208,6 +208,7 @@ func (h *relaySessionHost) runDSHGoalTurn(ctx context.Context, ws *websocket.Con
 	if err != nil {
 		return err
 	}
+	sdkTurn.recordDSHResources(ctx, session)
 	if h.local != nil {
 		bridges, instructions, err := h.dshTurnHostTools(ctx, ws, request, session, &sdkTurn)
 		if err != nil {

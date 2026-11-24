@@ -346,6 +346,7 @@ func (h *relaySessionHost) bindDSHRules(ctx context.Context) (context.Context, e
 		return ctx, err
 	}
 	var text strings.Builder
+	var applied []string
 	for _, raw := range rows {
 		var rule struct {
 			ID, Content string
@@ -355,6 +356,7 @@ func (h *relaySessionHost) bindDSHRules(ctx context.Context) (context.Context, e
 			!rule.Required && !enabled["rule/server/"+rule.ID] {
 			continue
 		}
+		applied = append(applied, rule.ID)
 		text.WriteString("\n\n")
 		text.WriteString(strings.TrimSpace(rule.Content))
 		if text.Len() > 128<<10 {
@@ -364,5 +366,6 @@ func (h *relaySessionHost) bindDSHRules(ctx context.Context) (context.Context, e
 	if text.Len() == 0 {
 		return ctx, nil
 	}
+	ctx = context.WithValue(ctx, dshAppliedRulesKey{}, applied)
 	return context.WithValue(ctx, dshRuleInstructionsKey{}, strings.TrimSpace(text.String())), nil
 }
