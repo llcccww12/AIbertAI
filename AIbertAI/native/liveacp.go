@@ -19,28 +19,31 @@ import (
 )
 
 type acpLive struct {
-	dsh             *dshRuntimeConfig
-	client          *client
-	auth            authorization
-	source          *desktopSourceAuth
-	key             string
-	protocol        string
-	dir, cwd        string
-	cloudWorkspace  string
-	store           *desktopSessionStore
-	modelBudget     int
-	modelLocked     bool
-	workspaces      *desktopWorkspaces
-	connectorPrefs  connectorPreferences
-	settings        desktopSettings
-	mu              sync.Mutex
-	operations      map[string]string
-	sessions        map[string]acpSession
-	activeTurns     map[string]context.CancelFunc
-	dshStoppedTurns map[string]string
-	queueWorkers    map[string]chan struct{}
-	compacting      map[string]bool
-	restarting      bool
+	dsh            *dshRuntimeConfig
+	client         *client
+	auth           authorization
+	source         *desktopSourceAuth
+	key            string
+	protocol       string
+	dir, cwd       string
+	cloudWorkspace string
+	store          *desktopSessionStore
+	modelBudget    int
+	modelLocked    bool
+	workspaces     *desktopWorkspaces
+	connectorPrefs connectorPreferences
+	settings       desktopSettings
+	mu             sync.Mutex
+	// deviceReport refreshes the admin client inventory; see touchDevice.
+	deviceReport     func(context.Context, authorization) error
+	deviceReportedAt time.Time
+	operations       map[string]string
+	sessions         map[string]acpSession
+	activeTurns      map[string]context.CancelFunc
+	dshStoppedTurns  map[string]string
+	queueWorkers     map[string]chan struct{}
+	compacting       map[string]bool
+	restarting       bool
 }
 
 func (l *acpLive) authorization(ctx context.Context) (authorization, error) {

@@ -309,7 +309,7 @@ func (h *relaySessionHost) submitACPTurn(ctx context.Context, id string, index i
 		return err
 	}
 	if register {
-		if err := live.client.registerSession(ctx, auth, h.reportMachine(), id, turn.Model, turn.Started); err != nil {
+		if err := live.client.registerSession(ctx, auth, h.reportMachine(), id, turn.Model, turn.reportTitle(), turn.Started); err != nil {
 			return err
 		}
 	}
@@ -447,12 +447,13 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 		}
 		if err == nil {
 			turn.ReportText = turn.DSHMemberID == "" && h.collectTurnText(turnCtx)
+			live.touchDevice(turnCtx)
 		}
 		if err == nil && index == 0 {
 			var auth authorization
 			auth, err = live.authorization(turnCtx)
 			if err == nil {
-				err = live.client.registerSession(turnCtx, auth, h.reportMachine(), id, turn.Model, turn.Started)
+				err = live.client.registerSession(turnCtx, auth, h.reportMachine(), id, turn.Model, turn.reportTitle(), turn.Started)
 			}
 			register = err != nil
 		}

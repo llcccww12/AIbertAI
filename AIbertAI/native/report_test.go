@@ -2,10 +2,12 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -188,5 +190,50 @@ func TestTurnReportAggregatesToolsWithinBackendLimit(t *testing.T) {
 	now := time.Now()
 	if err := c.reportTurn(t.Context(), authorization{Access: "fixture"}, "machine", "session", modelID, 1, 0, now, now, "complete", modelUsage{}, reportedInput{Kind: "prompt"}, turnReportFacts{}, tools...); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDeviceReportAndSessionTitle(t *testing.T) {
+	bodies := map[string]map[string]any{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if r.Method != http.MethodPut || json.NewDecoder(r.Body).Decode(&body) != nil {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		bodies[r.URL.Path] = body
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+	c := &client{server: server.URL, http: server.Client()}
+	auth := authorization{Access: "fixture"}
+	const machine, session = "e1bd985c-9f71-4b85-937a-c41b1b104d38", "e2bd985c-9f71-4b85-937a-c41b1b104d38"
+	if err := c.reportDevice(t.Context(), auth, relayDevice{machine: machine, name: "Mac"}); err != nil {
+		t.Fatal(err)
+	}
+	device := bodies["/api/v1/endpoints/"+machine]
+	if device["device_name"] != "Mac" || device["client_type"] != "desktop" || device["os_version"] == "" || device["client_version"] != version {
+		t.Fatalf("device report = %v", device)
+	}
+	turn := acpTurn{Prompt: "  整理\n本周 销售数据  ", ReportText: true}
+	if err := c.registerSession(t.Context(), auth, machine, session, "", turn.reportTitle(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if got := bodies["/api/v1/sessions/"+session]; got["title"] != "整理 本周 销售数据" || got["title_source"] != "prompt" {
+		t.Fatalf("session title = %v", got)
+	}
+	turn.ReportText = false
+	if err := c.registerSession(t.Context(), auth, machine, session, "", turn.reportTitle(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := bodies["/api/v1/sessions/"+session]["title"]; ok {
+		t.Fatal("title must not be reported when conversation text is not collected")
+	}
+
+	calls := 0
+	live := &acpLive{auth: auth, deviceReport: func(context.Context, authorization) error { calls++; return nil }}
+	live.touchDevice(t.Context())
+	live.touchDevice(t.Context())
+	if calls != 1 {
+		t.Fatalf("device touched %d times, want 1 within five minutes", calls)
 	}
 }

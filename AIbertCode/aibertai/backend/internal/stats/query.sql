@@ -1,6 +1,11 @@
 -- name: ListHistory :many
 SELECT
-    jsonb_build_object('id', s.id, 'title', s.title, 'title_source', s.title_source, 'user_id', s.owner_user_id, 'user_name', u.name, 'user_email', u.email,
+    -- Untitled sessions fall back to their first reported prompt (empty when text is not collected).
+    jsonb_build_object('id', s.id, 'title', coalesce(nullif(btrim(s.title), ''), (
+            SELECT left(regexp_replace(btrim(t.input_text), '\s+', ' ', 'g'), 40) FROM session_turns t
+            WHERE t.session_id = s.id AND btrim(coalesce(t.input_text, '')) <> ''
+            ORDER BY t.turn_index LIMIT 1), ''),
+        'title_source', s.title_source, 'user_id', s.owner_user_id, 'user_name', u.name, 'user_email', u.email,
         'user_avatar_url', coalesce(nullif(btrim(u.custom_avatar_url), ''), nullif(btrim(u.avatar_url), '')),
         'started_at', s.started_at, 'last_active_at', s.last_active_at, 'turn_count', CASE WHEN s.turn_count_verified THEN s.turn_count ELSE NULL END)
 FROM

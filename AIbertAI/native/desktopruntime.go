@@ -395,6 +395,10 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 		return fmt.Errorf("desktop device identity: %w", err)
 	}
 	_ = bridge.CloseNow()
+	reportDevice := func(ctx context.Context, auth authorization) error { return c.reportDevice(ctx, auth, device) }
+	if err := reportDevice(startup, auth); err != nil {
+		fmt.Fprintf(os.Stderr, "device report failed: %v\n", err)
+	}
 	key, err := c.createModelKey(startup, auth)
 	if validUUID(key.ID) {
 		defer func() {
@@ -428,6 +432,7 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 	live.client, live.source, live.key, live.protocol = c, source, key.Value, model.Protocol
 	live.modelBudget = model.inputBudget()
 	live.modelLocked = modelLocked
+	live.deviceReport, live.deviceReportedAt = reportDevice, time.Now()
 	if err := configureInstalledDSH(live, profile, serverID, device.machine); err != nil {
 		live.store.Close()
 		live.workspaces.root.Close()
