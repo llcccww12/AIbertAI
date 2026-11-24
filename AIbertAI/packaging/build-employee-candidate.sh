@@ -189,6 +189,18 @@ PYCODE
 fi
 ditto "$project/code/app/out" "$resources/app/out"
 cp "$project/code/app/package.json" "$resources/app/"
+if [[ $release != true ]]; then
+  python3 - "$resources/app/package.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+path = Path(sys.argv[1])
+package = json.loads(path.read_text())
+# Candidate packages must not reuse the installed AIbertAI profile.
+package["productName"] = "AIbertAI Candidate"
+path.write_text(json.dumps(package, indent=2) + "\n")
+PY
+fi
 cp -RL "$project/code/app/node_modules" "$resources/app/node_modules"
 if [[ $target == win-x64 ]]; then
   find "$resources/app/node_modules" -maxdepth 2 -name '*darwin-arm64*' -exec rm -rf {} +
