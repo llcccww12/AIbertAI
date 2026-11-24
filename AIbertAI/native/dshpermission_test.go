@@ -162,6 +162,8 @@ func TestDSHWorkspaceWriteFollowsPermissionLevel(t *testing.T) {
 	host := &relaySessionHost{local: &desktopRuntimeAccess{}, live: live}
 	plain := `{"file_path":"a.txt","content":"x"}`
 	escalated := `{"file_path":"a.txt","content":"x","sandbox_permissions":"workspace-write","justification":"save a.txt"}`
+	// A new file in folders that do not exist yet passes the path check like DSH.
+	nested := `{"file_path":"newdir/sub/a.txt","content":"x"}`
 	for _, tc := range []struct {
 		mode, args string
 		want       error
@@ -169,6 +171,7 @@ func TestDSHWorkspaceWriteFollowsPermissionLevel(t *testing.T) {
 		{"read-only", plain, errWorkspaceReadOnly},
 		{"read-only", escalated, errors.New("tool_approval_unavailable")},
 		{"workspace-write", plain, errRelayAccess},
+		{"workspace-write", nested, errRelayAccess},
 		{"workspace-write", escalated, errors.New("tool_approval_unavailable")},
 		{"full-access", escalated, errRelayAccess},
 	} {
@@ -191,5 +194,8 @@ func TestDSHWorkspaceWriteFollowsPermissionLevel(t *testing.T) {
 		if err == nil || err.Error() != tc.want.Error() {
 			t.Fatalf("%s %s: %v, want %v", tc.mode, tc.args, err, tc.want)
 		}
+	}
+	if _, err := os.Stat(filepath.Join(live.workspaces.shared, "newdir")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("folders must not be created before the write is authorized: %v", err)
 	}
 }

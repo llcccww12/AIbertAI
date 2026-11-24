@@ -255,6 +255,8 @@ func dshWorkspaceToolReason(err error) string {
 		return "write_conflict: the file changed since it was read, so this change was not applied. Re-read and retry."
 	case errors.Is(err, errWorkspaceReadOnly):
 		return "read_only: this conversation is read-only, so the change was not applied. If the change is needed, call the tool again with sandbox_permissions \"workspace-write\" and a justification so the user can approve it, or explain the limitation to the user."
+	case strings.Contains(err.Error(), "dsh_workspace_history_unverified"):
+		return "history_unverified: this conversation's history could not be verified, so the change was not applied. Change the file with bash instead, or ask the user to continue in a new conversation."
 	case errors.Is(err, errWorkspacePath):
 		return "outside_workspace: write and edit only change files inside this conversation's workspace, so this change was not applied. Use a path inside the workspace, or change the file with bash; outside the workspace bash needs sandbox_permissions with a justification unless the session already has full access."
 	}

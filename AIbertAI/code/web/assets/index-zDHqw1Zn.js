@@ -114649,7 +114649,8 @@ const qwt = {
         dsh_model_service_unavailable: "模型服务暂时不可用。稍后或更换模型后，在本会话发送消息即可继续。",
         dsh_model_request_rejected: "模型拒绝了这次请求。调整输入或更换模型后，在本会话发送消息即可继续。",
         dsh_model_stream_ended: "模型输出中断，已收到的内容已保留。用量已核验，在本会话发送“继续”即可接着处理。",
-        dsh_model_output_limit: "本次输出已达到模型长度上限，已有内容已保留。在本会话发送“继续”即可接着处理。",
+        dsh_model_output_limit: "回答被截断，已有输出保留在对话中。发送“继续”可让模型接着输出。",
+        dsh_model_output_limit_title: "已达到输出 token 上限",
         dsh_model_content_refused: "模型的内容过滤器结束了本次输出。调整请求后，可以在本会话继续。",
         dsh_model_outcome_unknown: "网关已结束连接，已收到的内容和工具结果已保留。发送消息即可继续；如提示仍待核验，点「重新核验」查询回执。",
         dsh_model_response_interrupted: "模型输出中途断开，已收到的内容已保留。发送“继续”即可接着处理；如提示仍待核验，点「重新核验」查询回执。",
@@ -115974,7 +115975,7 @@ const qwt = {
       title: "文件",
       allFiles: "查看本会话的文件改动",
       sessionChanges: "本会话的文件改动",
-      changed: "{{count}} 个文件有改动",
+      changed: "已编辑 {{count}} 个文件",
       operation: { created: "新增", updated: "修改", deleted: "删除" },
       preview: "预览",
       content: "内容",
@@ -117792,7 +117793,8 @@ Start with the conclusion, then explain the reasoning.`,
         dsh_model_service_unavailable: "The model service is temporarily unavailable. Try again later or choose another model to continue in this chat.",
         dsh_model_request_rejected: "The model rejected this request. Adjust the input or choose another model, then send a message in this chat.",
         dsh_model_stream_ended: "The model stream ended early. The partial response is saved and usage has been verified. Send “continue” in this chat to pick up from there.",
-        dsh_model_output_limit: "The model reached its output limit. The partial response is saved. Send “continue” in this chat to pick up from there.",
+        dsh_model_output_limit: "The reply was cut off; earlier output is preserved in the conversation. Send “continue” to let the model resume.",
+        dsh_model_output_limit_title: "Output token limit reached",
         dsh_model_content_refused: "The model’s content filter ended this response. Adjust the request to continue in this chat.",
         dsh_model_outcome_unknown: "The gateway connection ended. Received content and tool results are saved. Send a message to continue; if it still needs verification, use Recheck.",
         dsh_model_response_interrupted: "The model stream was interrupted. Received content is saved. Send “continue” to resume; if it still needs verification, use Recheck.",
@@ -119245,8 +119247,8 @@ Start with the conclusion, then explain the reasoning.`,
       title: "Files",
       allFiles: "View files changed in this conversation",
       sessionChanges: "Changes in this conversation",
-      changed_one: "{{count}} file changed",
-      changed_other: "{{count}} files changed",
+      changed_one: "Edited {{count}} file",
+      changed_other: "Edited {{count}} files",
       operation: { created: "Added", updated: "Modified", deleted: "Deleted" },
       preview: "Preview",
       content: "Content",
@@ -154164,23 +154166,55 @@ function SidebarQuotaBar({ info: e, className: t }) {
     }),
   });
 }
-// 侧栏收起时额度显示为圆环：弧长 = 本周期剩余比例。
+// 侧栏收起时额度显示为细圆环，中心为剩余百分比；悬停时在右侧展开详情卡片。
 function SidebarQuotaRing({ info: e }) {
-  return l.jsxs("svg", {
+  return l.jsxs("span", {
     className: "sidebar-quota-ring",
     "data-status": e.status,
-    viewBox: "0 0 36 36",
     "aria-hidden": "true",
     children: [
-      l.jsx("circle", { className: "sidebar-quota-ring-track", cx: 18, cy: 18, r: 15 }),
-      l.jsx("circle", {
-        className: "sidebar-quota-ring-fill",
-        cx: 18,
-        cy: 18,
-        r: 15,
-        pathLength: 100,
-        strokeDasharray: `${e.percent} 100`,
+      l.jsxs("svg", {
+        viewBox: "0 0 36 36",
+        children: [
+          l.jsx("circle", { className: "sidebar-quota-ring-track", cx: 18, cy: 18, r: 16 }),
+          l.jsx("circle", {
+            className: "sidebar-quota-ring-fill",
+            cx: 18,
+            cy: 18,
+            r: 16,
+            pathLength: 100,
+            strokeDasharray: `${e.percent} 100`,
+          }),
+        ],
       }),
+      l.jsx("span", { className: "sidebar-quota-ring-value", children: Math.floor(e.percent) }),
+    ],
+  });
+}
+function SidebarQuotaCard({ info: e }) {
+  const { t } = Xe();
+  return l.jsxs(l.Fragment, {
+    children: [
+      l.jsxs("span", {
+        className: "sidebar-quota-card-head",
+        children: [
+          l.jsx("span", { children: e.label }),
+          l.jsx("span", { children: t("billing.remainingPercent", { percent: Math.floor(e.percent) }) }),
+        ],
+      }),
+      l.jsxs("span", {
+        className: "sidebar-quota-card-value",
+        children: [
+          l.jsx("strong", { children: e.balance.comparison + e.balance.integer }),
+          l.jsxs("span", { children: [" / ", e.quota] }),
+        ],
+      }),
+      l.jsx(SidebarQuotaBar, { info: e, className: "sidebar-quota-card-bar" }),
+      (e.reset || e.resetAt) &&
+        l.jsx("span", {
+          className: "sidebar-quota-card-reset",
+          children: e.resetAt ? t("billing.resetAt", { date: e.resetAt }) : e.reset,
+        }),
     ],
   });
 }
@@ -154189,14 +154223,19 @@ function SidebarQuota() {
     t = Jt((o) => o.ready),
     { show: n } = Ly(),
     r = useSidebarQuota(),
-    s = ir((o) => o.account);
+    s = ir((o) => o.account),
+    { state: c, isMobile: u } = vx(),
+    d = c === "collapsed" && !u;
   return l.jsxs(l.Fragment, {
     children: [
       l.jsx(m8t, { ready: t && !!s }),
       r &&
         l.jsx(aw, {
           className: "sidebar-quota-item",
-          children: l.jsxs("button", {
+          children: d
+            ? l.jsxs(ui, {
+                children: [
+                  l.jsx(di, { render: l.jsxs("button", {
             type: "button",
             className: "sidebar-quota",
             "data-status": r.status,
@@ -154206,7 +154245,48 @@ function SidebarQuota() {
               quota: r.quota,
               reset: r.reset,
             }),
-            title: r.resetAt ? e("billing.resetAt", { date: r.resetAt }) : void 0,
+            title: !d && r.resetAt ? e("billing.resetAt", { date: r.resetAt }) : void 0,
+            onClick: () => n("billing"),
+            children: [
+              l.jsxs("span", {
+                className: "sidebar-quota-head",
+                children: [
+                  l.jsx("span", { className: "sidebar-quota-label", children: r.label }),
+                  l.jsxs("span", {
+                    className: "sidebar-quota-value",
+                    children: [
+                      l.jsx("strong", { children: r.balance.comparison + r.balance.integer }),
+                      l.jsxs("span", { children: [" / ", r.quota] }),
+                    ],
+                  }),
+                ],
+              }),
+              l.jsx(SidebarQuotaBar, { info: r }),
+              r.reset &&
+                l.jsx("span", { className: "sidebar-quota-reset", children: r.reset }),
+              l.jsx(SidebarQuotaRing, { info: r }),
+            ],
+          }) }),
+                  l.jsx(fi, {
+                    side: "right",
+                    align: "end",
+                    sideOffset: 10,
+                    className: "sidebar-quota-card",
+                    children: l.jsx(SidebarQuotaCard, { info: r }),
+                  }),
+                ],
+              })
+            : l.jsxs("button", {
+            type: "button",
+            className: "sidebar-quota",
+            "data-status": r.status,
+            "aria-label": e("billing.quotaSummary", {
+              cycle: r.label,
+              balance: r.balance.comparison + r.balance.integer,
+              quota: r.quota,
+              reset: r.reset,
+            }),
+            title: !d && r.resetAt ? e("billing.resetAt", { date: r.resetAt }) : void 0,
             onClick: () => n("billing"),
             children: [
               l.jsxs("span", {
@@ -171857,6 +171937,16 @@ function t7e({ part: e }) {
     s = y.useId(),
     i = e.rawError?.trim() ? e.rawError : void 0,
     o = n && i ? PYe(i) : void 0;
+  // 与 DSH 一致：输出达到上限是可继续的提示，不按错误展示。
+  if (wn(e.reason) === Se.dshModelOutputLimit)
+    return l.jsxs("div", {
+      className: "message-limit-notice select-text",
+      role: "status",
+      children: [
+        l.jsx("strong", { className: "message-limit-title", children: t("errors.codes.dsh_model_output_limit_title") }),
+        l.jsx("span", { className: "message-limit-hint", children: ni(e.reason, t) }),
+      ],
+    });
   return l.jsxs("div", {
     className: "message-error-record",
     role: "note",
@@ -197331,6 +197421,18 @@ const K9e = (e) =>
       /\.(html?|md|markdown|png|jpe?g|gif|webp|svg)$/i.test(e.path)),
   YPt = (e) =>
     K9e(e) ? "preview" : e.operation === "deleted" ? "changes" : "content";
+// 与 DSH 的变更卡片一致：显示新增/删除行数。
+function ChangedFileStats({ added: e, deleted: t }) {
+  return !e && !t
+    ? null
+    : l.jsxs("span", {
+        className: "changed-file-stats",
+        children: [
+          l.jsxs("span", { "data-kind": "added", children: ["+", e || 0] }),
+          l.jsxs("span", { "data-kind": "deleted", children: ["\u2212", t || 0] }),
+        ],
+      });
+}
 function ZPt({ files: e, cwd: t, selected: n, onSelect: r }) {
   const { t: s } = Xe();
   return l.jsx("ul", {
@@ -197360,11 +197462,13 @@ function ZPt({ files: e, cwd: t, selected: n, onSelect: r }) {
                   a >= 0 && l.jsx("small", { children: o.slice(0, a) }),
                 ],
               }),
-              l.jsx("span", {
-                className: "changed-file-operation",
-                "data-operation": i.operation,
-                children: s("files.operation." + i.operation),
-              }),
+              i.added || i.deleted
+                ? l.jsx(ChangedFileStats, { added: i.added, deleted: i.deleted })
+                : l.jsx("span", {
+                    className: "changed-file-operation",
+                    "data-operation": i.operation,
+                    children: s("files.operation." + i.operation),
+                  }),
               l.jsx(ke, {
                 icon: zs,
                 size: 12,
@@ -197472,7 +197576,11 @@ function XPt({ files: e, cwd: t, onOpenFile: n }) {
             "data-open": s || void 0,
             "aria-hidden": "true",
           }),
-          r("files.changed", { count: e.length }),
+          l.jsx("span", { className: "reply-files-title", children: r("files.changed", { count: e.length }) }),
+          l.jsx(ChangedFileStats, {
+            added: e.reduce((u, d) => u + (d.added || 0), 0),
+            deleted: e.reduce((u, d) => u + (d.deleted || 0), 0),
+          }),
         ],
       }),
       l.jsxs("div", {

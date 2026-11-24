@@ -23,6 +23,7 @@ const https = require("node:https");
 const electronUpdater = require("electron-updater");
 const semver = require("semver");
 const Provider = require("electron-updater/out/providers/Provider");
+const DownloadedUpdateHelper = require("electron-updater/out/DownloadedUpdateHelper");
 function _interopNamespaceDefault(e) {
   const n = Object.create(null, { [Symbol.toStringTag]: { value: "Module" } });
   if (e) {
@@ -23317,63 +23318,88 @@ function createUpdateController(updater2, notify2, requiresElevation = false, op
     }
   };
 }
-const CACHE_MISS = new Error("No cached Windows update");
-class WindowsUpdater extends electronUpdater.NsisUpdater {
-  async restoreDownloadedUpdate(result) {
-    const updateInfoAndProvider = this.updateInfoAndProvider;
-    if (!result.isUpdateAvailable || !result.cancellationToken || !updateInfoAndProvider) return;
+// 私有部署的安装包没有 Developer ID 签名，也不是 NSIS 安装版；macOS 与 Windows 都下载与下载页相同的
+// 压缩包，退出后由独立脚本等待进程结束，再整体替换应用目录。
+const MAC_REPLACE_SCRIPT = `
+pid=$1 zip=$2 app=$3 run=$4
+exec >>"\${TMPDIR:-/tmp}/aibertai-update.log" 2>&1
+while kill -0 "$pid" 2>/dev/null; do sleep 0.5; done
+stage=$(mktemp -d "$(dirname "$app")/.aibertai-update.XXXXXX") || exit 1
+ditto -x -k "$zip" "$stage" || { rm -rf "$stage"; exit 1; }
+new=$(find "$stage" -maxdepth 1 -name '*.app' -type d | head -n 1)
+[ -n "$new" ] || { rm -rf "$stage"; exit 1; }
+old="$stage/previous.app"
+mv "$app" "$old" || { rm -rf "$stage"; exit 1; }
+if ! mv "$new" "$app"; then mv "$old" "$app"; rm -rf "$stage"; exit 1; fi
+rm -rf "$stage" "$zip"
+xattr -dr com.apple.quarantine "$app" 2>/dev/null
+[ "$run" = 1 ] && open "$app"
+exit 0
+`;
+const WINDOWS_REPLACE_SCRIPT = `
+param([int]$ProcessId, [string]$Zip, [string]$Dir, [string]$Exe, [int]$Run)
+$ErrorActionPreference = "Stop"
+Start-Transcript -Append -Path (Join-Path $env:TEMP "aibertai-update.log") | Out-Null
+Wait-Process -Id $ProcessId -ErrorAction SilentlyContinue
+$parent = Split-Path -Parent $Dir
+$stage = Join-Path $parent (".aibertai-update-" + [guid]::NewGuid().ToString("N"))
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+[IO.Compression.ZipFile]::ExtractToDirectory($Zip, $stage)
+$new = Get-ChildItem -LiteralPath $stage -Directory | Select-Object -First 1
+if (-not $new) { Remove-Item -LiteralPath $stage -Recurse -Force; exit 1 }
+$old = Join-Path $stage "previous"
+# 运行时子进程可能稍晚退出，目录被占用时重试。
+for ($i = 0; $i -lt 120; $i++) {
+  try { Move-Item -LiteralPath $Dir -Destination $old; break } catch { Start-Sleep -Milliseconds 500 }
+}
+if (-not (Test-Path -LiteralPath $old)) { Remove-Item -LiteralPath $stage -Recurse -Force; exit 1 }
+try { Move-Item -LiteralPath $new.FullName -Destination $Dir } catch { Move-Item -LiteralPath $old -Destination $Dir; Remove-Item -LiteralPath $stage -Recurse -Force; exit 1 }
+Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $Zip -Force -ErrorAction SilentlyContinue
+if ($Run -eq 1) { Start-Process -FilePath (Join-Path $Dir $Exe) }
+`;
+class ArchiveReplaceUpdater extends electronUpdater.BaseUpdater {
+  constructor() {
+    super();
+    // 安装包不带 app-update.yml，缓存目录在此指定。
+    this.downloadedUpdateHelper = new DownloadedUpdateHelper.DownloadedUpdateHelper(node_path.join(this.app.baseCachePath, "aibertai-updater"));
+  }
+  doDownloadUpdate(downloadUpdateOptions) {
+    const provider = downloadUpdateOptions.updateInfoAndProvider.provider;
+    const fileInfo = Provider.findFile(provider.resolveFiles(downloadUpdateOptions.updateInfoAndProvider.info), "zip");
+    return this.executeDownload({
+      fileExtension: "zip",
+      fileInfo,
+      downloadUpdateOptions,
+      task: (updateFile, downloadOptions) => this.httpExecutor.download(fileInfo.url, updateFile, downloadOptions)
+    });
+  }
+  doInstall(options2) {
+    const zip = this.installerPath;
+    const run = options2.isForceRunAfter ? "1" : "0";
+    const target = process.platform === "darwin" ? node_path.resolve(process.execPath, "../../..") : node_path.dirname(process.execPath);
+    if (process.platform === "darwin" && !target.endsWith(".app")) throw new Error("无法定位当前应用，请从下载页手动安装新版。");
     try {
-      const fileInfo = Provider.findFile(updateInfoAndProvider.provider.resolveFiles(updateInfoAndProvider.info), "exe");
-      if (!fileInfo || fileInfo.packageInfo) return;
-      await this.executeDownload({
-        fileExtension: "exe",
-        fileInfo,
-        downloadUpdateOptions: { updateInfoAndProvider, requestHeaders: {}, cancellationToken: result.cancellationToken },
-        // SDK 先验证缓存，命中才发布 update-downloaded；未命中直接结束，禁止回退到网络下载。
-        task: () => Promise.reject(CACHE_MISS)
-      });
-    } catch (error) {
-      if (error !== CACHE_MISS) this._logger.warn(`Cannot restore cached Windows update: ${String(error)}`);
+      node_fs.accessSync(node_path.dirname(target), node_fs.constants.W_OK);
+    } catch {
+      throw new Error(`没有写入 ${node_path.dirname(target)} 的权限，请从下载页手动安装新版。`);
     }
+    let child;
+    if (process.platform === "darwin") {
+      child = node_child_process.spawn("/bin/sh", ["-c", MAC_REPLACE_SCRIPT, "sh", String(process.pid), zip, target, run], { detached: true, stdio: "ignore" });
+    } else {
+      const script = node_path.join(node_os.tmpdir(), `aibertai-update-${process.pid}.ps1`);
+      node_fs.writeFileSync(script, WINDOWS_REPLACE_SCRIPT, "utf8");
+      child = node_child_process.spawn("powershell.exe", [
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", script,
+        "-ProcessId", String(process.pid), "-Zip", zip, "-Dir", target, "-Exe", node_path.basename(process.execPath), "-Run", run
+      ], { detached: true, stdio: "ignore", windowsHide: true });
+    }
+    child.unref();
+    return true;
   }
 }
-class MacUpdater extends electronUpdater.MacUpdater {
-  installing = false;
-  quitAndInstall() {
-    if (this.installing) return;
-    this.installing = true;
-    const clear = () => {
-      this.installing = false;
-      electron.autoUpdater.removeListener("update-downloaded", onReady2);
-      electron.autoUpdater.removeListener("error", clear);
-      electron.autoUpdater.removeListener("update-not-available", onUnavailable);
-    };
-    const onReady2 = () => {
-      clear();
-      try {
-        if (this.autoRunAppAfterInstall) electron.autoUpdater.quitAndInstall();
-        else this.app.quit();
-      } catch (error) {
-        this.dispatchError(error instanceof Error ? error : new Error(String(error)));
-      }
-    };
-    const onUnavailable = () => {
-      clear();
-      this.dispatchError(new Error(ErrorCode.updateNotReady));
-    };
-    electron.autoUpdater.once("update-downloaded", onReady2);
-    electron.autoUpdater.once("error", clear);
-    electron.autoUpdater.once("update-not-available", onUnavailable);
-    try {
-      electron.autoUpdater.checkForUpdates();
-    } catch (error) {
-      clear();
-      throw error;
-    }
-  }
-}
-const windowsUpdater = process.platform === "win32" ? new WindowsUpdater() : void 0;
-const autoUpdater = windowsUpdater ?? (process.platform === "darwin" ? new MacUpdater() : electronUpdater.autoUpdater);
+const autoUpdater = ["darwin", "win32"].includes(process.platform) ? new ArchiveReplaceUpdater() : electronUpdater.autoUpdater;
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1e3;
 const SESSION_END_GRACE_MS = 60 * 1e3;
 const version = (args) => [text(args[0], ErrorCode.invalidUpdateVersion, 64)];
@@ -23386,11 +23412,11 @@ function sessionEnding() {
   suspendForSessionEnd?.();
 }
 function aibertaiUpdateFeed(override, privateOrigin) {
-  if (!override) return null;
-  const url = new URL(override);
-  const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
-  if ((url.protocol !== "https:" && !(loopback && url.protocol === "http:")) || url.username || url.password) {
-    throw new Error("更新地址须为 HTTPS URL，且不能包含用户名或密码；本机测试可用回环 HTTP 地址。");
+  // 未指定时使用登录的私有后端下发布的更新目录，换部署地址无需重新打包。
+  if (!override && !privateOrigin) return null;
+  const url = new URL(override || "/downloads/updates/", privateOrigin);
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
+    throw new Error("更新地址须为 HTTP 或 HTTPS URL，且不能包含用户名或密码。");
   }
   if (privateOrigin && !matchesPrivateBackendOrigin(url.href, privateOrigin)) {
     throw new Error("更新地址须与私有后端同源。");
@@ -23490,13 +23516,12 @@ function setupUpdater(onStatus = () => {
     preferences,
     // Windows 避免关机中途安装；macOS 避免把可能被新版替代的包提前交给无法撤销的原生更新器。
     installOnQuit: process.platform === "linux",
-    restoreDownloadedUpdate: windowsUpdater ? (result) => windowsUpdater.restoreDownloadedUpdate(result) : void 0,
     // 会话正在结束时同样拒绝：已下载的状态不变，过了宽限期还能再装
     canInstall: () => sessionEnded ? ErrorCode.updateSessionEnding : options2.canInstall?.(),
     savePreferences: (updates) => {
       writePrefsPatch({ updates });
     },
-    // NSIS 会终止仍占用安装目录的进程；先走 before-quit，等待 runtime 收尾。
+    // 替换脚本要等进程退出；先走 before-quit，等待 runtime 收尾。
     scheduleInstall: process.platform === "win32" ? (install) => {
       pendingInstall = install;
       electron.app.quit();

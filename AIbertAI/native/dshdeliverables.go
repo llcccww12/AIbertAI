@@ -87,9 +87,9 @@ func (t acpTurn) presentedFiles(cwd string) []dshPresentedFile {
 
 // mutatedFiles lists the workspace files this turn changed, in the shape the
 // client's changed-file list expects.
-func (t acpTurn) mutatedFiles(cwd string) []map[string]string {
-	var files []map[string]string
-	seen := make(map[string]bool)
+func (t acpTurn) mutatedFiles(cwd string) []map[string]any {
+	var files []map[string]any
+	seen := make(map[string]int)
 	for _, run := range t.ToolRuns {
 		if run.Call == nil || run.Report.Failed != 0 {
 			continue
@@ -112,15 +112,17 @@ func (t acpTurn) mutatedFiles(cwd string) []map[string]string {
 			path = relative
 		}
 		path = filepath.ToSlash(path)
-		if seen[path] {
+		if index, ok := seen[path]; ok {
+			files[index]["added"] = files[index]["added"].(int) + run.FileAdded
+			files[index]["deleted"] = files[index]["deleted"].(int) + run.FileDeleted
 			continue
 		}
-		seen[path] = true
+		seen[path] = len(files)
 		operation := run.FileOperation
 		if operation == "" {
 			operation = "updated"
 		}
-		files = append(files, map[string]string{"path": path, "operation": operation})
+		files = append(files, map[string]any{"path": path, "operation": operation, "added": run.FileAdded, "deleted": run.FileDeleted})
 	}
 	return files
 }

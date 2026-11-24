@@ -276,6 +276,9 @@ if [[ $target == mac-arm64 ]]; then
     # resource after the manifest digest was embedded in the native binary.
     python3 "$project/dsh-integration/manifest.py" verify "$resources/dsh" --manifest-sha256 "$dsh_manifest_sha256"
   fi
+  # 应用内更新下载此压缩包并整体替换 .app，需与下载页的 DMG 同时发布。
+  update_zip="${artifact%.dmg}.zip"
+  ditto -c -k --keepParent "$app" "$stage/$update_zip"
   if [[ $release == true ]]; then
     mv "$app" "$image_source/"
   fi
@@ -292,3 +295,40 @@ fi
 
 (cd "$stage" && shasum -a 256 "$artifact" > "$artifact.sha256")
 mv "$stage/$artifact" "$stage/$artifact.sha256" "$output/"
+
+# 发布 updates/ 目录到私有后端的 /downloads/updates/，员工端从登录的后端检查更新。
+if [[ $target == win-x64 ]]; then
+  update_zip=$artifact
+  channel=latest.yml
+  cp "$output/$artifact" "$stage/$update_zip"
+else
+  channel=latest-mac.yml
+fi
+mkdir -p "$output/updates"
+python3 - "$stage/$update_zip" "$project/code/app/package.json" "$output/updates/$channel" <<'PY'
+import base64
+import hashlib
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+archive, package, channel = map(Path, sys.argv[1:])
+digest = hashlib.sha512()
+with archive.open("rb") as f:
+    for chunk in iter(lambda: f.read(1 << 20), b""):
+        digest.update(chunk)
+sha512 = base64.b64encode(digest.digest()).decode()
+version = json.loads(package.read_text())["version"]
+size = archive.stat().st_size
+channel.write_text(f"""version: {version}
+files:
+  - url: {archive.name}
+    sha512: {sha512}
+    size: {size}
+path: {archive.name}
+sha512: {sha512}
+releaseDate: '{datetime.now(timezone.utc).isoformat()}'
+""")
+PY
+mv "$stage/$update_zip" "$output/updates/"
