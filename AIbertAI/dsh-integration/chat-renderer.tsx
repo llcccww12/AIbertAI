@@ -1,11 +1,13 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
-import { MarkdownDelegateProvider, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { DisclosureRow, IconContextInjectionOutlineRegular, MarkdownDelegateProvider, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { PartialArguments } from 'sdk/util/values/src/partial-json.ts'
 import { GenericToolCard } from 'sdk/client/ui-tool/src/client/tool/toolviews/GenericToolCard.tsx'
 import { RunningStatus } from 'sdk/client/ui-chat/src/client/chat/RunningStatus.tsx'
 import { ReasoningRow } from 'sdk/client/ui-chat/src/client/chat/ReasoningRow.tsx'
 import { TurnTriggerNodeView } from 'sdk/client/ui-chat/src/client/chat/TurnTriggerNodeView.tsx'
 import { TurnProcessNodeView } from 'sdk/client/ui-chat/src/client/chat/TurnProcessNodeView.tsx'
+import { ContextInjectionRow } from 'sdk/client/ui-chat/src/client/chat/ContextInjectionRow.tsx'
+import { contextForm, contextProducer } from 'sdk/client/ui-chat/src/client/conversation-nodes/event-projection.ts'
 import { TurnNavigator } from 'sdk/client/ui-chat/src/client/chat/TurnNavigator.tsx'
 import { markdownLabels } from 'sdk/client/ui-chat/src/client/markdown-labels.ts'
 import { zh as chatZh, en as chatEn } from 'sdk/client/ui-chat/src/client/locale.ts'
@@ -108,6 +110,19 @@ export function EmployeeTurnNavigator({ items, activeTurn, onNavigate, viewportH
   }}><TurnNavigator items={items} activeTurn={activeTurn} busyTurn={null} onNavigate={onNavigate} t={t} /></div>
 }
 
+// DSH groups a step's injected context under "已注入上下文"; each entry is
+// DSH's own context row, built from the source the host recorded.
+function ContextInjections({ entries, t }) {
+  const [open, setOpen] = useState(false)
+  return <DisclosureRow icon={<IconContextInjectionOutlineRegular size={14} />}
+    title={t('message.stepProcess.done.context')} open={open} expandable expandOnRowClick
+    onToggle={() => setOpen(value => !value)}>
+    {entries.map(entry => <ContextInjectionRow key={entry.id}
+      content={[{ type: 'text', text: entry.truncated ? entry.text + '\n…' : entry.text }]}
+      source={entry.source} producer={contextProducer(entry.source)} form={contextForm(entry.source)} t={t} />)}
+  </DisclosureRow>
+}
+
 const noMenu = () => undefined
 const noContextMenu = () => ({ getTriggerProps: noMenu })
 const presentation = selector => selector({ settledReasoningPreview: true })
@@ -206,7 +221,14 @@ export default function NativeReply({ message, sessionId, toolCalls, streaming, 
     </Fragment>)
     memberNotices.set(position, rows)
   }
-  const hasProcess = parts.some(processPart)
+  const injections = new Map()
+  for (const entry of message.dshInjected ?? []) {
+    const position = entry.liveAfterParts ?? (entry.afterTools === 0 ? 0 : callPositions[entry.afterTools - 1] ?? parts.length)
+    injections.set(position, [...(injections.get(position) ?? []), entry])
+  }
+  const injectionRows = position => processOpen && injections.has(position)
+    ? <ContextInjections key={'context-' + position} entries={injections.get(position)} t={t} /> : null
+  const hasProcess = parts.some(processPart) || injections.size > 0
   useEffect(() => { onHistoryOpenChange?.(hasProcess && processOpen)
     return () => onHistoryOpenChange?.(false)
   }, [hasProcess, processOpen, onHistoryOpenChange])
@@ -239,8 +261,9 @@ export default function NativeReply({ message, sessionId, toolCalls, streaming, 
           subagentCount: parts.filter(p => toolCalls[p.toolCallId]?.name?.startsWith('subagent')).length } }}
         turnProcess={{ foldable: true, hasContent: hasProcess, open: processOpen, setOpen: setExpanded }} t={t} />}
       {parts.map((part, index) => <Fragment key={part.toolCallId ?? index}>
-        {memberNotices.get(index)}{renderPart(part, index)}
+        {injectionRows(index)}{memberNotices.get(index)}{renderPart(part, index)}
       </Fragment>)}
+      {injectionRows(parts.length)}
       {memberNotices.get(parts.length)}
     {message.dshTeamBoard && <div data-dsh-task-snapshot={closed || undefined}><TeamBoard sessionId={message.dshTeamBoard.sessionId}
         useProjection={() => message.dshTeamBoard} useSessions={boardSessions} t={teamT} /></div>}

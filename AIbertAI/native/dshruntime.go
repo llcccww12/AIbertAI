@@ -1594,7 +1594,14 @@ func runDSHSessionWithProfile(ctx context.Context, cfg *dshRuntimeConfig, sessio
 			if project != nil {
 				return project(map[string]any{"sessionUpdate": "agent_message_reset", "streamAttemptId": streamID})
 			}
-		case "user/message":
+		case "user/message", "developer/message":
+			if entry, ok := readDSHContextInjection(raw); ok {
+				entry.AfterTools = len(turn.ToolRuns)
+				if turn.addContextInjection(entry) && project != nil {
+					return project(map[string]any{"sessionUpdate": "dsh_context", "entry": entry})
+				}
+				break
+			}
 			if notice, ok := readDSHMemberNotice(raw); ok {
 				notice.AfterTools = len(turn.ToolRuns)
 				notice.WokeParent = continuationStart

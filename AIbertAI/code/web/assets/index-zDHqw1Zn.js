@@ -25275,6 +25275,7 @@ const bWe = ce(),
     De({ sessionUpdate: Mt("agent_message_reset"), streamAttemptId: ce() }),
     De({ sessionUpdate: Mt("dsh_step"), step: Ar(), startedAt: Ar() }),
     De({ sessionUpdate: Mt("dsh_member_notice"), notice: wt(ce(), xt()) }),
+    De({ sessionUpdate: Mt("dsh_context"), entry: wt(ce(), xt()) }),
     De({ sessionUpdate: Mt("dsh_team_board"), board: wt(ce(), xt()) }),
     nO.and(De({ sessionUpdate: Mt("agent_thought_chunk") })),
     xWe.and(De({ sessionUpdate: Mt("tool_call") })),
@@ -37335,6 +37336,11 @@ function yZe(e, t, n) {
     u = s?.messageOrigin,
     d = (f) => mse(i, f, n, o, a, u, c);
   switch (r.sessionUpdate) {
+    case "dsh_context": {
+      const entry = r.entry;
+      return d(message => message.dshInjected?.some(prior => prior.id === entry.id)
+        ? message : { ...message, dshExecution: true, dshInjected: [...(message.dshInjected ?? []), { ...entry, liveAfterParts: message.parts.length }] });
+    }
     case "dsh_member_notice": {
       const notice = r.notice;
       return d(message => message.dshMemberNotices?.some(prior => prior.id === notice.id)
