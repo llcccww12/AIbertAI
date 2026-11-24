@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"strings"
 	"time"
@@ -320,4 +321,48 @@ func (h *relaySessionHost) setDesktopSessionModel(ctx context.Context, method st
 		return nil, err
 	}
 	return map[string]any{"model": row.Model, "thinking": row.Thinking}, nil
+}
+
+// bindDSHRules adds the rules the employee turned on in Settings (and rules an
+// administrator requires) to the turn. The current choice applies to every
+// chat because this runtime has no per-chat rule selection.
+func (h *relaySessionHost) bindDSHRules(ctx context.Context) (context.Context, error) {
+	if h.live == nil || h.live.client == nil {
+		return ctx, nil
+	}
+	h.live.mu.Lock()
+	enabled := maps.Clone(h.live.connectorPrefs.Enabled)
+	h.live.mu.Unlock()
+	auth, err := h.live.authorization(ctx)
+	if err != nil {
+		return ctx, err
+	}
+	rows, err := h.live.client.desktopCatalog(ctx, auth, "rules")
+	var status *backendHTTPError
+	if errors.As(err, &status) && status.Status == http.StatusNotFound {
+		return ctx, nil // backend without personal rules
+	}
+	if err != nil {
+		return ctx, err
+	}
+	var text strings.Builder
+	for _, raw := range rows {
+		var rule struct {
+			ID, Content string
+			Required    bool
+		}
+		if json.Unmarshal(raw, &rule) != nil || strings.TrimSpace(rule.Content) == "" ||
+			!rule.Required && !enabled["rule/server/"+rule.ID] {
+			continue
+		}
+		text.WriteString("\n\n")
+		text.WriteString(strings.TrimSpace(rule.Content))
+		if text.Len() > 128<<10 {
+			return ctx, errors.New("rule_instructions_too_large")
+		}
+	}
+	if text.Len() == 0 {
+		return ctx, nil
+	}
+	return context.WithValue(ctx, dshRuleInstructionsKey{}, strings.TrimSpace(text.String())), nil
 }

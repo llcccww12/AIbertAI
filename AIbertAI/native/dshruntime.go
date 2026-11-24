@@ -664,6 +664,7 @@ type dshHostToolBridge struct {
 }
 
 type dshExpertInstructionsKey struct{}
+type dshRuleInstructionsKey struct{}
 type dshHostToolBridgesKey struct{}
 type dshSideEffectRootKey struct{}
 
@@ -913,6 +914,12 @@ func runDSHSessionWithProfile(ctx context.Context, cfg *dshRuntimeConfig, sessio
 		initialize["aibertaiHostSessionId"] = session.DSHSessionID
 	}
 	instructions, _ := ctx.Value(dshExpertInstructionsKey{}).(string)
+	if rules, _ := ctx.Value(dshRuleInstructionsKey{}).(string); rules != "" {
+		if len(instructions)+2+len(rules) > 256<<10 {
+			return errors.New("rule_instructions_too_large")
+		}
+		instructions = strings.TrimSpace(instructions + "\n\n" + rules)
+	}
 	const recoveryGuidance = "When a team member times out, check its current status. If it fails or reaches its output limit, check the existing files and shared task results before deciding what remains to validate, complete or delegate. Respect an employee's explicit stop and await their direction before restarting that work."
 	if session.AgentTeamEnabled != nil && *session.AgentTeamEnabled && (session.AgentTeamAvailable == nil || *session.AgentTeamAvailable) && len(instructions)+2+len(recoveryGuidance) <= 256<<10 {
 		instructions = strings.TrimSpace(instructions + "\n\n" + recoveryGuidance)
