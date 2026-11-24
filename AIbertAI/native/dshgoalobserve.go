@@ -42,10 +42,7 @@ func (o *dshGoalObserver) observe(method string, raw json.RawMessage) error {
 							Text string `json:"text"`
 						} `json:"content"`
 					} `json:"message"`
-					Usage *struct {
-						Input  *int64 `json:"inputTokens"`
-						Output *int64 `json:"outputTokens"`
-					} `json:"usage"`
+					Usage *dshTokenUsage `json:"usage"`
 				} `json:"data"`
 			} `json:"event"`
 		}

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 )
 
@@ -18,6 +19,35 @@ type invocationKey struct {
 type modelUsage struct {
 	Input  *int64 `json:"prompt_tokens"`
 	Output *int64 `json:"completion_tokens"`
+}
+
+// turnTokenFacts holds what modelUsage cannot express for a DSH turn. DSH
+// counts cache reads and writes outside inputTokens, and team members bill
+// under the root. modelUsage keeps its goal-budget meaning: uncached input and
+// output, members included.
+type turnTokenFacts struct {
+	CacheRead          int64 `json:"cacheRead,omitempty"`
+	CacheWrite         int64 `json:"cacheWrite,omitempty"`
+	SubagentInput      int64 `json:"subagentInput,omitempty"`
+	SubagentOutput     int64 `json:"subagentOutput,omitempty"`
+	SubagentCacheRead  int64 `json:"subagentCacheRead,omitempty"`
+	SubagentCacheWrite int64 `json:"subagentCacheWrite,omitempty"`
+}
+
+func (f *turnTokenFacts) cache(read, write *int64) {
+	f.CacheRead, f.CacheWrite = addTokens(f.CacheRead, read), addTokens(f.CacheWrite, write)
+}
+
+func (f *turnTokenFacts) member(input, output int64, read, write *int64) {
+	f.SubagentInput, f.SubagentOutput = addTokens(f.SubagentInput, &input), addTokens(f.SubagentOutput, &output)
+	f.SubagentCacheRead, f.SubagentCacheWrite = addTokens(f.SubagentCacheRead, read), addTokens(f.SubagentCacheWrite, write)
+}
+
+func addTokens(total int64, value *int64) int64 {
+	if value == nil || *value < 0 || total > math.MaxInt64-*value {
+		return total
+	}
+	return total + *value
 }
 
 const defaultModelInputBudget = 64 << 10

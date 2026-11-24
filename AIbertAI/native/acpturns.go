@@ -117,6 +117,7 @@ type acpTurn struct {
 	ToolRuns               []workspaceToolRun    `json:"toolRuns,omitempty"`
 	GoalCheckpoint         *goalCheckpoint       `json:"goalCheckpoint,omitempty"`
 	Usage                  modelUsage            `json:"usage"`
+	Tokens                 turnTokenFacts        `json:"tokens,omitzero"`
 	Permissions            reportedPermissions   `json:"permissions,omitzero"`
 	Failed                 bool                  `json:"failed,omitempty"`
 	FailureCode            string                `json:"failureCode,omitempty"`
@@ -328,7 +329,37 @@ func (h *relaySessionHost) submitACPTurn(ctx context.Context, id string, index i
 	if turn.ReportText {
 		input = turnReportInput(turn.Prompt)
 	}
-	return live.client.reportTurn(ctx, auth, h.reportMachine(), id, turn.Model, index, index-1, turn.Started, turn.Ended, stop, turn.Usage, input, &turn.Permissions, facts...)
+	live.mu.Lock()
+	cwd := live.sessions[id].CWD
+	live.mu.Unlock()
+	return live.client.reportTurn(ctx, auth, h.reportMachine(), id, turn.Model, index, index-1, turn.Started, turn.Ended, stop, turn.Usage, input, turn.reportFacts(cwd), facts...)
+}
+
+func (t acpTurn) reportFacts(cwd string) turnReportFacts {
+	facts := turnReportFacts{Tokens: t.Tokens, Permissions: &t.Permissions}
+	if t.DSHContext.valid() {
+		window := t.DSHContext.Window
+		facts.ContextUsed, facts.ContextWindow = t.DSHContext.Used, &window
+	}
+	if files := t.mutatedFiles(cwd); len(files) != 0 {
+		facts.Files = &reportedFiles{}
+		for _, file := range files {
+			switch file["operation"] {
+			case "created":
+				facts.Files.Created++
+			case "deleted":
+				facts.Files.Deleted++
+			default:
+				facts.Files.Updated++
+			}
+		}
+	}
+	for _, compaction := range t.DSHCompactions {
+		if compaction.Status == "completed" {
+			facts.Compactions++
+		}
+	}
+	return facts
 }
 
 func (h *relaySessionHost) retryPendingReport(ctx context.Context, id string) error {
@@ -717,6 +748,9 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 	if !turn.Acked {
 		reportErr := h.submitACPTurn(ctx, id, index+1, turn, register)
 		turn.Acked = reportErr == nil
+		if reportErr != nil {
+			slog.Warn("桌面对话回合上报失败，稍后补传", "session_id", id, "operation_id", op, "reason", safeDesktopTurnFailure(reportErr))
+		}
 		session.State, session.Updated = completedState(turn), turn.Ended
 		live.mu.Lock()
 		current := live.sessions[id]

@@ -452,7 +452,7 @@ func (h *relaySessionHost) recoverDesktopReports(ctx context.Context) {
 	var pending []string
 	for _, session := range h.live.sessions {
 		index := len(session.Turns)
-		if index > 0 && (h.live.cloudWorkspace != "" || session.Model == modelID) && session.State != "running" && !session.Turns[index-1].Acked {
+		if index > 0 && session.State != "running" && !session.Turns[index-1].Acked {
 			pending = append(pending, session.ID)
 		}
 	}

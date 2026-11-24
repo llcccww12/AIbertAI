@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"maps"
 	"net/http"
 	"net/url"
@@ -203,6 +206,60 @@ func (h *relaySessionHost) desktopBilling(ctx context.Context, method string, ra
 		return map[string]any{"data": overview}, nil
 	}
 	return map[string]any{"data": data}, nil
+}
+
+// desktopAvatar uploads or clears the signed-in user's custom avatar. The web
+// client sends an already resized image as base64 so the ACP frame stays small.
+func (h *relaySessionHost) desktopAvatar(ctx context.Context, raw json.RawMessage) (any, error) {
+	var input struct {
+		Image string `json:"image"`
+		MIME  string `json:"mime"`
+		Clear bool   `json:"clear"`
+	}
+	if json.Unmarshal(raw, &input) != nil {
+		return nil, errors.New("invalid_avatar")
+	}
+	auth, err := h.live.authorization(ctx)
+	if err != nil {
+		return nil, err
+	}
+	method, mime, body := http.MethodDelete, "", io.Reader(nil)
+	if !input.Clear {
+		if input.MIME != "image/webp" && input.MIME != "image/png" && input.MIME != "image/jpeg" {
+			return nil, errors.New("invalid_avatar")
+		}
+		data, err := base64.StdEncoding.DecodeString(input.Image)
+		if err != nil || len(data) == 0 {
+			return nil, errors.New("invalid_avatar")
+		}
+		if len(data) > 5<<20 {
+			return nil, errors.New("avatar_too_large")
+		}
+		method, mime, body = http.MethodPut, input.MIME, bytes.NewReader(data)
+	}
+	resp, err := h.live.client.request(ctx, method, "/api/v1/me/avatar", auth.Access, "", "", mime, body)
+	if err != nil {
+		var status *backendHTTPError
+		if errors.As(err, &status) {
+			switch status.Status {
+			case http.StatusBadRequest:
+				return nil, errors.New("invalid_avatar")
+			case http.StatusRequestEntityTooLarge:
+				return nil, errors.New("avatar_too_large")
+			case http.StatusNotFound, http.StatusMethodNotAllowed:
+				return nil, errors.New("avatar_unsupported")
+			}
+		}
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var out struct {
+		User account `json:"user"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
+		return nil, err
+	}
+	return map[string]any{"user": out.User}, nil
 }
 
 func (l *acpLive) desktopDrafts(method string, raw json.RawMessage) (any, error) {

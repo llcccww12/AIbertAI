@@ -250,10 +250,15 @@ type dshFailedCompactionReceipt struct {
 	State           string                     `json:"state"`
 	Seq             int64                      `json:"seq"`
 	UsageSeq        *int64                     `json:"usageSeq"`
-	Usage           *struct {
-		Input  *int64 `json:"inputTokens"`
-		Output *int64 `json:"outputTokens"`
-	} `json:"usage"`
+	Usage           *dshTokenUsage             `json:"usage"`
+}
+
+// dshTokenUsage is the SDK TokenUsage. inputTokens excludes cache reads and writes.
+type dshTokenUsage struct {
+	Input      *int64 `json:"inputTokens"`
+	Output     *int64 `json:"outputTokens"`
+	CacheRead  *int64 `json:"cacheReadTokens,omitempty"`
+	CacheWrite *int64 `json:"cacheWriteTokens,omitempty"`
 }
 
 func (g *dshLocalGateway) validateFailedCompaction(receipt dshFailedCompactionReceipt, capable bool) error {
