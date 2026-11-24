@@ -25,7 +25,7 @@ const designStyleChoiceTool = "design_await_style_choice"
 func designTool(name string) bool {
 	switch name {
 	case designReadTool, designSelectionTool, designTextTool, designCreateHTMLTool, designCommitHTMLTool,
-		designProductionTool, designPreparePPTXTool, "media_get_image_model", "media_generate_image", "media_edit_image", designStyleChoiceTool, "canvas_add_artifact_asset",
+		designProductionTool, designPreparePPTXTool, "media_get_image_model", "media_generate_image", "media_edit_image", "media_get_video_model", "media_generate_video", designStyleChoiceTool, "canvas_add_artifact_asset",
 		"canvas_capture_preview", "design_jury_submit", "canvas_create_image", "canvas_create_video",
 		"canvas_compose_media_project", "canvas_create_layer_group", "canvas_group_story_assets", "canvas_update_node",
 		"canvas_delete_node", "design_catalog_search", "design_catalog_detail", "design_catalog_logo_batch":
@@ -36,7 +36,7 @@ func designTool(name string) bool {
 
 func designWriteTool(name string) bool {
 	switch name {
-	case designReadTool, designSelectionTool, "media_get_image_model", designStyleChoiceTool, "design_catalog_search", "design_catalog_detail":
+	case designReadTool, designSelectionTool, "media_get_image_model", "media_get_video_model", designStyleChoiceTool, "design_catalog_search", "design_catalog_detail":
 		return false
 	}
 	return designTool(name)
@@ -126,7 +126,7 @@ func (b *desktopDesignBridge) callGuarded(ctx context.Context, row acpSession, d
 		return "", err
 	}
 	timeout := 20 * time.Second
-	if name == "media_generate_image" || name == "media_edit_image" {
+	if dshMediaWrite(name) {
 		timeout = 21 * time.Minute
 	} else if name == "canvas_capture_preview" || name == designStyleChoiceTool || name == "design_session_open" {
 		timeout = 125 * time.Second
@@ -143,7 +143,7 @@ func (b *desktopDesignBridge) callGuarded(ctx context.Context, row acpSession, d
 		}
 		return string(reply.Result), nil
 	case <-ctx.Done():
-		if name == "media_generate_image" || name == "media_edit_image" || name == designStyleChoiceTool {
+		if dshMediaWrite(name) || name == designStyleChoiceTool {
 			_ = b.send(map[string]string{"event": "design_tool_cancel", "id": id})
 		}
 		return "", errors.New("design_tool_unavailable")

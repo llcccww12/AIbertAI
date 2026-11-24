@@ -271,8 +271,19 @@ func dshHostToolReason(err error) string {
 		return "connector_outcome_unknown: this connector call was interrupted and its outcome is unknown; the remote side may have completed it. Verify the remote state or ask the user before repeating it."
 	case strings.Contains(err.Error(), "tool_approval_unavailable"), strings.Contains(err.Error(), "tool_permission_cancelled"):
 		return "tool_denied: the approval channel was unavailable or the call was cancelled. The tool did not run; choose another approach or ask the user."
+	case strings.Contains(err.Error(), "design_media_model_unavailable"):
+		return "image_model_unavailable: no image generation model is configured or available for this conversation, so nothing was generated. Do not retry image tools in this turn. Tell the user an administrator needs to enable an image model (or that they can pick one in the canvas), and offer an alternative such as an SVG/CSS illustration or a clearly labeled placeholder."
+	case strings.Contains(err.Error(), "design_media_cancelled"):
+		return "image_generation_cancelled: the image generation was cancelled and produced no image. Do not retry unless the user asks."
+	case strings.Contains(err.Error(), "design_media_generation_unknown"), strings.Contains(err.Error(), "design_media_generation_already_submitted"):
+		return "media_generation_unconfirmed: the media service accepted the task but could not confirm its result, and nothing was saved to the workspace. It may still be billed, so do not submit it again in this turn. Tell the user the generation could not be confirmed and that they can check their usage records or try again later."
+	case strings.HasPrefix(err.Error(), "design_media_"):
+		return "media_generation_failed (" + strings.TrimPrefix(err.Error(), "design_") + "): the media service did not produce a result and nothing was saved. Tell the user it failed; do not repeat the same call unchanged in this turn."
 	case strings.Contains(err.Error(), "dsh_canvas_atomic_guard_unavailable"), strings.Contains(err.Error(), "dsh_canvas_changed"), strings.Contains(err.Error(), "dsh_canvas_session_changed"):
 		return "canvas_conflict: the canvas changed underneath this call, so it was not applied. Re-read the canvas and retry."
+	}
+	if code := err.Error(); strings.HasPrefix(code, "design_") && !strings.ContainsAny(code, " \n") && code != "design_tool_unavailable" && code != "design_tool_failed" {
+		return "design_tool_error (" + strings.TrimPrefix(code, "design_") + "): the design service did not complete this call and nothing was applied. Adjust the request or tell the user; do not repeat the same call unchanged."
 	}
 	return "host_tool_denied: the tool failed before it could apply. It is safe to use a different tool or approach."
 }
@@ -1583,7 +1594,14 @@ func runDSHSessionWithProfile(ctx context.Context, cfg *dshRuntimeConfig, sessio
 			if project != nil {
 				return project(map[string]any{"sessionUpdate": "agent_message_reset", "streamAttemptId": streamID})
 			}
-		case "user/message":
+		case "user/message", "developer/message":
+			if entry, ok := readDSHContextInjection(raw); ok {
+				entry.AfterTools = len(turn.ToolRuns)
+				if turn.addContextInjection(entry) && project != nil {
+					return project(map[string]any{"sessionUpdate": "dsh_context", "entry": entry})
+				}
+				break
+			}
 			if notice, ok := readDSHMemberNotice(raw); ok {
 				notice.AfterTools = len(turn.ToolRuns)
 				notice.WokeParent = continuationStart
@@ -1722,7 +1740,7 @@ func runDSHSessionWithProfile(ctx context.Context, cfg *dshRuntimeConfig, sessio
 				return err
 			}
 			for _, claim := range claims {
-				if claim.State == "reconciled" || claim.CallID != call {
+				if claim.State == "reconciled" || claim.State == "user_reviewed" || claim.CallID != call {
 					continue
 				}
 				if claim.Kind == "workspace" && event.Event.Type == "tool/result" {

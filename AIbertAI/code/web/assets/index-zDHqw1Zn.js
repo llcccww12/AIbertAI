@@ -25275,6 +25275,7 @@ const bWe = ce(),
     De({ sessionUpdate: Mt("agent_message_reset"), streamAttemptId: ce() }),
     De({ sessionUpdate: Mt("dsh_step"), step: Ar(), startedAt: Ar() }),
     De({ sessionUpdate: Mt("dsh_member_notice"), notice: wt(ce(), xt()) }),
+    De({ sessionUpdate: Mt("dsh_context"), entry: wt(ce(), xt()) }),
     De({ sessionUpdate: Mt("dsh_team_board"), board: wt(ce(), xt()) }),
     nO.and(De({ sessionUpdate: Mt("agent_thought_chunk") })),
     xWe.and(De({ sessionUpdate: Mt("tool_call") })),
@@ -37335,6 +37336,11 @@ function yZe(e, t, n) {
     u = s?.messageOrigin,
     d = (f) => mse(i, f, n, o, a, u, c);
   switch (r.sessionUpdate) {
+    case "dsh_context": {
+      const entry = r.entry;
+      return d(message => message.dshInjected?.some(prior => prior.id === entry.id)
+        ? message : { ...message, dshExecution: true, dshInjected: [...(message.dshInjected ?? []), { ...entry, liveAfterParts: message.parts.length }] });
+    }
     case "dsh_member_notice": {
       const notice = r.notice;
       return d(message => message.dshMemberNotices?.some(prior => prior.id === notice.id)
@@ -114351,7 +114357,7 @@ const qwt = {
       enableCanvas: "启用设计画布",
       enablingCanvas: "正在启用…",
       canvasDescription:
-        "此任务尚未启用画布。启用后将切换到设计专家，并保留当前对话。",
+        "此任务尚未启用画布。启用后可在画布上生成图片、视频、网页、演示文稿和 Logo，并保留当前对话。",
       canvasWait: "请先等待当前任务结束并处理待回答的问题。",
     },
     colorPicker: {
@@ -114939,8 +114945,8 @@ const qwt = {
       starting: "正在创建…",
       generalExpert: "通用助理",
       standardMode: "标准模式",
-      standardModeHint: "处理代码、文件和资料，适合大多数任务。Agent 会按需使用检索、编辑和终端等工具。",
-      designExpert: "设计专家",
+      standardModeHint: "处理代码、文件和资料，也能生成图片，适合大多数任务。Agent 会按需使用检索、编辑和终端等工具。",
+      designExpert: "创作模式",
       generalExpertHint: "解答问题、撰写内容、分析资料和编写代码。",
       expertSource: {
         builtin: "引擎内置",
@@ -115068,10 +115074,10 @@ const qwt = {
       styleCard: {
         ariaLabel: "选择设计风格",
         title: "选择网页的视觉风格",
-        hint: "需求确认后，选一个风格；也可以交给设计专家决定。",
+        hint: "需求确认后，选一个风格；也可以交给 Agent 决定。",
         deckTitle: "选择演示文稿的视觉风格",
-        deckHint: "做页之前选一个风格；也可以交给设计专家决定。",
-        skip: "跳过，由设计专家决定",
+        deckHint: "做页之前选一个风格；也可以交给 Agent 决定。",
+        skip: "跳过，由 Agent 决定",
         nextBatch: "换一批",
       },
       nextStep: {
@@ -117450,7 +117456,7 @@ Start with the conclusion, then explain the reasoning.`,
       enableCanvas: "Enable design canvas",
       enablingCanvas: "Enabling…",
       canvasDescription:
-        "This task has no canvas yet. Enabling it switches to the design expert and keeps this conversation.",
+        "This task has no canvas yet. Enable it to make images, videos, web pages, slides and logos on the canvas; this conversation is kept.",
       canvasWait:
         "Wait for the current task to finish and answer any pending questions first.",
     },
@@ -118150,8 +118156,8 @@ Start with the conclusion, then explain the reasoning.`,
       starting: "Creating…",
       generalExpert: "General assistant",
       standardMode: "Standard mode",
-      standardModeHint: "Work with code, files, and information. Suitable for most tasks, with search, editing, terminal commands, and other tools available as needed.",
-      designExpert: "Design expert",
+      standardModeHint: "Work with code, files, and information, and generate images. Suitable for most tasks, with search, editing, terminal commands, and other tools available as needed.",
+      designExpert: "Creative mode",
       generalExpertHint:
         "Answer questions, draft content, analyze information, and write code.",
       expertSource: {
@@ -118282,11 +118288,11 @@ Start with the conclusion, then explain the reasoning.`,
       styleCard: {
         ariaLabel: "Choose a design style",
         title: "Choose a visual style for the website",
-        hint: "After confirming the requirements, choose a style—or let the design expert decide.",
+        hint: "After confirming the requirements, choose a style—or let the agent decide.",
         deckTitle: "Choose a visual style for the deck",
         deckHint:
-          "Choose a style before any slide—or let the design expert decide.",
-        skip: "Skip; let the design expert decide",
+          "Choose a style before any slide—or let the agent decide.",
+        skip: "Skip; let the agent decide",
         nextBatch: "More",
       },
       nextStep: {
@@ -152870,10 +152876,9 @@ function D7t({ session: e }) {
     ),
     u = a,
     d =
-      c?.name ??
-      (u === "monkeyai-design"
-        ? t("home.designExpert")
-        : u || t(i.dshJobsAvailable ? "home.standardMode" : "home.generalExpert")),
+      u === "monkeyai-design"
+        ? t(i.dshJobsAvailable ? "home.standardMode" : "home.generalExpert")
+        : (c?.name ?? (u || t(i.dshJobsAvailable ? "home.standardMode" : "home.generalExpert"))),
     f = l.jsx(A4, {
       id: u,
       plain: !0,
@@ -159571,7 +159576,8 @@ function f_e({ experts: e, value: t, onSelect: n, ...r }) {
     },
     d = (v) => ASe({ ...v, selected: v.id === t }, v),
     f = e.find((v) => v.id === "monkeyai-design"),
-    h = [u, ...(f ? [{ ...f, name: s("home.designExpert") }] : [])].map(d),
+    // The canvas opens from the design categories; it is not a picker entry.
+    h = [u].map(d),
     { ordered: p } = Zw(e.filter((v) => v.id !== "monkeyai-design").map(d), x6),
     m = h.filter((v) => Ym(v, i)),
     g = p.filter((v) => Ym(v, i)),
@@ -160742,7 +160748,7 @@ function b_e({
     m = sL(
       (h ? f.expert : void 0) ?? d?.expertSummaries.find((C) => C.id === p),
     ),
-    g = p === "monkeyai-design" ? a("home.designExpert") : (m?.name ?? (p || a("home.generalExpert"))),
+    g = p === "monkeyai-design" ? a(standardMode ? "home.standardMode" : "home.generalExpert") : (m?.name ?? (p || a("home.generalExpert"))),
     b = `composer-expert-avatar${p === "monkeyai-design" ? " composer-expert-avatar-design" : ""}`,
     v = l.jsx(z0, {
       kind: "expert",
@@ -160756,7 +160762,7 @@ function b_e({
     const experts = d?.expertSummaries ?? [];
     return l.jsx(y.Suspense, { fallback: null, children: l.jsx(EmployeePreset, {
       experts: p && !experts.some(expert => expert.id === p) ? [...experts, {id: p, name: g, description: m?.description}] : experts,
-      expertId: p, busy: r || !d, designName: a("home.designExpert"), language: i18n.language, onSelect: i,
+      expertId: p, busy: r || !d, language: i18n.language, onSelect: i,
     }) });
   }
   if (i) {
@@ -165844,6 +165850,9 @@ function ljt({
     };
   if (!r && _.length === 0) {
     const R = n?.error ? IT(n.error) : null;
+    // Without a configured design-resource server there are no cases to show;
+    // the categories still open a canvas, so the section stays out of the way.
+    if (R?.reason === "unconfigured") return null;
     return l.jsxs("section", {
       className: "design-examples",
       "data-design-type": e.designType,
@@ -273027,7 +273036,7 @@ function wnn({ url: e }) {
   });
 }
 function knn({ scope: e, path: t, fileRef: n }) {
-  const { t: r } = Xe(),
+  const { t: r, i18n } = Xe(),
     [s, i] = y.useState(null),
     [o, a] = y.useState(0);
   return (
@@ -273078,10 +273087,9 @@ function knn({ scope: e, path: t, fileRef: n }) {
         })
       : s?.url
         ? l.jsx(wnn, { url: s.url })
-        : l.jsx("div", {
-            className: "file-panel-empty",
-            role: "status",
-            children: l.jsx(Kn, { className: "size-4" }),
+        : l.jsx(y.Suspense, {
+            fallback: null,
+            children: l.jsx(DshOfficeLoading, { language: i18n.language }),
           })
   );
 }
@@ -273788,6 +273796,7 @@ const DshFilePanel = y.lazy(loadDshFilePanel),
   DshFileTabs = y.lazy(() => loadDshFilePanel().then((m) => ({ default: m.EmployeeFileTabs }))),
   DshFilePreview = y.lazy(() => loadDshFilePanel().then((m) => ({ default: m.EmployeePreview }))),
   DshFileSheet = y.lazy(() => loadDshFilePanel().then((m) => ({ default: m.EmployeeSpreadsheet }))),
+  DshOfficeLoading = y.lazy(() => loadDshFilePanel().then((m) => ({ default: m.EmployeeOfficeLoading }))),
   DshFileImage = y.lazy(() => loadDshFilePanel().then((m) => ({ default: m.EmployeeImage }))),
   DshFileHtml = y.lazy(() => loadDshFilePanel().then((m) => ({ default: m.EmployeeHtml }))),
   DshFilePageAction = y.lazy(() => loadDshFilePanel().then(m => ({ default: m.EmployeePageAction }))),
@@ -274052,7 +274061,8 @@ function Inn({ scope: e, cwd: t, files: n, view: r, active: s }) {
     o = r.files?.origin ?? r.directoryOrigin,
     a = o?.sessionId ?? e.sessionId;
   t = o?.cwd ?? t;
-  const c = r.fileScope ?? "all",
+  // Like DSH, the file panel always shows the whole workspace tree.
+  const c = "all",
     [u, d] = y.useState(""),
     [f, h] = y.useState(() => new Set()),
     [p, m] = y.useState(!1),
@@ -274196,10 +274206,7 @@ function Inn({ scope: e, cwd: t, files: n, view: r, active: s }) {
   const W =
       r.files?.source !== "workspace"
         ? (r.files ?? void 0)
-        : (c === "session"
-            ? T.session.find((L) => L.path === _)
-            : M.get(_ ?? "")
-          )?.file,
+        : (M.get(_ ?? "") ?? T.session.find((L) => L.path === _))?.file,
     V = c === "all" && !!C,
     K = V
       ? A.search.query !== C || (!A.search.data && !A.search.error)

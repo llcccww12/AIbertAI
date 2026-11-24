@@ -22640,7 +22640,7 @@ async function answerPrivateDesignRender(proc, message) {
   if (catalogRequests.get(message.operationId) === request && request) proc.postMessage(reply);
 }
 
-const runtimeImageTools = new Set(["media_get_image_model", "media_generate_image", "media_edit_image"]);
+const runtimeImageTools = new Set(["media_get_image_model", "media_generate_image", "media_edit_image", "media_get_video_model", "media_generate_video"]);
 function privateDesignUsesMedia(tool, params) {
   return runtimeImageTools.has(tool) || ["canvas_generate_media", "canvas_resume_media", "canvas_media", "canvas_html_image_media"].includes(tool) ||
     tool === "canvas_production" && ["start", "rerun", "generate", "resume_task"].includes(params?.action);
@@ -22724,7 +22724,7 @@ async function answerRuntimeDesignTool(proc, server, event) {
         !args || typeof args !== "object" || Array.isArray(args)) {
       throw new Error("invalid_design_tool_request");
     }
-    const controller = (image && name !== "media_get_image_model" || name === "design_await_style_choice") ? new AbortController() : null;
+    const controller = (image && name !== "media_get_image_model" && name !== "media_get_video_model" || name === "design_await_style_choice") ? new AbortController() : null;
     if (controller) runtimeImageCalls.set(id, controller);
     const result = await requestPrivateDesignCatalog(new URL(server).origin, open ? name : list || guard ? name : "design_model_tool", open
       ? { cwd, sessionId, selection: args }
@@ -22733,7 +22733,10 @@ async function answerRuntimeDesignTool(proc, server, event) {
     reply.result = result;
   } catch (error) {
     const reason = error instanceof Error ? error.message : "";
-    reply.error = /^[a-z][a-z0-9_]{1,70}$/.test(reason) ? "design_" + reason.replace(/^design_/, "") : "design_tool_failed";
+    // Keep the leading code of detailed reasons ("media_generation_unknown:task_id=…")
+    // so the runtime can tell a definite worker answer from an opaque failure.
+    const code = /^([a-z][a-z0-9_]{1,70})(?::|$)/.exec(reason)?.[1];
+    reply.error = code ? "design_" + code.replace(/^design_/, "") : "design_tool_failed";
   } finally {
     runtimeImageCalls.delete(id);
   }

@@ -12,14 +12,16 @@ const noop = () => {}
 const useMainView = select => select({ retainedBy: { mainView: 1 } })
 const useDeveloperTools = select => select(false)
 
-export default function EmployeePreset({ experts, expertId, designName, busy, onSelect, language }) {
+export default function EmployeePreset({ experts, expertId, busy, onSelect, language }) {
   // Platform expert IDs remain opaque. The empty platform ID selects DSH Standard.
-  const options = useMemo(() => [{ id: 'standard' }, ...experts.map(expert => ({
+  // The canvas is not a preset: Standard opens it from the design categories,
+  // so canvas sessions (monkeyai-design) show as Standard.
+  const options = useMemo(() => [{ id: 'standard' }, ...experts.filter(expert => expert.id !== 'monkeyai-design').map(expert => ({
     id: 'expert:' + expert.id,
-    name: expert.id === 'monkeyai-design' ? designName : expert.name,
+    name: expert.name,
     description: expert.description,
-  }))], [experts, designName])
-  const current = expertId ? 'expert:' + expertId : 'standard'
+  }))], [experts])
+  const current = expertId && expertId !== 'monkeyai-design' ? 'expert:' + expertId : 'standard'
   const locale = language?.startsWith('zh') ? zh : en
   return <span className="dsh-native-theme" data-dsh-preset>
     <AgentPresetSeat useSessionRetainInfo={useMainView} useDeveloperTools={useDeveloperTools}

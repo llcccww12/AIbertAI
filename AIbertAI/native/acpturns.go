@@ -89,6 +89,7 @@ func dshRenderedParts(parts []dshMessagePart, text string) []map[string]string {
 
 type acpTurn struct {
 	DSHMemberNotices       []dshMemberNotice `json:"dshMemberNotices,omitempty"`
+	DSHInjected            []dshContextEntry `json:"dshInjected,omitempty"`
 	DSHMemberID            string            `json:"dshMemberId,omitempty"`
 	goalOutcome            string
 	dshImageAdmission      dshImageAdmission
@@ -1611,6 +1612,9 @@ func (session acpSession) responseMessage(index int, calls map[string]any) map[s
 		message["dshExecution"] = true
 		if len(turn.DSHMemberNotices) != 0 {
 			message["dshMemberNotices"] = turn.DSHMemberNotices
+		}
+		if len(turn.DSHInjected) != 0 {
+			message["dshInjected"] = turn.DSHInjected
 		}
 		if turn.DSHTeamBoard.visible() && !slices.ContainsFunc(session.Turns[index+1:], func(later acpTurn) bool { return later.DSHTeamBoard != nil }) {
 			message["dshTeamBoard"] = turn.DSHTeamBoard

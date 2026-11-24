@@ -52811,7 +52811,7 @@ function createPrivateCatalog(origin) {
       });
     }
   });
-  const imageTools = MEDIA_TOOLS.filter(({ name }) => ["media_get_image_model", "media_generate_image", "media_edit_image"].includes(name));
+  const imageTools = MEDIA_TOOLS.filter(({ name }) => ["media_get_image_model", "media_generate_image", "media_edit_image", "media_get_video_model", "media_generate_video"].includes(name));
   const callImageTool = mediaTools({
     media: workspace.media,
     session: sessionHeader,

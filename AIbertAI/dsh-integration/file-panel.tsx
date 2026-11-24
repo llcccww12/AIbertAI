@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Menu } from 'sdk/client/ui-primitives/src/Menu.tsx'
-import { IconChevronDownOutlineRegular, IconEyeOffOutlineRegular, IconEyeOutlineRegular } from 'sdk/client/ui-primitives/src/icons/index.tsx'
+import { IconEyeOffOutlineRegular, IconEyeOutlineRegular } from 'sdk/client/ui-primitives/src/icons/index.tsx'
 import { FilesBody } from 'sdk/client/ui-sidebar-files/src/client/FilesBody.tsx'
 import { FileTree } from 'sdk/client/ui-sidebar-files/src/client/FileTree.tsx'
 import { en, zh } from 'sdk/client/ui-sidebar-files/src/client/locales.ts'
 import { en as previewEn, zh as previewZh } from 'sdk/client/ui-sidebar-documentpreview/src/client/locales.ts'
 import previewCss from 'sdk/client/ui-sidebar-documentpreview/src/client/TextPreview.module.css'
 import { EmployeeViewerTools } from './file-viewer.tsx'
-export { EmployeeImage, EmployeeSpreadsheet } from './file-media.tsx'
+export { EmployeeImage, EmployeeOfficeLoading, EmployeeSpreadsheet } from './file-media.tsx'
 export { EmployeeHtml } from './file-viewer.tsx'
 import { PreviewFrame } from 'sdk/client/ui-sidebar-documentpreview/src/client/PreviewFrame.tsx'
 import { TextBody } from 'sdk/client/ui-sidebar-documentpreview/src/client/text/TextBody.tsx'
@@ -128,10 +127,9 @@ function EmployeeTree({ nodes, pane, translate, showHidden }) {
 }
 
 // DSH owns the path header, toolbar and tree. The employee shell supplies the
-// session-scoped navigator slot, including its scope picker and the git and
-// session change sources.
+// session-scoped navigator slot; like DSH it shows the whole workspace tree.
 export default function EmployeeFiles(pane) {
-  const { sessionId, cwd, fileScope, onScope, query, onQuery, label } = pane
+  const { sessionId, cwd, fileScope, query, onQuery, label } = pane
   const translate = key => (pane.language === 'en' ? en : zh)[key] ?? key
   const [searchShown, setSearchShown] = useState(Boolean(query))
   const [showHidden, setShowHidden] = useState(readShowHidden)
@@ -144,24 +142,7 @@ export default function EmployeeFiles(pane) {
     id: sessionId, actions: { bindCommands(value) { commands.current = value; return () => { commands.current = null } } },
   } }), [sessionId])
   const searchBarShown = (_, open) => { setSearchShown(open); if (!open) onQuery('') }
-  const [scopeOpen, setScopeOpen] = useState(false)
-  const scopeTrigger = useRef(null)
-  const scopes = ['all', 'session', ...(pane.git ? ['git'] : [])]
-  const scopePicker = <Menu open={scopeOpen} portal compact autoFocus selectedId={fileScope} anchorRef={scopeTrigger}
-    className="dsh-employee-file-scope" listClassName="dsh-native-theme" onClose={() => setScopeOpen(false)}
-    items={scopes.map(id => ({ id, label: label('workspace.fileTree.' + id) }))}
-    onSelect={next => { onScope(next); setScopeOpen(false); scopeTrigger.current?.focus() }}
-    anchor={<button type="button" ref={scopeTrigger} aria-haspopup="menu" aria-expanded={scopeOpen}
-      aria-label={label('workspace.fileTree.scope')} title={cwd} data-files-scope
-      onKeyDown={event => {
-        if (!scopeOpen && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
-          event.preventDefault(); setScopeOpen(true)
-        }
-      }} onClick={() => setScopeOpen(open => !open)}>
-      <span>{label('workspace.fileTree.' + fileScope)}</span><IconChevronDownOutlineRegular size={12}/>
-    </button>} />
   const navigator = <div className="dsh-employee-navigator">
-    <div className="dsh-employee-file-scope-row">{scopePicker}</div>
     {searchShown && <div className={styles.searchBar}><div className={styles.searchField}>
       <input type="search" ref={input} value={query} className={styles.searchInput} data-files-search
         aria-label={translate('search.placeholder')} placeholder={translate('search.placeholder')} onChange={event => onQuery(event.target.value)} />

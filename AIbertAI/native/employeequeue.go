@@ -242,11 +242,11 @@ func (h *relaySessionHost) handleQueue(ctx context.Context, ws *websocket.Conn, 
 			live.mu.Unlock()
 			return nil, errors.New("session_operation_conflict")
 		}
-		// A blocked model turn needs an accounting check before a new request can
-		// enter the queue. Saving it here would pause unrelated future messages.
+		// Only a model call still unsettled in the gateway journal blocks the
+		// next message (same rule as reserveTurn); any other failure does not.
 		if row.Engine == "dsh" && row.State != "running" && len(row.Turns) > 0 {
 			last := row.Turns[len(row.Turns)-1]
-			if dshPendingModelFailure(last) {
+			if dshPendingModelFailure(last) && live.dshModelCallPending(p.SessionID) {
 				live.mu.Unlock()
 				return nil, errors.New(last.FailureCode)
 			}

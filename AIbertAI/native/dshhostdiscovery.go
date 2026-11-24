@@ -120,6 +120,16 @@ func (h *relaySessionHost) dshTurnHostTools(ctx context.Context, ws *websocket.C
 				}
 				bridges = append(bridges, dshHostToolBridge{Tools: tools, Handle: handle})
 			}
+		} else if !requiresCanvas {
+			// Without a canvas, ordinary conversations can still generate
+			// images into the workspace. Best effort: an unavailable design
+			// worker only leaves these tools out of this turn.
+			if bridge, hint := h.dshWorkspaceImageTools(ctx, ws, request, session, turn, configured, canWrite); bridge != nil {
+				bridges = append(bridges, *bridge)
+				if session.ExpertID == "" {
+					instructions = hint
+				}
+			}
 		}
 	}
 	if (requiresCanvas && !hasSelection) || (session.ExpertID == designExpertID && instructions == "") {
@@ -193,4 +203,29 @@ func (h *relaySessionHost) dshRemoteTurnConnectorTools(ctx context.Context, ws *
 		}
 	}
 	return bridges, nil
+}
+
+const dshWorkspaceImageInstructions = "Image generation is available in this conversation. When the user asks for a picture, illustration, poster or photo, call media_get_image_model to check the selected model and its parameters, then media_generate_image with a concrete prompt. The result gives a workspace-relative source_path under .aibertai/media/generated/, a folder the file panel hides: copy the image to a visible, descriptively named path in the workspace (for example with cp) and tell the user that path; reference the visible path from any document or web page you write instead of embedding base64. If the tool reports that no image model is available or the generation failed, do not retry it in this turn; tell the user plainly and offer an alternative such as an SVG illustration."
+
+// dshWorkspaceImageTools exposes only image generation when the session has no
+// canvas. The worker runs these tools without a design marker; the canvas
+// bridge dispatches them unguarded under the host's durable claim.
+func (h *relaySessionHost) dshWorkspaceImageTools(ctx context.Context, ws *websocket.Conn, request *http.Request, session acpSession, turn *acpTurn, configured []string, canWrite bool) (*dshHostToolBridge, string) {
+	catalog, err := h.designBridge.tools(ctx, session, nil)
+	if err != nil {
+		return nil, ""
+	}
+	catalog = slices.DeleteFunc(catalog, func(item desktopDesignTool) bool {
+		return item.Name != "media_get_image_model" && item.Name != "media_generate_image" || !dshExpertAllowsCanvas(session.ExpertID, configured, false, item.Name)
+	})
+	capabilities, _ := h.designBridge.call(ctx, session, nil, "design_guard_capabilities", json.RawMessage(`{}`))
+	catalog = dshCanvasRestrictedCatalog(catalog, canWrite, capabilities)
+	if !slices.ContainsFunc(catalog, func(item desktopDesignTool) bool { return item.Name == "media_generate_image" }) {
+		return nil, ""
+	}
+	tools := make([]dshHostTool, 0, len(catalog))
+	for _, item := range catalog {
+		tools = append(tools, dshHostTool{Name: item.Name, Description: item.Description, InputSchema: item.Schema, Title: item.Name, Kind: workspaceToolKind(item.Name), Category: "canvas"})
+	}
+	return &dshHostToolBridge{Tools: tools, Handle: h.dshCanvasBridge(ctx, ws, request, session, turn, nil, catalog)}, dshWorkspaceImageInstructions
 }

@@ -4,6 +4,7 @@ import { LazyExcelBody } from 'sdk/client/ui-sidebar-documentpreview/src/client/
 import { LoadingIndicator } from 'sdk/client/ui-sidebar-documentpreview/src/client/LoadingIndicator.tsx'
 import { en as imageEn, zh as imageZh } from 'sdk/client/ui-sidebar-documentpreview/src/client/image/locales.ts'
 import { en as excelEn, zh as excelZh } from 'sdk/client/ui-sidebar-documentpreview/src/client/excel/locales.ts'
+import { en as officeEn, zh as officeZh } from 'sdk/client/ui-sidebar-documentpreview/src/client/office/locales.ts'
 import { fileAddressFor } from 'sdk/util/workspace-path/src/index.ts'
 
 const noop = () => {}
@@ -55,4 +56,9 @@ export function EmployeeSpreadsheet({ path, cwd, sessionId, language, load }) {
     <button type="button" onClick={() => { setResult(undefined); setAttempt(n => n + 1) }}>{t('retry')}</button></div>
   return <LazyExcelBody content={{ kind: 'bytes', data: result.data }}
     resourceAddress={fileAddressFor(sessionId, cwd, path)} limits={excelLimits} t={t} />
+}
+
+// DSH's Office preview shows this indicator while the document is converted and rendered.
+export function EmployeeOfficeLoading({ language }) {
+  return <LoadingIndicator label={(language?.startsWith('en') ? officeEn : officeZh).loading} />
 }

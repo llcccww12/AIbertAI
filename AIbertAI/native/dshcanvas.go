@@ -25,11 +25,48 @@ type dshCanvasBridgeKey struct{}
 // Canvas reads and writes require the worker's guarded protocol.
 func dshCanvasReadOnly(name string) bool {
 	switch name {
-	case "media_get_image_model", "design_catalog_search", "design_catalog_detail", designStyleChoiceTool:
+	case "media_get_image_model", "media_get_video_model", "design_catalog_search", "design_catalog_detail", designStyleChoiceTool:
 		return true
 	default:
 		return false
 	}
+}
+
+// dshCanvasEvidenceWrite lists unguarded writes whose whole effect is in
+// canvas.json, so an unknown outcome is settled by comparing the canvas with
+// the digest captured before dispatch.
+func dshCanvasEvidenceWrite(name string) bool {
+	switch name {
+	case "canvas_create_video", "canvas_update_node", "canvas_delete_node", "canvas_create_layer_group", "canvas_compose_media_project", "canvas_group_story_assets":
+		return true
+	}
+	return false
+}
+
+// dshCanvasRetrySafe lists tools that only copy, preview or record into the
+// workspace and bill nothing; repeating one after an unknown outcome is harmless.
+func dshCanvasRetrySafe(name string) bool {
+	switch name {
+	case "canvas_add_artifact_asset", "design_catalog_logo_batch", "canvas_capture_preview", "design_jury_submit":
+		return true
+	}
+	return false
+}
+
+// dshMediaWrite lists billed generations. They keep a durable claim; only a
+// definite refusal before generation is reported as not applied.
+func dshMediaWrite(name string) bool {
+	switch name {
+	case "media_generate_image", "media_edit_image", "media_generate_video":
+		return true
+	}
+	return false
+}
+
+// dshCanvasDispatchable reports whether the bridge may run a catalog tool,
+// either through the worker's atomic guard or through the host claim.
+func dshCanvasDispatchable(name string, guarded bool) bool {
+	return dshCanvasReadOnly(name) || guarded || dshCanvasEvidenceWrite(name) || dshCanvasRetrySafe(name) || dshMediaWrite(name)
 }
 
 func dshCanvasGuarded(name string) bool {
@@ -137,8 +174,10 @@ func (h *relaySessionHost) dshCanvasBridge(ctx context.Context, ws *websocket.Co
 		if json.Unmarshal(raw, &req) != nil || req.SessionID != session.DSHSessionID || req.CallID == "" || seen[req.CallID] || !allowed[req.Name] || !validDesignToolArguments(req.Name, req.Arguments) {
 			return nil, errors.New("dsh_canvas_request_invalid")
 		}
-		guarded := dshCanvasGuarded(req.Name)
-		if !dshCanvasReadOnly(req.Name) && !guarded {
+		// Without a canvas there is nothing for the worker's guard to protect;
+		// media generation then runs under the host claim alone.
+		guarded := dshCanvasGuarded(req.Name) && len(design) > 0
+		if !dshCanvasDispatchable(req.Name, guarded) {
 			return nil, errors.New("dsh_canvas_atomic_guard_unavailable")
 		}
 		seen[req.CallID] = true
@@ -216,7 +255,8 @@ func (h *relaySessionHost) dshCanvasBridge(ctx context.Context, ws *websocket.Co
 			if err != nil || current.Engine != "dsh" || current.DSHSessionID != session.DSHSessionID || current.CWD != session.CWD || current.Workspace != session.Workspace || current.ProjectID != session.ProjectID || current.ExpertID != session.ExpertID || current.ResourceRevision != session.ResourceRevision || !dshExpertAllowsCanvas(current.ExpertID, h.dshExpertCanvasTools(ctx, current.ExpertID), len(selection) != 0, req.Name) || len(current.Turns) == 0 || current.Turns[len(current.Turns)-1].Operation != turn.Operation || !slices.Equal(current.Turns[len(current.Turns)-1].CanvasNodes, selection) || !slices.Equal(turn.CanvasNodes, selection) {
 				return empty, errors.New("dsh_canvas_session_changed")
 			}
-			if req.Name == "media_generate_image" && current.MediaImageModelID != session.MediaImageModelID {
+			if req.Name == "media_generate_image" && current.MediaImageModelID != session.MediaImageModelID ||
+				req.Name == "media_generate_video" && current.MediaVideoModelID != session.MediaVideoModelID {
 				return empty, errors.New("dsh_canvas_session_changed")
 			}
 			root, err := h.live.workspaces.sessionRoot(session)
@@ -315,9 +355,9 @@ func (h *relaySessionHost) dshCanvasBridge(ctx context.Context, ws *websocket.Co
 			}
 		}
 		var effect *dshSideEffect
-		if designWriteTool(req.Name) {
+		if designWriteTool(req.Name) && !dshCanvasRetrySafe(req.Name) {
 			effect, err = h.beginDSHSideEffect(ctx, session.ID, turn.Operation, req.CallID, func(current acpSession) bool {
-				return current.DSHSessionID == session.DSHSessionID && current.CWD == session.CWD && current.Workspace == session.Workspace && current.ProjectID == session.ProjectID && (req.Name != "media_generate_image" || current.MediaImageModelID == session.MediaImageModelID) && slices.Equal(current.Turns[len(current.Turns)-1].CanvasNodes, selection)
+				return current.DSHSessionID == session.DSHSessionID && current.CWD == session.CWD && current.Workspace == session.Workspace && current.ProjectID == session.ProjectID && (req.Name != "media_generate_image" || current.MediaImageModelID == session.MediaImageModelID) && (req.Name != "media_generate_video" || current.MediaVideoModelID == session.MediaVideoModelID) && slices.Equal(current.Turns[len(current.Turns)-1].CanvasNodes, selection)
 			})
 			if err != nil {
 				if ctx.Err() != nil && strings.Contains(err.Error(), "dsh_connector_outcome_unknown") {
@@ -340,6 +380,12 @@ func (h *relaySessionHost) dshCanvasBridge(ctx context.Context, ws *websocket.Co
 		}
 		if err != nil {
 			if effect != nil {
+				// A definite rejection before execution is an ordinary tool
+				// failure: settle the claim as not applied and let the model
+				// decide, as DSH does with any failed tool.
+				if dshCanvasDefiniteRejection(err) && h.dshCanvasReleaseRejected(effect, session) == nil {
+					return nil, err
+				}
 				return nil, errors.Join(errors.New("dsh_canvas_outcome_unknown"), errors.New("dsh_connector_outcome_unknown"), err)
 			}
 			return nil, err
@@ -351,4 +397,16 @@ func (h *relaySessionHost) dshCanvasBridge(ctx context.Context, ws *websocket.Co
 		}
 		return map[string]string{"output": result}, nil
 	}
+}
+
+func (h *relaySessionHost) dshCanvasReleaseRejected(effect *dshSideEffect, session acpSession) error {
+	if h.live == nil || h.live.workspaces == nil {
+		return errors.New("dsh_canvas_reconciliation_required")
+	}
+	workspace, err := h.live.workspaces.sessionRoot(session)
+	if err != nil {
+		return err
+	}
+	defer workspace.Close()
+	return dshCanvasReleaseRejected(effect, workspace, session)
 }
