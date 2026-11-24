@@ -36,3 +36,29 @@ func TestGuardedImageToolAdvertisesWorkspaceGeneration(t *testing.T) {
 		t.Fatal("DSH selection mutated the worker's source schema")
 	}
 }
+
+// Video, logo, image editing and artifact assets run under the host claim, so
+// they need write permission but not the worker's atomic guard. Tools with no
+// recovery story (canvas_production) stay out of DSH sessions.
+func TestDSHCanvasCatalogExposesClaimedTools(t *testing.T) {
+	object := json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`)
+	names := []string{"media_get_video_model", "media_generate_video", "canvas_create_video", "media_edit_image",
+		"canvas_add_artifact_asset", "design_catalog_logo_batch", "canvas_update_node", "canvas_production"}
+	catalog := make([]desktopDesignTool, 0, len(names))
+	for _, name := range names {
+		catalog = append(catalog, desktopDesignTool{Name: name, Schema: object})
+	}
+	got := func(canWrite bool) []string {
+		var out []string
+		for _, tool := range dshCanvasRestrictedCatalog(catalog, canWrite, "{}") {
+			out = append(out, tool.Name)
+		}
+		return out
+	}
+	if want := names[:len(names)-1]; !reflect.DeepEqual(got(true), want) {
+		t.Fatalf("writable catalog = %v, want %v", got(true), want)
+	}
+	if want := []string{"media_get_video_model"}; !reflect.DeepEqual(got(false), want) {
+		t.Fatalf("read-only catalog = %v, want %v", got(false), want)
+	}
+}

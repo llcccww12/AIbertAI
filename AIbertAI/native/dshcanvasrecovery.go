@@ -134,7 +134,7 @@ func dshVerifyCanvasResult(ctx context.Context, claim dshConnectorClaim, run wor
 // Derived from the dispatch allowlist so a newly guarded canvas write can never
 // succeed at the bridge yet stay unreconcilable after an unknown outcome.
 func dshRecoverableCanvasTool(name string) bool {
-	return dshCanvasGuarded(name) && designWriteTool(name)
+	return dshCanvasGuarded(name) && designWriteTool(name) || dshCanvasEvidenceWrite(name)
 }
 
 // A guarded write that never produced a result cannot be proven by SDK history.
@@ -173,7 +173,15 @@ func (h *relaySessionHost) settleStaleCanvasTurn(id string) error {
 	if !ok || live.restarting || live.compacting[id] || live.activeTurns[id] != nil || !dshCanvasRecoveryAvailable(row) || !row.Turns[len(row.Turns)-1].Acked {
 		return fail
 	}
-	settled, err := dshSettleStaleCanvasWrite(live.store.Root, row)
+	if live.workspaces == nil {
+		return fail
+	}
+	workspace, err := live.workspaces.sessionRoot(row)
+	if err != nil {
+		return fail
+	}
+	settled, err := dshSettleStaleCanvasWrite(live.store.Root, workspace, row)
+	workspace.Close()
 	if err != nil || !settled {
 		return fail
 	}
@@ -185,8 +193,9 @@ func (h *relaySessionHost) settleStaleCanvasTurn(id string) error {
 // Settles an unrecoverable canvas write into user_reviewed so the session can
 // accept the next message. It never replays the write and never invents a
 // result: the decision records what the canvas showed.
-func dshSettleStaleCanvasWrite(root *os.Root, session acpSession) (bool, error) {
-	if root == nil || len(session.Turns) == 0 || !validUUID(session.ID) {
+// root holds the dispatch claims; workspace holds the canvas evidence.
+func dshSettleStaleCanvasWrite(root, workspace *os.Root, session acpSession) (bool, error) {
+	if root == nil || workspace == nil || len(session.Turns) == 0 || !validUUID(session.ID) {
 		return false, nil
 	}
 	last := session.Turns[len(session.Turns)-1]
@@ -201,7 +210,7 @@ func dshSettleStaleCanvasWrite(root *os.Root, session acpSession) (bool, error) 
 	if err != nil || claim.State != "dispatch_claimed" || claim.Kind != "canvas" || claim.CanvasBefore == nil {
 		return false, nil
 	}
-	decision, err := dshCanvasSettlementDecision(root, session, claim)
+	decision, err := dshCanvasSettlementDecision(workspace, session, claim)
 	if err != nil {
 		return false, err
 	}
@@ -232,16 +241,23 @@ func dshCanvasDefiniteRejection(err error) bool {
 
 // dshCanvasReleaseRejected settles the claim of a rejected guarded write as not
 // applied, but only when the canvas still matches the digest taken before dispatch.
-func dshCanvasReleaseRejected(effect *dshSideEffect, session acpSession) error {
+// The claim lives under effect.root; the canvas is read from workspace.
+func dshCanvasReleaseRejected(effect *dshSideEffect, workspace *os.Root, session acpSession) error {
 	fail := errors.New("dsh_canvas_reconciliation_required")
-	if effect == nil {
+	if effect == nil || workspace == nil {
 		return fail
 	}
 	claim, err := connectorPending(effect.root, effect.session, effect.operation, effect.call)
 	if err != nil || claim.State != "dispatch_claimed" || claim.Kind != "canvas" || claim.CanvasBefore == nil {
 		return fail
 	}
-	if decision, err := dshCanvasSettlementDecision(effect.root, session, claim); err != nil || decision != "observed_not_applied" {
+	if *claim.CanvasBefore == fmt.Sprintf("%x", sha256.Sum256(nil)) {
+		// Dispatched without a canvas: there is no canvas to compare, and the
+		// refusal itself is the evidence that nothing was generated.
+		if len(workspaceDesign(workspace, session.ID)) != 0 {
+			return fail
+		}
+	} else if decision, err := dshCanvasSettlementDecision(workspace, session, claim); err != nil || decision != "observed_not_applied" {
 		return fail
 	}
 	return dshCanvasSettleClaim(effect.root, effect.session, claim, "observed_not_applied")
@@ -306,7 +322,15 @@ func (h *relaySessionHost) recoverDSHCanvasSession(ctx context.Context, id strin
 	defer func() { live.mu.Lock(); delete(live.compacting, id); live.mu.Unlock() }()
 	// A write that never produced a result cannot be proven by SDK history. The
 	// canvas decides instead, so the session is never locked without an exit.
-	settled, settleErr := dshSettleStaleCanvasWrite(live.store.Root, detached)
+	if live.workspaces == nil {
+		return fail()
+	}
+	workspace, settleErr := live.workspaces.sessionRoot(detached)
+	if settleErr != nil {
+		return fail()
+	}
+	settled, settleErr := dshSettleStaleCanvasWrite(live.store.Root, workspace, detached)
+	workspace.Close()
 	if settleErr != nil {
 		return fail()
 	}

@@ -26,7 +26,7 @@ func TestDSHRecoverableCanvasToolsMatchGuardedWrites(t *testing.T) {
 		"canvas_delete_node", "design_catalog_search", "design_catalog_detail", "design_catalog_logo_batch",
 	}
 	for _, name := range universe {
-		want := dshCanvasGuarded(name) && designWriteTool(name)
+		want := dshCanvasGuarded(name) && designWriteTool(name) || dshCanvasEvidenceWrite(name)
 		if got := dshRecoverableCanvasTool(name); got != want {
 			t.Errorf("dshRecoverableCanvasTool(%q) = %v, want %v", name, got, want)
 		}
@@ -41,7 +41,7 @@ func TestDSHRecoverableCanvasToolCoversImageGeneration(t *testing.T) {
 			t.Errorf("%s is not recoverable", name)
 		}
 	}
-	for _, name := range []string{designReadTool, designSelectionTool, "media_get_image_model", designStyleChoiceTool, "canvas_update_node", "canvas_delete_node"} {
+	for _, name := range []string{designReadTool, designSelectionTool, "media_get_image_model", designStyleChoiceTool, "media_generate_video", "canvas_add_artifact_asset"} {
 		if dshRecoverableCanvasTool(name) {
 			t.Errorf("%s must not be treated as a recoverable canvas write", name)
 		}
@@ -73,17 +73,23 @@ func TestDSHSettleStaleCanvasWriteUsesCanvasEvidence(t *testing.T) {
 		{"changed", `{"revision":8,"nodes":[{"id":"a"}]}`, "observed_applied"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			// Claims live in the session store; the canvas lives in the workspace.
 			root, err := os.OpenRoot(t.TempDir())
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer root.Close()
+			workspace, err := os.OpenRoot(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer workspace.Close()
 			before := fmt.Sprintf("%x", sha256.Sum256([]byte(`{"revision":7,"nodes":[]}`)))
-			writeRecoveryTestFile(t, root, ".aibertai/design/sessions/"+session+".json",
+			writeRecoveryTestFile(t, workspace, ".aibertai/design/sessions/"+session+".json",
 				`{"canvasId":"`+canvasID+`","localDesignPath":".aibertai/design/`+canvasID+`"}`)
-			writeRecoveryTestFile(t, root, ".aibertai/design/"+canvasID+"/design-context.json",
+			writeRecoveryTestFile(t, workspace, ".aibertai/design/"+canvasID+"/design-context.json",
 				`{"designSessionId":"`+session+`","canvasId":"`+canvasID+`"}`)
-			writeRecoveryTestFile(t, root, ".aibertai/design/"+canvasID+"/canvas.json", tc.canvas)
+			writeRecoveryTestFile(t, workspace, ".aibertai/design/"+canvasID+"/canvas.json", tc.canvas)
 			if err = dshConnectorDispatch(root, session, operation, call); err != nil {
 				t.Fatal(err)
 			}
@@ -102,7 +108,7 @@ func TestDSHSettleStaleCanvasWriteUsesCanvasEvidence(t *testing.T) {
 				FailureCode: "dsh_canvas_outcome_unknown",
 				ToolRuns:    []workspaceToolRun{{DSHCallID: call, Call: callUse}},
 			}}}
-			settled, err := dshSettleStaleCanvasWrite(root, row)
+			settled, err := dshSettleStaleCanvasWrite(root, workspace, row)
 			if err != nil || !settled {
 				t.Fatalf("settle: %v %v", settled, err)
 			}
@@ -197,17 +203,23 @@ func TestDSHCanvasReleaseRejectedSettlesNotApplied(t *testing.T) {
 		{"changed", `{"revision":8,"nodes":[{"id":"a"}]}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			// Claims live in the session store; the canvas lives in the workspace.
 			root, err := os.OpenRoot(t.TempDir())
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer root.Close()
+			workspace, err := os.OpenRoot(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer workspace.Close()
 			before := fmt.Sprintf("%x", sha256.Sum256([]byte(`{"revision":7,"nodes":[]}`)))
-			writeRecoveryTestFile(t, root, ".aibertai/design/sessions/"+session+".json",
+			writeRecoveryTestFile(t, workspace, ".aibertai/design/sessions/"+session+".json",
 				`{"canvasId":"`+canvasID+`","localDesignPath":".aibertai/design/`+canvasID+`"}`)
-			writeRecoveryTestFile(t, root, ".aibertai/design/"+canvasID+"/design-context.json",
+			writeRecoveryTestFile(t, workspace, ".aibertai/design/"+canvasID+"/design-context.json",
 				`{"designSessionId":"`+session+`","canvasId":"`+canvasID+`"}`)
-			writeRecoveryTestFile(t, root, ".aibertai/design/"+canvasID+"/canvas.json", tc.canvas)
+			writeRecoveryTestFile(t, workspace, ".aibertai/design/"+canvasID+"/canvas.json", tc.canvas)
 			if err = dshConnectorDispatch(root, session, operation, call); err != nil {
 				t.Fatal(err)
 			}
@@ -215,7 +227,7 @@ func TestDSHCanvasReleaseRejectedSettlesNotApplied(t *testing.T) {
 			if err = dshCanvasMarkClaim(effect, before); err != nil {
 				t.Fatal(err)
 			}
-			err = dshCanvasReleaseRejected(effect, acpSession{ID: session})
+			err = dshCanvasReleaseRejected(effect, workspace, acpSession{ID: session})
 			if (err == nil) != tc.released {
 				t.Fatalf("release = %v, want released %v", err, tc.released)
 			}
@@ -224,5 +236,38 @@ func TestDSHCanvasReleaseRejectedSettlesNotApplied(t *testing.T) {
 				t.Fatalf("settled = %v, want %v", settled, tc.released)
 			}
 		})
+	}
+}
+
+// Image generation in a conversation without a canvas has no canvas to
+// compare; a definite refusal still settles its claim as not applied.
+func TestDSHCanvasReleaseRejectedWithoutCanvas(t *testing.T) {
+	const (
+		session   = "eeeeeeee-1111-4111-8111-111111111111"
+		operation = "ffffffff-2222-4222-8222-222222222222"
+		call      = "abababab-3333-4333-8333-333333333333"
+	)
+	root, err := os.OpenRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	workspace, err := os.OpenRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workspace.Close()
+	if err = dshConnectorDispatch(root, session, operation, call); err != nil {
+		t.Fatal(err)
+	}
+	effect := &dshSideEffect{root: root, session: session, operation: operation, call: call}
+	if err = dshCanvasMarkClaim(effect, fmt.Sprintf("%x", sha256.Sum256(nil))); err != nil {
+		t.Fatal(err)
+	}
+	if err = dshCanvasReleaseRejected(effect, workspace, acpSession{ID: session}); err != nil {
+		t.Fatalf("release without canvas: %v", err)
+	}
+	if dshConnectorAssertSettled(root, session) != nil {
+		t.Fatal("refused generation still blocks the session")
 	}
 }

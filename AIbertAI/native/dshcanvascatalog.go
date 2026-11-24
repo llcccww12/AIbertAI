@@ -5,10 +5,11 @@ import (
 )
 
 // dshCanvasRestrictedCatalog filters the platform's current catalog before it
-// is exposed to the SDK. The capability response is obtained from the actual
-// connected desktop host; without it only the non-mutating catalog/model reads
-// are available. Guarded selection/document reads use the desktop's explicit
-// no-migration capability and require no write permission.
+// is exposed to the SDK. Guarded tools need the connected desktop's capability
+// response. Canvas-only writes, retry-safe copies/previews and billed media run
+// under the host claim instead (see dshCanvasEvidenceWrite, dshCanvasRetrySafe,
+// dshMediaWrite) and need write permission. Guarded selection/document reads
+// use the desktop's explicit no-migration capability and need no write permission.
 func dshCanvasRestrictedCatalog(catalog []desktopDesignTool, canWrite bool, capabilities string) []desktopDesignTool {
 	var result []desktopDesignTool
 	seen := make(map[string]bool)
@@ -20,7 +21,9 @@ func dshCanvasRestrictedCatalog(catalog []desktopDesignTool, canWrite bool, capa
 		if seen[tool.Name] || !designTool(tool.Name) || json.Unmarshal(tool.Schema, &schema) != nil || schema.Type != "object" {
 			continue
 		}
-		if !dshCanvasReadOnly(tool.Name) && !(dshCanvasGuarded(tool.Name) && (!designWriteTool(tool.Name) || canWrite) && dshCanvasHasGuard(capabilities, tool.Name)) {
+		guarded := dshCanvasGuarded(tool.Name) && (!designWriteTool(tool.Name) || canWrite) && dshCanvasHasGuard(capabilities, tool.Name)
+		claimed := canWrite && (dshCanvasEvidenceWrite(tool.Name) || dshCanvasRetrySafe(tool.Name) || dshMediaWrite(tool.Name) && !dshCanvasGuarded(tool.Name))
+		if !dshCanvasReadOnly(tool.Name) && !guarded && !claimed {
 			continue
 		}
 		if tool.Name == "media_generate_image" || tool.Name == "canvas_create_image" {
