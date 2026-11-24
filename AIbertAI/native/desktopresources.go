@@ -14,15 +14,15 @@ func (c *client) desktopCatalog(ctx context.Context, auth authorization, kind st
 	items := []json.RawMessage{}
 	for page := 1; page <= 100; page++ {
 		var result struct {
-			Models, Experts, Skills []json.RawMessage
-			Total                   int `json:"total_count"`
+			Models, Experts, Skills, Rules []json.RawMessage
+			Total                          int `json:"total_count"`
 		}
 		path := fmt.Sprintf("/api/v1/%s?page=%d&page_size=100", kind, page)
 		if err := c.json(ctx, http.MethodGet, path, auth.Access, "", nil, &result); err != nil {
 			return nil, err
 		}
 		rows := map[string][]json.RawMessage{
-			"models": result.Models, "experts": result.Experts, "skills": result.Skills,
+			"models": result.Models, "experts": result.Experts, "skills": result.Skills, "rules": result.Rules,
 		}[kind]
 		items = append(items, rows...)
 		if len(rows) == 0 || len(items) >= result.Total {

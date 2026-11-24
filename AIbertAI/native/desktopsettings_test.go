@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -10,6 +12,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 )
 
 func TestDesktopSettingsPersistAndReset(t *testing.T) {
@@ -174,5 +179,52 @@ func TestDesktopThinkingAndDraftsSurviveRestart(t *testing.T) {
 	drafts, err := h.localQuery(t.Context(), "_monkeyai/drafts", json.RawMessage(`{}`))
 	if b, _ := json.Marshal(drafts); err != nil || string(b) != `{"sessions":{},"newSessions":{"general":{"text":"unfinished","files":[]}}}` {
 		t.Fatalf("draft not restored: %s (%v)", b, err)
+	}
+}
+
+// A real 512px avatar is ~100 KB of base64; it must fit in one ACP frame.
+func TestDesktopAvatarFitsInACPFrame(t *testing.T) {
+	var size int
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		size = len(body)
+		_, _ = w.Write([]byte(`{"user":{"id":"u1","name":"员工","avatar_url":"https://x/a.webp"}}`))
+	}))
+	defer backend.Close()
+	host := &relaySessionHost{local: &desktopRuntimeAccess{protocol: "monkeyai.token.test"},
+		live: &acpLive{client: &client{backend.URL, backend.Client()}, auth: authorization{Access: "fixture"}}}
+	desktop := httptest.NewServer(host)
+	defer desktop.Close()
+	host.local.address = strings.TrimPrefix(desktop.URL, "http://")
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	ws, _, err := websocket.Dial(ctx, desktop.URL+"/acp", &websocket.DialOptions{Subprotocols: []string{"monkeyai.v1", "monkeyai.token.test"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.CloseNow()
+	if err := wsjson.Write(ctx, ws, map[string]any{"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": map[string]int{"protocolVersion": 1}}); err != nil {
+		t.Fatal(err)
+	}
+	image := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 150<<10))
+	if err := wsjson.Write(ctx, ws, map[string]any{"jsonrpc": "2.0", "id": 1, "method": "_monkeyai/profile/avatar",
+		"params": map[string]string{"image": image, "mime": "image/webp"}}); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		var reply struct {
+			ID     int
+			Result json.RawMessage
+			Error  json.RawMessage
+		}
+		if err := wsjson.Read(ctx, ws, &reply); err != nil {
+			t.Fatalf("avatar frame rejected: %v", err)
+		}
+		if reply.ID == 1 {
+			if len(reply.Error) != 0 || size != 150<<10 {
+				t.Fatalf("avatar upload = %s, forwarded %d bytes", reply.Error, size)
+			}
+			return
+		}
 	}
 }

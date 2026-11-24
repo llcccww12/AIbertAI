@@ -309,7 +309,8 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer ws.CloseNow()
-	ws.SetReadLimit(64 << 10)
+	// Avatar uploads (5 MB as base64) and drafts (256 KB) travel in one frame.
+	ws.SetReadLimit(8 << 20)
 	viewer := h.goals != nil && h.local != nil && r.Header.Get("Origin") == h.local.origin
 	if viewer {
 		defer h.goals.removeViewer(ws)

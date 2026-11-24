@@ -46,6 +46,8 @@ func TestPrivateDesktopResources(t *testing.T) {
 			}
 			w.Header().Set("ETag", `"5"`)
 			body = `{"id":"` + other + `","name":"Updated expert"}`
+		case "GET /api/v1/rules":
+			body = `{"rules":[{"id":"` + other + `","name":"My rule","content":"Be brief"}],"total_count":1}`
 		case "GET /api/v1/connectors":
 			body = `{"connectors":[],"total_count":0}`
 		case "GET /api/v1/connectors/" + other + "/credentials":
@@ -82,6 +84,10 @@ func TestPrivateDesktopResources(t *testing.T) {
 	raw, err := json.Marshal(cfg)
 	if err != nil || !strings.Contains(string(raw), `"source":"mine"`) || !strings.Contains(string(raw), "Private expert") {
 		t.Fatalf("catalog not refreshed: %s (%v)", raw, err)
+	}
+	rules := cfg.(map[string]any)["server"].(map[string]any)["rules"].([]json.RawMessage)
+	if len(rules) != 1 || !strings.Contains(string(rules[0]), "My rule") {
+		t.Fatalf("personal rules missing from catalog: %s", rules)
 	}
 	skills := cfg.(map[string]any)["server"].(map[string]any)["skills"].([]map[string]any)
 	if len(skills) != 1 || skills[0]["id"] != other || skills[0]["resourceId"] != other ||
