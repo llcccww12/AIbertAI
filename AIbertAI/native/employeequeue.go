@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
-	"os"
 	"slices"
 	"strings"
 	"time"
@@ -29,7 +27,10 @@ type acpCanvasNode struct {
 	NodeType string `json:"nodeType"`
 }
 
+type dshMemberQueueKey struct{}
+
 type desktopQueuedMessage struct {
+	DSHMemberID string          `json:"dshMemberId,omitempty"`
 	ID          string          `json:"id"`
 	OperationID string          `json:"operationId"`
 	Text        string          `json:"text"`
@@ -53,6 +54,9 @@ func (s acpSession) queueSnapshot() map[string]any {
 	messages := make([]map[string]any, 0, len(s.Queue.Messages))
 	var editing []string
 	for _, message := range s.Queue.Messages {
+		if message.DSHMemberID != "" {
+			continue
+		}
 		if message.editID != "" {
 			editing = append(editing, message.ID)
 		}
@@ -197,6 +201,12 @@ func (h *relaySessionHost) handleQueue(ctx context.Context, ws *websocket.Conn, 
 		h.uploads.mu.Unlock()
 	}
 	live := h.live
+	if p.Action == "add" || p.Action == "resume" {
+		// A turn recorded before DSH failure semantics may still block the
+		// queue; settle it from the SDK record when possible. Otherwise the
+		// existing checks below report the blocked session.
+		_ = h.settleStuckDSHModelTurn(ctx, p.SessionID)
+	}
 	live.mu.Lock()
 	row, ok := live.sessions[p.SessionID]
 	if !ok || live.restarting {
@@ -210,9 +220,20 @@ func (h *relaySessionHost) handleQueue(ctx context.Context, ws *websocket.Conn, 
 	}
 	messages := row.Queue.Messages
 	index := slices.IndexFunc(messages, func(m desktopQueuedMessage) bool { return m.ID == p.ID })
+	memberID, _ := ctx.Value(dshMemberQueueKey{}).(string)
+	if index >= 0 && messages[index].DSHMemberID != memberID {
+		live.mu.Unlock()
+		return nil, errors.New("session_queue_message_not_found")
+	}
 	switch p.Action {
 	case "add":
-		if index >= 0 || slices.ContainsFunc(row.Turns, func(t acpTurn) bool { return t.ClientID == p.ID }) {
+		previous := slices.IndexFunc(row.Turns, func(t acpTurn) bool { return t.ClientID == p.ID })
+		if index >= 0 || previous >= 0 {
+			if index >= 0 && memberID != "" && (messages[index].OperationID != p.Meta.OperationID || messages[index].Text != p.Text) ||
+				previous >= 0 && (row.Turns[previous].DSHMemberID != memberID || memberID != "" && (row.Turns[previous].Operation != p.Meta.OperationID || row.Turns[previous].Prompt != p.Text)) {
+				live.mu.Unlock()
+				return nil, errors.New("session_operation_conflict")
+			}
 			live.mu.Unlock()
 			return result(row), nil
 		}
@@ -221,12 +242,21 @@ func (h *relaySessionHost) handleQueue(ctx context.Context, ws *websocket.Conn, 
 			live.mu.Unlock()
 			return nil, errors.New("session_operation_conflict")
 		}
+		// A blocked model turn needs an accounting check before a new request can
+		// enter the queue. Saving it here would pause unrelated future messages.
+		if row.Engine == "dsh" && row.State != "running" && len(row.Turns) > 0 {
+			last := row.Turns[len(row.Turns)-1]
+			if dshPendingModelFailure(last) {
+				live.mu.Unlock()
+				return nil, errors.New(last.FailureCode)
+			}
+		}
 		if len(messages) >= 16 {
 			live.mu.Unlock()
 			return nil, errors.New("session_queue_full")
 		}
 		messages = append(slices.Clone(messages), desktopQueuedMessage{
-			ID: p.ID, OperationID: p.Meta.OperationID, Text: p.Text, Attachments: p.Attachments, CanvasNodes: p.CanvasNodes,
+			ID: p.ID, OperationID: p.Meta.OperationID, DSHMemberID: memberID, Text: p.Text, Attachments: p.Attachments, CanvasNodes: p.CanvasNodes,
 			CreatedAt: time.Now().UnixMilli(),
 		})
 	case "resume":
@@ -312,6 +342,9 @@ func (l *acpLive) claimQueue(row acpSession) bool {
 }
 
 func (h *relaySessionHost) runSessionQueue(ctx context.Context, ws *websocket.Conn, r *http.Request, id string, initial map[string]any, accepted func(acpSession) error) (any, error) {
+	viewerCtx := ctx
+	ctx, release := h.dshPromptContext(ctx, id)
+	defer release()
 	live := h.live
 	for {
 		live.mu.Lock()
@@ -350,7 +383,11 @@ func (h *relaySessionHost) runSessionQueue(ctx context.Context, ws *websocket.Co
 				accepted = nil
 				return err
 			}
-			return notifySessionQueue(ctx, ws, current)
+			err := notifySessionQueue(ctx, ws, current)
+			if err != nil && viewerCtx.Err() != nil && ctx.Err() == nil {
+				return nil
+			}
+			return err
 		}
 		_, err := h.promptACP(ctx, ws, r, id, message.OperationID, message.ID, message.Text, onStart, &message, message.Attachments...)
 		if errors.Is(err, errSessionQueueChanged) || errors.Is(err, errGoalSessionBusy) {
@@ -398,20 +435,9 @@ func (h *relaySessionHost) attachmentPrompt(ctx context.Context, session, prompt
 	counts := make(map[string]int, len(files))
 	contents := make(map[string]string, len(files))
 	for _, file := range files {
-		var original *os.File
-		var err error
-		if h.local != nil {
-			original, err = openDesktopAttachment(h.local.attachments, file, remainingBytes)
-		} else if h.uploads != nil {
-			original, err = h.uploads.promptFile(file.Ref, session, file.Name, remainingBytes)
-		}
-		if err != nil || original == nil {
-			return "", nil, errors.New("attachment_unavailable_or_too_large")
-		}
-		data, err := io.ReadAll(io.LimitReader(original, remainingBytes+1))
-		_ = original.Close()
-		if err != nil || int64(len(data)) > remainingBytes {
-			return "", nil, errors.New("attachment_unavailable_or_too_large")
+		data, err := h.readPromptAttachment(session, file, remainingBytes)
+		if err != nil {
+			return "", nil, err
 		}
 		remainingBytes -= int64(len(data))
 		counts[file.Name]++

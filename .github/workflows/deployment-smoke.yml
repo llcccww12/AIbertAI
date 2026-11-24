@@ -10,7 +10,7 @@ on:
       - "AIbertCode/aibertai/deploy/**"
       - "AIbertCode/aibertai/engine/**"
   push:
-    branches: [main]
+    branches: ["main", "20261122"]
     paths:
       - ".github/workflows/deployment-smoke.yml"
       - "AIbertCode/aibertai/.dockerignore"

@@ -18,18 +18,25 @@ type goalRuntimeContext struct{}
 type goalRuntime struct {
 	wake    chan struct{}
 	mu      sync.Mutex
-	viewers map[*websocket.Conn]struct{}
+	viewers map[*websocket.Conn]*goalViewer
 	waiting map[string]goalApproval
 }
 
 type goalApproval struct {
-	viewer *websocket.Conn
-	answer chan string
+	viewer  *websocket.Conn
+	session string
+	answer  chan string
+}
+
+// A nil check identifies a trusted local viewer. Remote viewers must recheck
+// both the session binding and the requested scope on each delivery.
+type goalViewer struct {
+	check func(context.Context, string, string) bool
 }
 
 func newGoalRuntime() *goalRuntime {
 	return &goalRuntime{
-		wake: make(chan struct{}, 1), viewers: make(map[*websocket.Conn]struct{}),
+		wake: make(chan struct{}, 1), viewers: make(map[*websocket.Conn]*goalViewer),
 		waiting: make(map[string]goalApproval),
 	}
 }
@@ -44,7 +51,29 @@ func (g *goalRuntime) schedule() {
 func (g *goalRuntime) addViewer(ws *websocket.Conn) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.viewers[ws] = struct{}{}
+	g.viewers[ws] = &goalViewer{}
+}
+
+func (g *goalRuntime) addScopedViewer(ws *websocket.Conn, check func(context.Context, string, string) bool) {
+	if check == nil {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.viewers[ws] = &goalViewer{check: check}
+}
+
+func goalViewerAllowed(ctx context.Context, viewer *goalViewer, session, scope string) bool {
+	return viewer.check == nil || session != "" && viewer.check(ctx, session, scope)
+}
+
+func goalPayloadSession(payload any) string {
+	values, ok := payload.(map[string]any)
+	if !ok {
+		return ""
+	}
+	session, _ := values["sessionId"].(string)
+	return session
 }
 
 func (g *goalRuntime) removeViewer(ws *websocket.Conn) {
@@ -72,22 +101,49 @@ func (g *goalRuntime) respond(ws *websocket.Conn, id, result, failure json.RawMe
 		choice = reply.Outcome.OptionID
 	}
 	g.mu.Lock()
+	pending, ok := g.waiting[key]
+	viewer, registered := g.viewers[ws]
+	g.mu.Unlock()
+	if !ok || !registered || pending.viewer != ws {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	allowed := goalViewerAllowed(ctx, viewer, pending.session, "session:control")
+	cancel()
+	g.mu.Lock()
 	defer g.mu.Unlock()
-	if pending, ok := g.waiting[key]; ok && pending.viewer == ws {
-		pending.answer <- choice
+	if current, exists := g.waiting[key]; exists && current.answer == pending.answer {
+		if g.viewers[ws] != viewer {
+			allowed = false
+		}
+		if !allowed {
+			choice = ""
+		}
+		current.answer <- choice
 		delete(g.waiting, key)
 	}
 }
 
 func (g *goalRuntime) notify(ctx context.Context, method string, payload any) {
 	g.mu.Lock()
-	viewers := make([]*websocket.Conn, 0, len(g.viewers))
-	for ws := range g.viewers {
-		viewers = append(viewers, ws)
+	viewers := make(map[*websocket.Conn]*goalViewer, len(g.viewers))
+	for ws, viewer := range g.viewers {
+		viewers[ws] = viewer
 	}
 	g.mu.Unlock()
-	for _, ws := range viewers {
+	for ws, viewer := range viewers {
 		write, cancel := context.WithTimeout(ctx, time.Second)
+		if !goalViewerAllowed(write, viewer, goalPayloadSession(payload), "session:read") {
+			cancel()
+			continue
+		}
+		g.mu.Lock()
+		registered := g.viewers[ws] == viewer
+		g.mu.Unlock()
+		if !registered {
+			cancel()
+			continue
+		}
 		err := wsjson.Write(write, ws, map[string]any{"jsonrpc": "2.0", "method": method, "params": payload})
 		cancel()
 		if err != nil {
@@ -97,17 +153,33 @@ func (g *goalRuntime) notify(ctx context.Context, method string, payload any) {
 }
 
 func (g *goalRuntime) permission(ctx context.Context, id string, request any) (string, error) {
+	values, _ := request.(map[string]any)
+	session := goalPayloadSession(values["params"])
 	g.mu.Lock()
-	var viewer *websocket.Conn
-	for ws := range g.viewers {
-		viewer = ws
-		break
+	viewers := make(map[*websocket.Conn]*goalViewer, len(g.viewers))
+	for ws, viewer := range g.viewers {
+		viewers[ws] = viewer
+	}
+	g.mu.Unlock()
+	var selected *websocket.Conn
+	var selectedViewer *goalViewer
+	for ws, viewer := range viewers {
+		if goalViewerAllowed(ctx, viewer, session, "session:control") {
+			selected = ws
+			selectedViewer = viewer
+			break
+		}
+	}
+	g.mu.Lock()
+	viewer := selected
+	if selectedViewer == nil || g.viewers[viewer] != selectedViewer {
+		viewer = nil
 	}
 	if viewer == nil {
 		g.mu.Unlock()
 		return "", errors.New("tool_approval_unavailable")
 	}
-	pending := goalApproval{viewer: viewer, answer: make(chan string, 1)}
+	pending := goalApproval{viewer: viewer, session: session, answer: make(chan string, 1)}
 	g.waiting[id] = pending
 	g.mu.Unlock()
 	defer func() {
@@ -138,11 +210,19 @@ func (h *relaySessionHost) superviseGoals(ctx context.Context) {
 	g := h.goals
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
+	// One session may wait for user input while other goals keep advancing.
+	var workers sync.WaitGroup
+	defer workers.Wait()
+	started := make(map[string]bool)
+	finished := make(chan string)
 	g.schedule()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case id := <-finished:
+			delete(started, id)
+			continue
 		case <-ticker.C:
 		case <-g.wake:
 		}
@@ -152,7 +232,7 @@ func (h *relaySessionHost) superviseGoals(ctx context.Context) {
 		h.live.mu.Lock()
 		var selected acpSession
 		for _, row := range h.live.sessions {
-			if row.GoalRun == "" || row.Goal == nil || !row.Goal.Current || row.Goal.Status != "active" ||
+			if started[row.ID] || row.GoalRun == "" || row.Goal == nil || !row.Goal.Current || (row.Goal.Status != "active" && !(row.Engine == "dsh" && (row.Goal.Status == "clearing" || row.Goal.Status == "reconciling"))) ||
 				h.live.restarting || h.live.activeTurns[row.ID] != nil || h.live.compacting[row.ID] {
 				continue
 			}
@@ -164,12 +244,56 @@ func (h *relaySessionHost) superviseGoals(ctx context.Context) {
 		if selected.ID == "" {
 			continue
 		}
-		request := &http.Request{Host: h.local.address, Header: http.Header{}}
-		request.Header.Set("Sec-WebSocket-Protocol", "monkeyai.v1, "+h.local.protocol)
-		run := context.WithValue(ctx, goalRuntimeContext{}, g)
-		if _, err := h.promptACP(run, nil, request, selected.ID, selected.GoalRun, selected.GoalRun, selected.Goal.Objective, nil, nil); err != nil && ctx.Err() == nil {
-			slog.Debug("持续目标执行结束", "session_id", selected.ID, "reason", safeDesktopTurnFailure(err))
+		if selected.Engine != "dsh" {
+			h.runDesktopGoal(ctx, selected)
+			continue
 		}
+		started[selected.ID] = true
+		workers.Go(func() {
+			h.runDesktopGoal(ctx, selected)
+			select {
+			case finished <- selected.ID:
+			case <-ctx.Done():
+			}
+		})
+		g.schedule()
+	}
+}
+
+func (h *relaySessionHost) runDesktopGoal(ctx context.Context, selected acpSession) {
+	request := &http.Request{Host: h.local.address, Header: http.Header{}}
+	request.Header.Set("Sec-WebSocket-Protocol", "monkeyai.v1, "+h.local.protocol)
+	run := context.WithValue(ctx, goalRuntimeContext{}, h.goals)
+	if selected.Engine == "dsh" && selected.Goal.Status == "reconciling" {
+		if err := h.reconcileDSHGoal(run, selected); err != nil && ctx.Err() == nil {
+			slog.Debug("持续目标对账失败", "session_id", selected.ID, "reason", safeDesktopTurnFailure(err))
+		}
+		if row, err := h.live.load(selected.ID); err == nil && ctx.Err() == nil {
+			h.goals.notify(ctx, "_monkeyai/session/state", map[string]any{
+				"sessionId": row.ID, "eventSeq": row.historySequence(),
+				"state": map[string]any{"goal": goalView(row)}, "finish": false,
+			})
+		}
+		return
+	}
+	if selected.Engine == "dsh" && selected.Goal.Status == "clearing" {
+		if err := h.clearDSHGoal(run, selected); err != nil && ctx.Err() == nil {
+			h.live.mu.Lock()
+			row := h.live.sessions[selected.ID]
+			if row.Goal != nil && row.Goal.ID == selected.Goal.ID && row.Goal.Status == "clearing" {
+				goal := *row.Goal
+				goal.Status, goal.Reason = "paused", "dsh_goal_clear_failed"
+				goal.Version++
+				row.Goal = &goal
+				_ = h.live.save(row)
+			}
+			h.live.mu.Unlock()
+			slog.Debug("持续目标清除失败", "session_id", selected.ID, "reason", safeDesktopTurnFailure(err))
+		}
+		return
+	}
+	if _, err := h.promptACP(run, nil, request, selected.ID, selected.GoalRun, selected.GoalRun, selected.Goal.Objective, nil, nil); err != nil && ctx.Err() == nil {
+		slog.Debug("持续目标执行结束", "session_id", selected.ID, "reason", safeDesktopTurnFailure(err))
 	}
 }
 
@@ -193,15 +317,23 @@ func goalView(row acpSession) *desktopGoal {
 		return nil
 	}
 	goal := *row.Goal
+	goal.Invocations = nil
 	if row.GoalRun != "" && row.State == "running" {
 		goal.ExecutionID = row.GoalRun
 	}
 	if n := len(row.Turns); n != 0 && row.Turns[n-1].Operation == row.GoalRun {
 		if saved := row.Turns[n-1].GoalCheckpoint; saved != nil {
-			tokens, known := goalModelTokens(saved.Usage)
-			goal.Usage.Tokens = min(goal.Usage.Tokens+tokens, maxGoalBudget)
+			if row.Engine != "dsh" {
+				tokens, known := goalModelTokens(saved.Usage)
+				goal.Usage.Tokens = min(goal.Usage.Tokens+tokens, maxGoalBudget)
+				goal.Uncertain = goal.Uncertain || saved.Rounds != 0 && !known
+			}
 			goal.ActiveSeconds += int64(saved.ActiveTime / time.Second)
-			goal.Uncertain = goal.Uncertain || saved.Rounds != 0 && !known
+		}
+	}
+	if row.Engine == "dsh" && row.State == "running" && row.GoalRun != "" && goal.Current && goal.DSHActiveSince != nil {
+		if elapsed := time.Since(*goal.DSHActiveSince); elapsed > 0 {
+			goal.ActiveSeconds += int64(elapsed / time.Second)
 		}
 	}
 	return &goal
@@ -209,7 +341,16 @@ func goalView(row acpSession) *desktopGoal {
 
 func materializeGoalCheckpoint(turn *acpTurn) {
 	if saved := turn.GoalCheckpoint; saved != nil {
-		turn.Answer, turn.ToolRuns, turn.Usage = saved.Progress, saved.Runs, saved.Usage
+		turn.DSHParts, turn.DSHThoughtProof = nil, nil
+		if validDSHGoalThoughtProof(saved.DSHThoughtProof, turn.DSHGoalID, saved.Progress, saved.DSHParts) {
+			turn.DSHParts, turn.DSHThoughtProof = saved.DSHParts, saved.DSHThoughtProof
+		}
+		turn.Answer, turn.ToolRuns, turn.Usage = saved.Progress, append([]workspaceToolRun(nil), saved.Runs...), saved.Usage
+		for i := range turn.ToolRuns {
+			if !validDSHGoalThoughtProof(turn.ToolRuns[i].DSHThoughtProof, turn.DSHGoalID, turn.ToolRuns[i].Preamble, turn.ToolRuns[i].DSHParts) {
+				turn.ToolRuns[i].DSHParts = nil
+			}
+		}
 		turn.Permissions = saved.Permissions
 		turn.GoalCheckpoint = nil
 	}

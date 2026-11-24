@@ -16,6 +16,29 @@ fixture=$2
 output=$3
 electron_zip=${4:-}
 project=$(cd -- "$(dirname -- "$0")/.." && pwd)
+dsh_resources=${AIBERTAI_DSH_RESOURCES:-}
+dsh_manifest_sha256=${AIBERTAI_DSH_MANIFEST_SHA256:-}
+if [[ "$target" == mac-arm64 && -z "$dsh_resources" && -z "$dsh_manifest_sha256" ]]; then
+  if [[ $release == true ]]; then
+    echo "Set AIBERTAI_DSH_RESOURCES and AIBERTAI_DSH_MANIFEST_SHA256 from the trusted DSH build record." >&2
+    exit 2
+  fi
+  pin=$(shasum -a 256 "$project/dsh-integration/patches/experimental-invocation-id.patch" | awk '{print $1}')
+  built="$project/.local-runtime/dsh/$pin"
+  if [[ ! -f "$built/manifest.sha256" ]]; then
+    echo "Build the macOS SDK with dsh-integration/build-dev-sdk.sh or supply a pinned DSH resource directory." >&2
+    exit 2
+  fi
+  dsh_resources="$built/resources"
+  dsh_manifest_sha256=$(cat "$built/manifest.sha256")
+fi
+if [[ -n "$dsh_resources" || -n "$dsh_manifest_sha256" ]]; then
+  if [[ "$dsh_resources" != /* || ! -d "$dsh_resources" || ! "$dsh_manifest_sha256" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "Set both AIBERTAI_DSH_RESOURCES to an absolute staged resource directory and AIBERTAI_DSH_MANIFEST_SHA256 to its trusted digest." >&2
+    exit 2
+  fi
+  python3 "$project/dsh-integration/manifest.py" verify "$dsh_resources" --manifest-sha256 "$dsh_manifest_sha256"
+fi
 mac_identity=${AIBERTAI_MAC_SIGN_IDENTITY:-}
 if [[ $release == true && $fixture != - ]]; then
   echo "Distribution builds cannot contain a test fixture." >&2
@@ -109,7 +132,9 @@ if release == "true":
         helper.write_bytes(plistlib.dumps(info))
 p.write_bytes(plistlib.dumps(d))
 PY
-    cp "$project/AIbertAI.app/Contents/Resources/AIbertAI.icns" "$resources/"
+    icon="$project/AIbertAI.app/Contents/Resources/AIbertAI.icns"
+    if [[ ! -f "$icon" ]]; then icon="$project/.local-runtime/AIbertAI.icns"; fi
+    cp "$icon" "$resources/AIbertAI.icns"
     ;;
   win-x64)
     os=windows
@@ -146,8 +171,36 @@ fi
 
 rm -f "$resources/default_app.asar"
 mkdir -p "$resources/app" "$resources/bin"
+if [[ -n "$dsh_resources" ]]; then
+  python3 - "$dsh_resources/manifest.json" "$os-$arch" <<'PYCODE'
+import json
+import sys
+from pathlib import Path
+manifest = json.loads(Path(sys.argv[1]).read_text())
+if manifest["target"] != sys.argv[2]:
+    raise SystemExit("DSH resource target does not match the employee package")
+# The Windows distribution is a ZIP; its extraction path does not reliably
+# restore symlinks. A Windows staging pipeline must materialize them first.
+if manifest["target"].startswith("windows-") and any(x["type"] == "symlink" for x in manifest["files"]):
+    raise SystemExit("Windows DSH resources must not contain symlinks")
+PYCODE
+  ditto "$dsh_resources" "$resources/dsh"
+  python3 "$project/dsh-integration/manifest.py" verify "$resources/dsh" --manifest-sha256 "$dsh_manifest_sha256"
+fi
 ditto "$project/code/app/out" "$resources/app/out"
 cp "$project/code/app/package.json" "$resources/app/"
+if [[ $release != true ]]; then
+  python3 - "$resources/app/package.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+path = Path(sys.argv[1])
+package = json.loads(path.read_text())
+# Candidate packages must not reuse the installed AIbertAI profile.
+package["productName"] = "AIbertAI Candidate"
+path.write_text(json.dumps(package, indent=2) + "\n")
+PY
+fi
 cp -RL "$project/code/app/node_modules" "$resources/app/node_modules"
 if [[ $target == win-x64 ]]; then
   find "$resources/app/node_modules" -maxdepth 2 -name '*darwin-arm64*' -exec rm -rf {} +
@@ -178,7 +231,11 @@ package = json.loads((resources / "app/package.json").read_text())
 }) + "\n")
 PY
 
-GOOS=$os GOARCH=$arch CGO_ENABLED=0 go -C "$project/native" build -mod=readonly -trimpath -buildvcs=false -o "$resources/bin/$binary" .
+native_ldflags=""
+if [[ -n "$dsh_resources" ]]; then
+  native_ldflags="-X main.dshManifestSHA256=$dsh_manifest_sha256"
+fi
+GOOS=$os GOARCH=$arch CGO_ENABLED=0 go -C "$project/native" build -mod=readonly -trimpath -buildvcs=false -ldflags "$native_ldflags" -o "$resources/bin/$binary" .
 GOOS=$os GOARCH=$arch CGO_ENABLED=0 go -C "$project/native" build -mod=readonly -trimpath -buildvcs=false -o "$resources/bin/$browser_host" ./cmd/browser-host
 test -f "$resources/web/index.html"
 python3 - "$resources" <<'PY'
@@ -214,6 +271,11 @@ if [[ $target == mac-arm64 ]]; then
     codesign --force --deep --sign - "$app"
   fi
   codesign --verify --strict --deep "$app"
+  if [[ -n "$dsh_resources" ]]; then
+    # Signing may rewrite Mach-O contents; refuse a package if it changed any
+    # resource after the manifest digest was embedded in the native binary.
+    python3 "$project/dsh-integration/manifest.py" verify "$resources/dsh" --manifest-sha256 "$dsh_manifest_sha256"
+  fi
   if [[ $release == true ]]; then
     mv "$app" "$image_source/"
   fi

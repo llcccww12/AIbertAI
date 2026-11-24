@@ -20,6 +20,7 @@ export const CONSOLE_ROUTES = {
   skills: "/console/resources/skills",
   experts: "/console/resources/experts",
   tools: "/console/resources/tools",
+  dshGlobalPlugins: "/console/resources/dsh-plugins",
   rules: "/console/resources/rules",
   resourceImports: "/console/resources/imports",
   billingDetails: "/console/billing/details",
@@ -117,6 +118,13 @@ export const CONSOLE_PAGES = [
     sectionPath: CONSOLE_ROUTES.models,
     titleKey: "pages.tools.title",
     descriptionKey: "pages.tools.description",
+  },
+  {
+    path: CONSOLE_ROUTES.dshGlobalPlugins,
+    sectionKey: "sections.aiResources",
+    sectionPath: CONSOLE_ROUTES.models,
+    titleKey: "dshGlobal.title",
+    descriptionKey: "dshGlobal.scope",
   },
   {
     path: CONSOLE_ROUTES.rules,

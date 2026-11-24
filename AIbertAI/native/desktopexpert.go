@@ -23,15 +23,19 @@ type expertSelection struct {
 
 type desktopExpert struct {
 	expertSelection
-	Available bool
-	ExpertID  string `json:"expert_id"`
-	Prompt    string
-	Rules     []struct{ Name, Content string }
-	Skills    []struct {
-		ID, Name string
-		Digest   string `json:"package_sha256"`
-	}
-	Connectors []expertConnector
+	Available   bool
+	ExpertID    string `json:"expert_id"`
+	Prompt      string
+	Rules       []struct{ Name, Content string }
+	Skills      []desktopExpertSkill
+	Connectors  []expertConnector
+	DSHPlugins  []string `json:"dsh_plugins"`
+	CanvasTools []string `json:"canvas_tools"`
+}
+
+type desktopExpertSkill struct {
+	ID, Name, Description string
+	Digest                string `json:"package_sha256"`
 }
 
 type expertConnector struct {
@@ -53,7 +57,15 @@ func (h *relaySessionHost) resolveDesktopExpert(ctx context.Context, id string) 
 	if err != nil {
 		return expert, err
 	}
-	if err = h.live.client.json(ctx, http.MethodGet, "/api/v1/experts/"+id+"/manifest", auth.Access, "", nil, &expert); err != nil {
+	return h.live.client.desktopExpertManifest(ctx, auth, id)
+}
+
+func (c *client) desktopExpertManifest(ctx context.Context, auth authorization, id string) (desktopExpert, error) {
+	var expert desktopExpert
+	if !validUUID(id) {
+		return expert, errors.New("expert_unavailable")
+	}
+	if err := c.json(ctx, http.MethodGet, "/api/v1/experts/"+id+"/manifest", auth.Access, "", nil, &expert); err != nil {
 		return expert, err
 	}
 	if expert.ExpertID != id || !expert.Available {
@@ -96,11 +108,15 @@ func (h *relaySessionHost) setDesktopSessionExpert(ctx context.Context, raw json
 	if !ok {
 		return nil, errors.New("session_not_found")
 	}
-	if row.State == "running" || p.Meta.ExpectedRevision != nil && *p.Meta.ExpectedRevision != row.ResourceRevision {
+	if row.State == "running" || l.compacting[p.SessionID] || p.Meta.ExpectedRevision != nil && *p.Meta.ExpectedRevision != row.ResourceRevision {
 		return nil, errors.New("configuration_conflict")
 	}
 	if row.ExpertID != expert.ID {
 		row.ExpertID, row.ExpertName = expert.ID, expert.Name
+		if row.Engine == "dsh" {
+			available := expert.allowsAgentTeam()
+			row.AgentTeamAvailable = &available
+		}
 		row.ResourceRevision++
 		if err := l.save(row); err != nil {
 			return nil, err
@@ -109,7 +125,7 @@ func (h *relaySessionHost) setDesktopSessionExpert(ctx context.Context, raw json
 	return map[string]any{"expertId": row.ExpertID, "_meta": map[string]int{"configurationRevision": row.ResourceRevision}}, nil
 }
 
-func (c *client) expertInstructions(ctx context.Context, auth authorization, expert desktopExpert) (string, error) {
+func (expert desktopExpert) roleInstructions() (string, error) {
 	var text strings.Builder
 	text.WriteString(expert.Prompt)
 	for _, rule := range expert.Rules {
@@ -119,17 +135,18 @@ func (c *client) expertInstructions(ctx context.Context, auth authorization, exp
 	if text.Len() > 256<<10 {
 		return "", errors.New("expert_instructions_too_large")
 	}
+	return text.String(), nil
+}
+
+func (c *client) expertInstructions(ctx context.Context, auth authorization, expert desktopExpert) (string, error) {
+	role, err := expert.roleInstructions()
+	if err != nil {
+		return "", err
+	}
+	var text strings.Builder
+	text.WriteString(role)
 	for _, skill := range expert.Skills {
-		if !validUUID(skill.ID) {
-			return "", errors.New("invalid_expert_skill")
-		}
-		digest := strings.TrimPrefix(skill.Digest, "sha256:")
-		if _, err := hex.DecodeString(digest); err != nil || len(digest) != 64 {
-			return "", errors.New("invalid_expert_skill")
-		}
-		query := url.Values{"sha256": {skill.Digest}}
-		route := "/api/v1/experts/" + expert.ID + "/skills/" + skill.ID + "/package?" + query.Encode()
-		content, err := c.expertSkill(ctx, auth, route, digest)
+		content, err := c.expertSkill(ctx, auth, expert.ID, skill, "")
 		if err != nil {
 			return "", err
 		}
@@ -142,7 +159,13 @@ func (c *client) expertInstructions(ctx context.Context, auth authorization, exp
 	return text.String(), nil
 }
 
-func (c *client) expertSkill(ctx context.Context, auth authorization, route, digest string) (string, error) {
+func (c *client) expertSkill(ctx context.Context, auth authorization, expertID string, skill desktopExpertSkill, packageDir string) (string, error) {
+	digest := strings.TrimPrefix(skill.Digest, "sha256:")
+	if !validUUID(skill.ID) || !skillPackageSHA.MatchString(digest) {
+		return "", errors.New("invalid_expert_skill")
+	}
+	query := url.Values{"sha256": {skill.Digest}}
+	route := "/api/v1/experts/" + expertID + "/skills/" + skill.ID + "/package?" + query.Encode()
 	const maxPackage = 16 << 20
 	const maxInstruction = 128 << 10
 	resp, err := c.request(ctx, http.MethodGet, route, auth.Access, "", "", "", nil)
@@ -179,6 +202,11 @@ func (c *client) expertSkill(ctx context.Context, auth authorization, route, dig
 	body, err := io.ReadAll(io.LimitReader(reader, maxInstruction+1))
 	if err != nil || len(body) > maxInstruction {
 		return "", errors.New("invalid_expert_skill")
+	}
+	if packageDir != "" {
+		if err := extractSkillPackage(ctx, archive, packageDir, "SKILL.md"); err != nil {
+			return "", err
+		}
 	}
 	return string(body), nil
 }

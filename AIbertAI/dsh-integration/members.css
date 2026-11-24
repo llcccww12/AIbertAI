@@ -1,0 +1,27 @@
+.chat-page:has(> .dsh-member-view):not(:has(> .dsh-member-view[data-aside])) > .chat-body { display: none; }
+.chat-page:has(> .dsh-member-view[data-aside]) { position: relative; }
+.dsh-member-view { display:flex; flex:1; min-height:0; min-width:0; flex-direction:column; background:var(--background); color:var(--foreground); }
+.dsh-member-view[data-aside] { position:absolute; z-index:12; inset:48px 0 0 auto; width:min(420px, 92%); border-left:1px solid var(--border); box-shadow:-6px 0 20px #0001; }
+.dsh-member-view > header { display:flex; align-items:center; min-width:0; padding:8px 14px; border-bottom:1px solid var(--border); }
+.dsh-member-breadcrumb { min-width:0; max-width:100%; display:flex; align-items:center; gap:6px; color:var(--dsw-alias-label-primary); }
+.dsh-member-breadcrumb > span[aria-hidden] { color:var(--dsw-alias-label-tertiary); flex:none; }
+.dsh-member-breadcrumb > button { min-width:0; max-width:55%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:inherit; border-radius:6px; padding:3px 4px; cursor:pointer; }
+.dsh-member-breadcrumb > button:hover { background:var(--muted); }
+.dsh-member-breadcrumb > div { min-width:0; }
+.dsh-member-transcript { min-height:0; flex:1; overflow:auto; overscroll-behavior:contain; }
+.dsh-member-messages { display:flex; flex-direction:column; gap:16px; box-sizing:border-box; width:min(100%, 820px); margin-inline:auto; padding:20px clamp(12px, 4%, 36px); overflow-wrap:anywhere; }
+.dsh-member-messages [data-member-event] { min-width:0; }
+.dsh-member-tool-details small, .dsh-member-messages [data-member-truncation] { color:var(--dsw-alias-label-secondary); }
+.dsh-member-messages [role=alert], .dsh-member-messages [data-failed] [data-disclosure-row] { color:var(--destructive); }
+.dsh-member-messages [data-member-truncation] { display:block; font-size:12px; }
+.dsh-member-tool-details { display:grid; gap:10px; margin:4px 0 0 21px; padding:10px 12px; border-radius:8px; background:var(--dsw-alias-markdown-code-block); }
+.dsh-member-tool-details pre { margin:4px 0 0; max-height:20rem; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.6 ui-monospace, monospace; }
+.dsh-member-text { white-space:pre-wrap; }
+.dsh-member-messages [role=alert] button { padding:3px 7px; text-decoration:underline; }
+
+.dsh-member-view [data-member-composer] { width:min(calc(100% - 24px), 748px); flex:none; gap:0; margin:0 auto 12px; }
+.dsh-member-view [data-member-composer] textarea { width:100%; resize:vertical; max-height:30vh; min-height:44px; border:0; background:transparent; }
+.dsh-member-send-row { display:flex; align-items:center; gap:8px; padding:2px 8px 6px 14px; font-size:13px; color:var(--dsw-alias-label-secondary); }
+.dsh-member-send-row button { margin-inline-start:auto; }
+.dsh-member-send-row [role=alert] { color:var(--destructive); }
+.dsh-member-history-link { margin:4px 0 4px 20px; color:var(--dsw-alias-label-link, var(--primary)); text-decoration:underline; cursor:pointer; }

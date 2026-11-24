@@ -78,7 +78,7 @@ ORDER BY
 LIMIT (sqlc.arg(filter)::jsonb ->> 'limit')::integer;
 
 -- name: CreateResource :exec
-INSERT INTO experts (name, description, prompt, enabled, id, created_by_user_id, owner_user_id, ownership_type)
+INSERT INTO experts (name, description, prompt, dsh_plugins, canvas_tools, enabled, id, created_by_user_id, owner_user_id, ownership_type)
     VALUES (
         CASE WHEN sqlc.arg(DATA)::jsonb ? 'name' THEN
             (sqlc.arg(DATA)::jsonb ->> 'name')::text
@@ -92,7 +92,9 @@ INSERT INTO experts (name, description, prompt, enabled, id, created_by_user_id,
             (sqlc.arg(DATA)::jsonb ->> 'prompt')::text
         ELSE
             NULL
-        END, CASE WHEN sqlc.arg(DATA)::jsonb ? 'enabled' THEN
+        END, NULLIF(sqlc.arg(DATA)::jsonb -> 'dsh_plugins', 'null'::jsonb),
+        NULLIF(sqlc.arg(DATA)::jsonb -> 'canvas_tools', 'null'::jsonb),
+        CASE WHEN sqlc.arg(DATA)::jsonb ? 'enabled' THEN
             (sqlc.arg(DATA)::jsonb ->> 'enabled')::boolean
         ELSE
             TRUE
@@ -127,6 +129,16 @@ SET
         (sqlc.arg(DATA)::jsonb ->> 'prompt')::text
     ELSE
         prompt
+    END,
+    dsh_plugins = CASE WHEN sqlc.arg(DATA)::jsonb ? 'dsh_plugins' THEN
+        NULLIF(sqlc.arg(DATA)::jsonb -> 'dsh_plugins', 'null'::jsonb)
+    ELSE
+        dsh_plugins
+    END,
+    canvas_tools = CASE WHEN sqlc.arg(DATA)::jsonb ? 'canvas_tools' THEN
+        NULLIF(sqlc.arg(DATA)::jsonb -> 'canvas_tools', 'null'::jsonb)
+    ELSE
+        canvas_tools
     END,
     enabled = CASE WHEN sqlc.arg(DATA)::jsonb ? 'enabled' THEN
         (sqlc.arg(DATA)::jsonb ->> 'enabled')::boolean

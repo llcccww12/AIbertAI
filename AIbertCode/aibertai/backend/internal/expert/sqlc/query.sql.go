@@ -46,7 +46,7 @@ func (q *Queries) CreateConnectorLink(ctx context.Context, arg CreateConnectorLi
 }
 
 const createResource = `-- name: CreateResource :exec
-INSERT INTO experts (name, description, prompt, enabled, id, created_by_user_id, owner_user_id, ownership_type)
+INSERT INTO experts (name, description, prompt, dsh_plugins, canvas_tools, enabled, id, created_by_user_id, owner_user_id, ownership_type)
     VALUES (
         CASE WHEN $1::jsonb ? 'name' THEN
             ($1::jsonb ->> 'name')::text
@@ -60,7 +60,9 @@ INSERT INTO experts (name, description, prompt, enabled, id, created_by_user_id,
             ($1::jsonb ->> 'prompt')::text
         ELSE
             NULL
-        END, CASE WHEN $1::jsonb ? 'enabled' THEN
+        END, NULLIF($1::jsonb -> 'dsh_plugins', 'null'::jsonb),
+        NULLIF($1::jsonb -> 'canvas_tools', 'null'::jsonb),
+        CASE WHEN $1::jsonb ? 'enabled' THEN
             ($1::jsonb ->> 'enabled')::boolean
         ELSE
             TRUE
@@ -478,6 +480,16 @@ SET
         ($1::jsonb ->> 'prompt')::text
     ELSE
         prompt
+    END,
+    dsh_plugins = CASE WHEN $1::jsonb ? 'dsh_plugins' THEN
+        NULLIF($1::jsonb -> 'dsh_plugins', 'null'::jsonb)
+    ELSE
+        dsh_plugins
+    END,
+    canvas_tools = CASE WHEN $1::jsonb ? 'canvas_tools' THEN
+        NULLIF($1::jsonb -> 'canvas_tools', 'null'::jsonb)
+    ELSE
+        canvas_tools
     END,
     enabled = CASE WHEN $1::jsonb ? 'enabled' THEN
         ($1::jsonb ->> 'enabled')::boolean

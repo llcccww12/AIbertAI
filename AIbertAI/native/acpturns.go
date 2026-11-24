@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -18,36 +21,125 @@ import (
 )
 
 const maxACPToolCalls = 4
+const maxACPDeckToolCalls = 96
 
 var (
 	errSessionReportPending = errors.New("session_report_pending")
 	errGoalSessionBusy      = errors.New("goal_session_busy")
 )
 
+type dshLegacyToolCalls map[string]json.RawMessage
+
+// dshGoalThoughtProof identifies the durable SDK model message whose
+// committed receipt was checked before its reasoning entered the checkpoint.
+type dshGoalThoughtProof struct {
+	GoalID         string `json:"goalId"`
+	QueryOperation string `json:"queryOperation"`
+	InvocationID   string `json:"invocationId"`
+	MessageSeq     int64  `json:"messageSeq"`
+	ContentSHA256  string `json:"contentSha256"`
+}
+
+func dshGoalThoughtDigest(text string, parts []dshMessagePart) string {
+	b, _ := json.Marshal(struct {
+		Text  string           `json:"text"`
+		Parts []dshMessagePart `json:"parts"`
+	}{text, parts})
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+func validDSHGoalThoughtProof(proof *dshGoalThoughtProof, goalID, text string, parts []dshMessagePart) bool {
+	return proof != nil && validUUID(goalID) && proof.GoalID == goalID && validUUID(proof.QueryOperation) && validUUID(proof.InvocationID) && proof.MessageSeq >= 0 && len(parts) > 0 && proof.ContentSHA256 == dshGoalThoughtDigest(text, parts)
+}
+
+type dshMessagePart struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+	End  int    `json:"end,omitempty"`
+}
+
+// Text stays in Answer/Preamble; offsets retain its position among reasoning
+// blocks without duplicating the entire reply in the session snapshot.
+func dshRenderedParts(parts []dshMessagePart, text string) []map[string]string {
+	if len(parts) == 0 {
+		return []map[string]string{{"type": "text", "text": text}}
+	}
+	out := make([]map[string]string, 0, len(parts))
+	pos := 0
+	for _, part := range parts {
+		switch part.Type {
+		case "thought":
+			out = append(out, map[string]string{"type": "thought", "text": part.Text})
+		case "text":
+			if part.End < pos || part.End > len(text) {
+				return []map[string]string{{"type": "text", "text": text}}
+			}
+			out = append(out, map[string]string{"type": "text", "text": text[pos:part.End]})
+			pos = part.End
+		default:
+			return []map[string]string{{"type": "text", "text": text}}
+		}
+	}
+	if pos != len(text) {
+		return []map[string]string{{"type": "text", "text": text}}
+	}
+	return out
+}
+
 type acpTurn struct {
-	goalOutcome    string
-	Operation      string              `json:"operationId"`
-	ClientID       string              `json:"clientMessageId,omitempty"`
-	Model          string              `json:"model,omitempty"`
-	CanvasNodes    []acpCanvasNode     `json:"canvasNodes,omitempty"`
-	Attachments    []acpAttachment     `json:"attachments,omitempty"`
-	Started        time.Time           `json:"startedAt"`
-	Ended          time.Time           `json:"endedAt,omitzero"`
-	Prompt         string              `json:"prompt"`
-	ReportText     bool                `json:"reportText,omitempty"`
-	ModelInput     string              `json:"modelInput,omitempty"`
-	ResponseItems  []json.RawMessage   `json:"responseItems,omitempty"`
-	Answer         string              `json:"answer,omitempty"`
-	Tool           *reportedTool       `json:"tool,omitempty"`
-	Call           *modelToolUse       `json:"modelToolCall,omitempty"`
-	Output         string              `json:"toolOutput,omitempty"`
-	ToolRuns       []workspaceToolRun  `json:"toolRuns,omitempty"`
-	GoalCheckpoint *goalCheckpoint     `json:"goalCheckpoint,omitempty"`
-	Usage          modelUsage          `json:"usage"`
-	Permissions    reportedPermissions `json:"permissions,omitzero"`
-	Failed         bool                `json:"failed,omitempty"`
-	Interrupted    bool                `json:"interrupted,omitempty"`
-	Acked          bool                `json:"acked,omitempty"`
+	DSHMemberNotices       []dshMemberNotice `json:"dshMemberNotices,omitempty"`
+	DSHMemberID            string            `json:"dshMemberId,omitempty"`
+	goalOutcome            string
+	dshImageAdmission      dshImageAdmission
+	Operation              string                `json:"operationId"`
+	ClientID               string                `json:"clientMessageId,omitempty"`
+	Model                  string                `json:"model,omitempty"`
+	CanvasNodes            []acpCanvasNode       `json:"canvasNodes,omitempty"`
+	Attachments            []acpAttachment       `json:"attachments,omitempty"`
+	Started                time.Time             `json:"startedAt"`
+	Ended                  time.Time             `json:"endedAt,omitzero"`
+	Prompt                 string                `json:"prompt"`
+	ReportText             bool                  `json:"reportText,omitempty"`
+	ModelInput             string                `json:"modelInput,omitempty"`
+	DSHHasImages           bool                  `json:"dshHasImages,omitempty"`
+	DSHInputNotAdmitted    bool                  `json:"dshInputNotAdmitted,omitempty"`
+	ResponseItems          []json.RawMessage     `json:"responseItems,omitempty"`
+	LegacyPrompt           json.RawMessage       `json:"legacyPrompt,omitempty"`
+	LegacyResponse         json.RawMessage       `json:"legacyResponse,omitempty"`
+	LegacyToolCalls        dshLegacyToolCalls    `json:"legacyToolCalls,omitempty"`
+	Answer                 string                `json:"answer,omitempty"`
+	DSHParts               []dshMessagePart      `json:"dshParts,omitempty"`
+	DSHDeliverables        []dshPresentedFile    `json:"dshDeliverables,omitempty"`
+	Tool                   *reportedTool         `json:"tool,omitempty"`
+	Call                   *modelToolUse         `json:"modelToolCall,omitempty"`
+	Output                 string                `json:"toolOutput,omitempty"`
+	ToolRuns               []workspaceToolRun    `json:"toolRuns,omitempty"`
+	GoalCheckpoint         *goalCheckpoint       `json:"goalCheckpoint,omitempty"`
+	Usage                  modelUsage            `json:"usage"`
+	Permissions            reportedPermissions   `json:"permissions,omitzero"`
+	Failed                 bool                  `json:"failed,omitempty"`
+	FailureCode            string                `json:"failureCode,omitempty"`
+	Interrupted            bool                  `json:"interrupted,omitempty"`
+	DSHCompactID           string                `json:"dshCompactCommandId,omitempty"`
+	DSHCompactions         []dshCompactionNotice `json:"dshCompactions,omitempty"`
+	DSHTodos               *dshTodoSnapshot      `json:"dshTodos,omitempty"`
+	DSHTeamBoard           *dshTeamBoard         `json:"dshTeamBoard,omitempty"`
+	DSHContext             *dshContextUsage      `json:"dshContext,omitempty"`
+	DSHStreamed            bool                  `json:"dshStreamed,omitempty"`
+	DSHStep                int                   `json:"dshStep,omitempty"`
+	DSHUserReviewed        bool                  `json:"dshUserReviewed,omitempty"`
+	DSHReconciled          bool                  `json:"dshReconciled,omitempty"`
+	DSHProjectionSeq       *int64                `json:"dshProjectionSeq,omitempty"`
+	DSHModelFailureSettled bool                  `json:"dshModelFailureSettled,omitempty"`
+	DSHStopObserved        bool                  `json:"dshStopObserved,omitempty"`
+	DSHCancelConfirmed     bool                  `json:"dshCancelConfirmed,omitempty"`
+	Acked                  bool                  `json:"acked,omitempty"`
+
+	dshCurrentInvocation string
+	dshStreamAttempt     string
+	DSHGoalID            string               `json:"dshGoalId,omitempty"`
+	DSHThoughtProof      *dshGoalThoughtProof `json:"dshThoughtProof,omitempty"`
 }
 
 // Older sessions recorded a single tool directly on the turn.
@@ -70,7 +162,7 @@ func (s acpSession) modelHistory() []toolConversationMessage {
 		messages = append(messages, toolConversationMessage{Role: "user", Content: &user}, toolConversationMessage{Role: "assistant", Content: &assistant})
 	}
 	for _, turn := range s.Turns[compacted:] {
-		if turn.Answer != "" {
+		if turn.DSHMemberID == "" && turn.Answer != "" {
 			input := turn.Prompt
 			if turn.ModelInput != "" {
 				input = turn.ModelInput
@@ -121,21 +213,23 @@ func (l *acpLive) reserveTurn(id, op, clientID, prompt string, attachments []acp
 	if session.State == "running" || !background && queued == nil && l.queueWorkers[id] != nil {
 		return session, 0, false, errors.New("session_unavailable_for_prompt")
 	}
+	var memberID string
 	var canvasNodes []acpCanvasNode
 	fromQueue := queued != nil
 	if fromQueue {
 		if len(session.Queue.Messages) == 0 || session.Queue.Messages[0].ID != clientID ||
-			session.Queue.Messages[0].editID != "" || session.Queue.Messages[0].Text != prompt ||
+			session.Queue.Messages[0].DSHMemberID != queued.DSHMemberID || session.Queue.Messages[0].editID != "" || session.Queue.Messages[0].Text != prompt ||
 			!slices.Equal(session.Queue.Messages[0].Attachments, attachments) {
 			return session, 0, false, errSessionQueueChanged
 		}
 		canvasNodes = queued.CanvasNodes
+		memberID = queued.DSHMemberID
 	}
 	for index, turn := range session.Turns {
 		if turn.Operation != op {
 			continue
 		}
-		if turn.Prompt != prompt || turn.ClientID != clientID || !slices.Equal(turn.Attachments, attachments) || !slices.Equal(turn.CanvasNodes, canvasNodes) || turn.Ended.IsZero() {
+		if turn.DSHMemberID != memberID || turn.Prompt != prompt || turn.ClientID != clientID || !slices.Equal(turn.Attachments, attachments) || !slices.Equal(turn.CanvasNodes, canvasNodes) || turn.Ended.IsZero() {
 			return session, 0, false, errors.New("session_operation_conflict")
 		}
 		if !turn.Acked {
@@ -145,6 +239,28 @@ func (l *acpLive) reserveTurn(id, op, clientID, prompt string, attachments []acp
 			}
 		}
 		return session, index, true, nil
+	}
+	// DSH never locks a conversation because an earlier turn failed: the agent
+	// loop records the failure, returns to idle and admits the next message.
+	// The guarantees this gate used to provide are enforced where they belong:
+	//   - the failed turn's SDK child is discarded, so no old reply can run on;
+	//   - a resumed turn reconciles any pending model invocation before it
+	//     prompts (runDSHSessionWithProfile), and fails that attempt only;
+	//   - on resume the SDK closes every unanswered tool call with an
+	//     "outcome unknown, verify before retrying" result (core/session repair),
+	//     so the model, not a lock, decides what to re-check;
+	//   - a replayed side-effecting call is still refused by its durable claim.
+	// The failed turn stays on disk unchanged, and the explicit recheck action
+	// remains available for billing receipts.
+	//
+	// One case still waits: the last turn's own model call is unsettled in the
+	// gateway journal and promptACP could not settle it just now. That call
+	// cannot be dispatched past, and keeping it the last turn is what lets the
+	// "重新核验" receipt check (and settleStuckDSHModelTurn) resolve it.
+	if n := len(session.Turns); !background && session.Engine == "dsh" && n > 0 {
+		if last := session.Turns[n-1]; (dshPendingModelFailure(last) || dshStuckModelOnlyTurn(last)) && l.dshModelCallPending(id) {
+			return session, 0, false, errors.New("dsh_reconciliation_required")
+		}
 	}
 	if n := len(session.Turns); n > 0 && !session.Turns[n-1].Acked {
 		return session, 0, false, errSessionReportPending
@@ -159,7 +275,7 @@ func (l *acpLive) reserveTurn(id, op, clientID, prompt string, attachments []acp
 		session.ConnectorPreferences = &prefs
 	}
 	index := len(session.Turns)
-	turn := acpTurn{Operation: op, ClientID: clientID, Model: session.Model, Started: started, Prompt: prompt, Attachments: attachments, CanvasNodes: canvasNodes}
+	turn := acpTurn{Operation: op, ClientID: clientID, DSHMemberID: memberID, Model: session.Model, Started: started, Prompt: prompt, Attachments: attachments, CanvasNodes: canvasNodes}
 	if background {
 		turn.GoalCheckpoint = &goalCheckpoint{}
 	}
@@ -204,7 +320,9 @@ func (h *relaySessionHost) submitACPTurn(ctx context.Context, id string, index i
 	tools := turn.workspaceTools()
 	facts := make([]reportedTool, 0, len(tools))
 	for _, tool := range tools {
-		facts = append(facts, tool.Report)
+		if !tool.Pending {
+			facts = append(facts, tool.Report)
+		}
 	}
 	input := reportedInput{Kind: "prompt"}
 	if turn.ReportText {
@@ -257,6 +375,15 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 	turnCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	_, background := ctx.Value(goalRuntimeContext{}).(*goalRuntime)
+	if !background {
+		if err := h.preflightOwnedModel(turnCtx, id, op); err != nil {
+			return nil, err
+		}
+		// Settle a stale earlier failure when its evidence allows. This only
+		// tidies receipts; the next message is admitted either way.
+		_ = h.settleStuckDSHModelTurn(ctx, id)
+		_ = h.settleStaleCanvasTurn(id)
+	}
 	session, index, retry, err := live.reserveTurn(id, op, clientID, prompt, files, cancel, background, queued)
 	if errors.Is(err, errSessionReportPending) && h.retryPendingReport(ctx, id) == nil {
 		session, index, retry, err = live.reserveTurn(id, op, clientID, prompt, files, cancel, background, queued)
@@ -274,10 +401,11 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 	currentGoalAtStart := session.Goal
 	register := index == 0 && retry
 	if !retry {
+		inputPreparationFailed := false
 		// At this point the user message and cancellable turn are durable.
 		if clientID != "" {
 			err = notifyACPTurnState(ctx, ws, session, op, false)
-			if err == nil {
+			if err == nil && turn.DSHMemberID == "" {
 				err = writeTurnNotification(ctx, ws, "_monkeyai/session/message",
 					map[string]any{"sessionId": id, "eventSeq": session.historySequence(), "message": session.promptMessage(index, nil)})
 			}
@@ -286,7 +414,7 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 			err = accepted(session)
 		}
 		if err == nil {
-			turn.ReportText = h.collectTurnText(turnCtx)
+			turn.ReportText = turn.DSHMemberID == "" && h.collectTurnText(turnCtx)
 		}
 		if err == nil && index == 0 {
 			var auth authorization
@@ -300,16 +428,215 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 			if clientID != "" {
 				turnCtx = context.WithValue(turnCtx, acpAnswerKey{}, session.responseID(index))
 			}
-			err = h.runACPModelTurn(turnCtx, ws, request, session, &turn, files)
+			if session.Engine == "dsh" {
+				if background && (len(files) != 0 || len(turn.CanvasNodes) != 0) {
+					err = errors.New("dsh_input_unsupported")
+				} else {
+					if session.ExpertID != "" && session.ExpertID != designExpertID {
+						var releaseExpert func()
+						turnCtx, releaseExpert, err = h.bindDSHExpert(turnCtx, session)
+						defer releaseExpert()
+					}
+					var modelPrompt string
+					if err == nil && !background {
+						if len(files) > 0 && h.local != nil {
+							var auth authorization
+							if err == nil {
+								auth, err = live.authorization(turnCtx)
+							}
+							var selected selectedModelConfig
+							if err == nil {
+								selected, err = live.client.modelConfig(turnCtx, auth, turn.Model)
+							}
+							var input dshImageInput
+							var hasImage bool
+							if err == nil {
+								input, hasImage, err = h.prepareDSHImageInput(turnCtx, id, turn.Prompt, files, selected.SupportsVision)
+								inputPreparationFailed = err != nil
+							}
+							if err == nil {
+								var text strings.Builder
+								for _, block := range input.blocks {
+									if block["type"] == "text" {
+										text.WriteString(block["text"])
+									}
+								}
+								modelPrompt = text.String()
+								if hasImage {
+									turn.DSHHasImages = true
+									turnCtx = context.WithValue(turnCtx, dshImageInputKey{}, input)
+								}
+							}
+						} else {
+							modelPrompt, _, err = h.attachmentPrompt(turnCtx, id, turn.Prompt, files)
+						}
+						if err == nil && modelPrompt != turn.Prompt {
+							turn.ModelInput = modelPrompt
+						}
+					}
+					if err == nil && !background {
+						var bridges []dshHostToolBridge
+						var instructions string
+						bridges, instructions, err = h.dshTurnHostTools(turnCtx, ws, request, session, &turn)
+						inputPreparationFailed = errors.Is(err, errDSHCanvasUnavailable)
+						if err == nil && instructions != "" {
+							turnCtx = context.WithValue(turnCtx, dshExpertInstructionsKey{}, instructions)
+						}
+						if err == nil && len(bridges) > 0 {
+							turnCtx = context.WithValue(turnCtx, dshHostToolBridgesKey{}, bridges)
+						}
+						if err == nil && len(turn.CanvasNodes) > 0 {
+							previous := modelPrompt
+							modelPrompt += "\n\nThe user attached references to these canvas nodes. Use canvas_get_selection to inspect the attached selection when needed:"
+							for _, node := range turn.CanvasNodes {
+								modelPrompt += fmt.Sprintf("\n- %q (%s, node ID %q)", node.Title, node.NodeType, node.ID)
+							}
+							turn.ModelInput = modelPrompt
+							if input, ok := turnCtx.Value(dshImageInputKey{}).(dshImageInput); ok {
+								input.blocks = append(input.blocks, map[string]string{"type": "text", "text": strings.TrimPrefix(modelPrompt, previous)})
+								turnCtx = context.WithValue(turnCtx, dshImageInputKey{}, input)
+							}
+						}
+					}
+					if err == nil {
+						if live.store != nil && live.store.Root != nil {
+							turnCtx = context.WithValue(turnCtx, dshSideEffectRootKey{}, live.store.Root)
+						}
+						turnCtx = context.WithValue(turnCtx, dshNativeApprovalKey{}, h.dshNativeApproval(turnCtx, ws, request, session))
+						if !background || h.interactions != nil {
+							turnCtx = context.WithValue(turnCtx, dshQuestionKey{}, h.dshQuestionHandler(ws, request, session))
+						}
+						allowWrites := live.workspaces != nil && h.acpScope(request.WithContext(turnCtx), "files:write") == nil
+						if allowWrites {
+							turnCtx = context.WithValue(turnCtx, dshBoundaryStateKey{}, &dshBoundaryState{})
+							turnCtx = context.WithValue(turnCtx, dshWorkspaceAuthorizeKey{}, func(ctx context.Context) error {
+								return h.acpScope(request.WithContext(ctx), "files:write")
+							})
+						}
+						if !background && allowWrites {
+							turnCtx = context.WithValue(turnCtx, dshWorkspaceBridgeKey{}, h.dshWorkspaceBridge(turnCtx, ws, session, &turn))
+							if h.local != nil {
+								turnCtx = context.WithValue(turnCtx, dshTrustedLaunchKey{}, true)
+							}
+						}
+						project := func(update map[string]any) error {
+							live.mu.Lock()
+							current := live.sessions[id]
+							if turnCtx.Err() != nil && update != nil {
+								switch update["sessionUpdate"] {
+								case "agent_message_start", "agent_message_chunk", "agent_thought_chunk":
+									// A provisional frame may have raced cancellation after
+									// the SDK reader checked its context. Restore the last
+									// published state; durable settlement remains admissible.
+									previous := current.Turns[index]
+									turn.Answer, turn.DSHParts, turn.DSHStreamed = previous.Answer, previous.DSHParts, previous.DSHStreamed
+									turn.DSHThoughtProof, turn.dshCurrentInvocation = previous.DSHThoughtProof, previous.dshCurrentInvocation
+									live.mu.Unlock()
+									return nil
+								}
+							}
+							current.Turns = slices.Clone(current.Turns)
+							current.Turns[index] = turn
+							saveErr := live.save(current)
+							live.mu.Unlock()
+							if saveErr != nil {
+								return saveErr
+							}
+							if turn.DSHMemberID == "" && update != nil && (turnCtx.Err() == nil || update["sessionUpdate"] == "agent_message_reset") {
+								// A cancelled turn context must not be used for a WebSocket
+								// write: a racing cancellation can close the connection.
+								notifyCtx := ctx
+								if answerID, ok := turnCtx.Value(acpAnswerKey{}).(string); ok {
+									notifyCtx = context.WithValue(notifyCtx, acpAnswerKey{}, answerID)
+								}
+								_ = sendACPToolUpdate(notifyCtx, ws, id, update)
+							}
+							h.notifyDSHHistory(ctx, current)
+							return nil
+						}
+						if turn.DSHHasImages || turn.ModelInput != "" {
+							err = project(nil)
+							if err != nil {
+								// The SDK has not received the input yet. Drop the
+								// oversized projection so the failed turn itself can be saved.
+								turn.ModelInput = ""
+								inputPreparationFailed = true
+								if err.Error() == "desktop_session_snapshot_too_large" {
+									err = errors.New("attachment_unavailable_or_too_large")
+								}
+							}
+						}
+						if err == nil {
+							if background {
+								err = h.runDSHGoalTurn(turnCtx, ws, request, session, &turn, index > 0, allowWrites, project)
+							} else {
+								resume := false
+								for _, prior := range session.Turns[:index] {
+									if !prior.DSHInputNotAdmitted {
+										resume = true
+										break
+									}
+								}
+								err = runDSHInteractiveTurn(turnCtx, live.dsh, session, &turn, resume, project)
+							}
+						}
+					}
+				}
+			} else {
+				err = h.runACPModelTurn(turnCtx, ws, request, session, &turn, files)
+			}
 		}
-		if len(turn.Answer) > 128<<10 {
+		notAdmitted := err != nil && (inputPreparationFailed || turn.DSHHasImages && turn.dshImageAdmission == dshImageNotSent)
+		if notAdmitted {
+			// A local failure or an explicit SDK admission refusal is not an
+			// unknown dispatch. Preserve the failure without retaining an image.
+			turn.DSHHasImages = false
+			turn.DSHInputNotAdmitted = true
+		}
+		if session.Engine != "dsh" && len(turn.Answer) > 128<<10 {
 			turn.Answer = ""
 			err = errors.New("session_answer_too_large")
 		}
-		turn.Interrupted = err != nil && turnCtx.Err() == context.Canceled && ctx.Err() == nil
+		// An unresolved write stays on disk as evidence, but it must not fail an
+		// otherwise completed turn: the tool result already told the model.
+		unsettledWrite := session.Engine == "dsh" && live.store != nil && dshUnsettledWorkspaceWrite(live.store.Root, id, turn)
+		memberStopped := turn.DSHMemberID != "" && turn.DSHCancelConfirmed && errors.Is(err, context.Canceled)
+		turn.Interrupted = err != nil && !notAdmitted && ctx.Err() == nil && (turnCtx.Err() == context.Canceled || memberStopped)
+		if session.Engine == "dsh" && turn.Interrupted && !turn.DSHCancelConfirmed {
+			turn.DSHCancelConfirmed = !background && h.confirmStoppedDSHReply(ctx, session, &turn)
+			if !turn.DSHCancelConfirmed {
+				turn.Interrupted = false
+				turn.FailureCode = "dsh_reconciliation_required"
+			}
+		}
 		turn.Failed, turn.Ended = err != nil && !turn.Interrupted, time.Now().UTC()
-		if turn.Failed && ctx.Err() == nil {
-			slog.Warn("桌面对话执行失败", "session_id", id, "operation_id", op, "reason", safeDesktopTurnFailure(err))
+		if turn.DSHModelFailureSettled && (live.store == nil || live.store.Root == nil || dshConnectorAssertSettled(live.store.Root, id) != nil) {
+			turn.DSHModelFailureSettled = false
+			turn.FailureCode = "dsh_connector_reconciliation_required"
+		}
+		if err != nil && session.Engine == "dsh" && (dshPendingWrite(turn) || unsettledWrite) {
+			turn.Interrupted = false
+			turn.Failed = true
+			turn.FailureCode = "dsh_write_outcome_unknown"
+		}
+		if err != nil && session.Engine == "dsh" && strings.Contains(err.Error(), "dsh_canvas_outcome_unknown") {
+			turn.Interrupted = false
+			turn.Failed = true
+			turn.FailureCode = "dsh_canvas_outcome_unknown"
+		}
+		if turn.Failed {
+			if turn.FailureCode == "" {
+				turn.FailureCode = safeDesktopTurnFailure(err)
+			}
+			plannedGoalStop := false
+			if background && session.Engine == "dsh" {
+				if current, loadErr := live.load(id); loadErr == nil && current.Goal != nil && !current.Goal.hasPendingDSHInvocation() && !dshPendingWrite(turn) {
+					plannedGoalStop = current.Goal.Status == "budget_limited" || current.Goal.Status == "clearing" || current.Goal.Status == "paused" && current.Goal.Reason == "user_paused"
+				}
+			}
+			if ctx.Err() == nil && !plannedGoalStop {
+				slog.Warn("桌面对话执行失败", "session_id", id, "operation_id", op, "reason", turn.FailureCode)
+			}
 		}
 		if turn.Ended.Before(turn.Started) {
 			turn.Ended = turn.Started
@@ -339,8 +666,9 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 		if paused {
 			saved := current.Turns[index].GoalCheckpoint
 			goal := *current.Goal
-			goal.Status, session.State = "paused", "idle"
-			if current.Goal.Status != "paused" {
+			session.State = "idle"
+			if current.Goal.Status != "paused" && current.Goal.Status != "budget_limited" && current.Goal.Status != "blocked" && current.Goal.Status != "clearing" {
+				goal.Status = "paused"
 				goal.Reason = turn.goalOutcome
 				if goal.Reason == "" && turn.Interrupted {
 					goal.Reason = "user_paused"
@@ -352,6 +680,14 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 			if saved != nil && saved.Pending != nil {
 				goal.Reason, goal.Uncertain = "resume_confirmation", true
 			}
+			if session.Engine == "dsh" && errors.Is(err, errDSHGoalApprovalUnavailable) {
+				goal.Status, goal.Reason = "paused", "approval_unavailable"
+			}
+			if session.Engine == "dsh" && dshPendingWrite(turn) {
+				goal.Status, goal.Reason, goal.Uncertain = "paused", "resume_confirmation", true
+			} else if session.Engine == "dsh" && goal.Status != "clearing" && goal.hasPendingDSHInvocation() {
+				goal.Status, goal.Reason, goal.Uncertain = "paused", "usage_unknown", true
+			}
 			goal.Version++
 			session.Goal, session.Turns[index] = &goal, current.Turns[index]
 		} else {
@@ -362,6 +698,12 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 			session.Turns[index] = turn
 		}
 		writeErr := live.save(session)
+		if writeErr == nil && !background && session.Engine == "dsh" && turn.Failed && turn.FailureCode == "dsh_write_outcome_unknown" {
+			if live.dshStoppedTurns == nil {
+				live.dshStoppedTurns = make(map[string]string)
+			}
+			live.dshStoppedTurns[id] = op
+		}
 		live.mu.Unlock()
 		if writeErr != nil {
 			return nil, errors.New("session_write_failed")
@@ -389,11 +731,15 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 			return nil, errors.New("session_write_failed")
 		}
 	}
+	h.notifyDSHTurnCheckpoint(ctx, session, index, op)
 	if clientID != "" {
 		_ = notifyACPReply(ctx, ws, session, index, background)
 		_ = notifyACPTurnState(ctx, ws, session, op, true)
 	}
 	if turn.Failed {
+		if dshTerminalModelFailure(turn.FailureCode) || turn.FailureCode == "dsh_model_outcome_unknown" || turn.FailureCode == "dsh_model_response_interrupted" || turn.FailureCode == "dsh_connector_outcome_unknown" || turn.FailureCode == "dsh_canvas_outcome_unknown" {
+			return nil, errors.New(turn.FailureCode)
+		}
 		if errors.Is(err, errSkillCommandUnavailable) {
 			return nil, errSkillCommandUnavailable
 		}
@@ -402,12 +748,30 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 	if turn.Interrupted {
 		return map[string]string{"stopReason": "cancelled"}, nil
 	}
-	if clientID == "" {
+	if clientID == "" && !(session.Engine == "dsh" && turn.DSHStreamed && !retry) {
 		if err := sendACPText(ctx, ws, id, "agent_message_chunk", turn.Answer); err != nil {
 			return nil, err
 		}
 	}
 	return map[string]string{"stopReason": "end_turn"}, nil
+}
+
+func (h *relaySessionHost) notifyDSHTurnCheckpoint(ctx context.Context, session acpSession, index int, op string) {
+	h.notifyDSHHistory(ctx, session)
+	if session.Engine == "dsh" && h.local != nil && h.goals != nil {
+		if session.Turns[index].hasHistoryResponse() {
+			calls := map[string]any{}
+			message := session.responseMessage(index, calls)
+			h.goals.notify(ctx, "_monkeyai/session/message", map[string]any{"sessionId": session.ID, "eventSeq": session.historySequence(), "message": message, "toolCalls": calls, "checkpoint": true})
+		}
+		h.goals.notify(ctx, "_monkeyai/session/state", acpTurnStatePayload(session, op, true))
+	}
+}
+
+func (h *relaySessionHost) notifyDSHHistory(ctx context.Context, session acpSession) {
+	if session.Engine == "dsh" && h.local != nil && h.goals != nil {
+		h.goals.notify(ctx, "_monkeyai/session/history_changed", map[string]any{"sessionId": session.ID, "eventSeq": session.historySequence()})
+	}
 }
 
 func notifyACPReply(ctx context.Context, ws *websocket.Conn, session acpSession, index int, checkpoint bool) error {
@@ -421,15 +785,32 @@ func notifyACPReply(ctx context.Context, ws *websocket.Conn, session acpSession,
 }
 
 func notifyACPTurnState(ctx context.Context, ws *websocket.Conn, session acpSession, operation string, finished bool) error {
+	return writeTurnNotification(ctx, ws, "_monkeyai/session/state", acpTurnStatePayload(session, operation, finished))
+}
+
+func acpTurnStatePayload(session acpSession, operation string, finished bool) map[string]any {
 	title, source := session.sessionTitle()
 	state := map[string]any{"status": session.State, "executionId": operation, "title": title, "titleSource": source}
 	if finished {
 		state["executionId"] = nil
+		if reason := session.lastTurnFailure(); reason != "" {
+			state["lastError"] = reason
+		} else {
+			state["lastError"] = ""
+		}
 	}
+	session.addDSHTodoMetadata(state)
 	state["goal"] = goalView(session)
-	return writeTurnNotification(ctx, ws, "_monkeyai/session/state", map[string]any{
+	return map[string]any{
 		"sessionId": session.ID, "eventSeq": session.historySequence(), "state": state, "finish": finished,
-	})
+	}
+}
+
+func (s acpSession) lastTurnFailure() string {
+	if s.State == "error" && len(s.Turns) != 0 {
+		return s.Turns[len(s.Turns)-1].FailureCode
+	}
+	return ""
 }
 
 func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Conn, request *http.Request, session acpSession, turn *acpTurn, files []acpAttachment) error {
@@ -530,6 +911,12 @@ func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Co
 			if design != nil || (designExpertSelected && rootErr == nil) {
 				if design != nil {
 					limit = 12
+					var task struct{ DesignType string }
+					if json.Unmarshal(design, &task) == nil && task.DesignType == "slide_deck" {
+						// Each editable slide needs separate create, write and commit calls.
+						limit = maxACPDeckToolCalls
+						workspace.SlideDeck = true
+					}
 				}
 				workspace.DesignTools, err = h.designBridge.tools(ctx, session, design)
 				if err != nil {
@@ -759,10 +1146,48 @@ func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Co
 	if goalRun != nil {
 		turn.goalOutcome = goalRun.outcome
 	}
+	if goalRun == nil && workspace != nil && workspace.SlideDeck && ctx.Err() == nil &&
+		slices.ContainsFunc(turn.ToolRuns, func(run workspaceToolRun) bool {
+			return run.Report.Name == designCreateHTMLTool || run.Report.Name == designCommitHTMLTool
+		}) {
+		result, statusErr := h.designBridge.call(ctx, session, design, designReadTool, json.RawMessage(`{}`))
+		var canvas struct {
+			Document struct {
+				SlideCount, DraftSlideCount int
+			}
+		}
+		if statusErr == nil && json.Unmarshal([]byte(result), &canvas) == nil && canvas.Document.DraftSlideCount > 0 {
+			progress := fmt.Sprintf("画布实际已提交 %d/%d 页，另有 %d 页待提交。整套 PPT 预览和导出需等这些页面提交后才能使用。",
+				canvas.Document.SlideCount-canvas.Document.DraftSlideCount, canvas.Document.SlideCount, canvas.Document.DraftSlideCount)
+			turn.Answer = strings.TrimSpace(turn.Answer + "\n\n" + progress)
+		}
+	}
 	return err
 }
 
+// A lost result after a mutating tool started cannot prove whether it wrote.
+func dshPendingWrite(turn acpTurn) bool {
+	for _, run := range turn.ToolRuns {
+		if run.Pending && run.Call != nil && (run.Call.Function.Name == "write" || run.Call.Function.Name == "edit") {
+			return true
+		}
+	}
+	return false
+}
+
 func safeDesktopTurnFailure(err error) string {
+	if strings.Contains(err.Error(), "dsh_canvas_outcome_unknown") {
+		return "dsh_canvas_outcome_unknown"
+	}
+	if strings.Contains(err.Error(), "dsh_connector_outcome_unknown") || strings.Contains(err.Error(), "dsh_connector_dispatch_uncertain") {
+		return "dsh_connector_outcome_unknown"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "backend_request_timeout"
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return "backend_response_interrupted"
+	}
 	message := err.Error()
 	if knowledgeErrorCode.MatchString(message) {
 		return message
@@ -822,7 +1247,7 @@ func (h *relaySessionHost) readToolWorkspaceFile(row acpSession, path string) (s
 }
 
 func workspaceToolKind(name string) string {
-	if builtinWorkspaceWrite(name) || designWriteTool(name) {
+	if name == "write" || name == "edit" || builtinWorkspaceWrite(name) || designWriteTool(name) {
 		return "edit"
 	}
 	if name == legacyGrepTool || name == legacyGlobTool || name == directoryTool {
@@ -849,6 +1274,14 @@ func workspaceCompatTitle(name string) string {
 }
 
 type acpAnswerKey struct{}
+type dshNativeApprovalWaitKey struct{}
+
+func acpApprovalWaitContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if enabled, _ := ctx.Value(dshNativeApprovalWaitKey{}).(bool); enabled {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, 30*time.Second)
+}
 
 func sendACPToolUpdate(ctx context.Context, ws *websocket.Conn, id string, update map[string]any) error {
 	params := map[string]any{"sessionId": id, "update": update}
@@ -869,21 +1302,40 @@ func (h *relaySessionHost) approveACPTool(ctx context.Context, ws *websocket.Con
 }
 
 func (h *relaySessionHost) requestACPToolApproval(ctx context.Context, ws *websocket.Conn, sessionID, callID, title, name, kind string, input any) (reportedPermissions, error) {
+	return h.requestToolApproval(ctx, ws, sessionID, callID, title, name, kind, input, true, false)
+}
+
+// DSH has already published its tool/call. The permission request carries
+// the host's approval details without replacing the model's tool arguments.
+func (h *relaySessionHost) requestDSHToolApproval(ctx context.Context, ws *websocket.Conn, sessionID, callID, title, name, kind string, input any, allowBypass bool) (reportedPermissions, error) {
+	return h.requestToolApproval(ctx, ws, sessionID, callID, title, name, kind, input, allowBypass, true)
+}
+
+func (h *relaySessionHost) requestToolApproval(ctx context.Context, ws *websocket.Conn, sessionID, callID, title, name, kind string, input any, allowBypass, callProjected bool) (reportedPermissions, error) {
 	pending := map[string]any{"toolCallId": callID, "title": title, "name": name,
 		"kind": kind, "status": "pending", "rawInput": input}
-	update := maps.Clone(pending)
-	update["sessionUpdate"] = "tool_call"
+	publishCall := func(ctx context.Context) error {
+		if callProjected {
+			return nil
+		}
+		update := maps.Clone(pending)
+		update["sessionUpdate"] = "tool_call"
+		return sendACPToolUpdate(ctx, ws, sessionID, update)
+	}
 
-	if h.local != nil && h.live != nil {
+	if allowBypass && h.local != nil && h.live != nil {
 		row, err := h.live.load(sessionID)
-		if err == nil && row.permissionMode() == "bypassPermissions" {
-			return reportedPermissions{}, sendACPToolUpdate(ctx, ws, sessionID, update)
+		if err == nil && row.permissionMode() == modeFullAccess {
+			return reportedPermissions{}, publishCall(ctx)
 		}
 	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	if callProjected && h.interactions != nil {
+		ctx = context.WithValue(ctx, dshNativeApprovalWaitKey{}, true)
+	}
+	ctx, cancel := acpApprovalWaitContext(ctx)
 	defer cancel()
 	permissionID := "permission-" + callID
-	if err := sendACPToolUpdate(ctx, ws, sessionID, update); err != nil {
+	if err := publishCall(ctx); err != nil {
 		return reportedPermissions{}, errors.New("tool_approval_unavailable")
 	}
 	permission := map[string]any{
@@ -894,6 +1346,14 @@ func (h *relaySessionHost) requestACPToolApproval(ctx context.Context, ws *webso
 				{"optionId": "deny", "kind": "reject_once", "name": "拒绝"},
 			},
 		},
+	}
+	if callProjected && h.interactions != nil {
+		reply, err := h.interactions.ask(ctx, ws, "session/request_permission", permission["params"])
+		counts := reportedPermissions{Asked: 1}
+		if err != nil {
+			return counts, err
+		}
+		return applyACPPermissionReply(counts, reply)
 	}
 	if g, ok := ctx.Value(goalRuntimeContext{}).(*goalRuntime); ok {
 		choice, err := g.permission(ctx, permissionID, permission)
@@ -919,9 +1379,12 @@ func (h *relaySessionHost) requestACPToolApproval(ctx context.Context, ws *webso
 		return reportedPermissions{}, errors.New("tool_approval_unavailable")
 	}
 	counts := reportedPermissions{Asked: 1}
+	viewerDone, _ := ctx.Value(acpViewerDoneKey{}).(<-chan struct{})
 	select {
 	case reply := <-waiter.reply:
 		return applyACPPermissionReply(counts, reply)
+	case <-viewerDone:
+		return counts, errors.New("tool_approval_unavailable")
 	case <-ctx.Done():
 		return counts, errors.New("tool_approval_unavailable")
 	}
@@ -947,8 +1410,12 @@ func applyACPPermissionReply(counts reportedPermissions, reply acpPermissionRepl
 }
 
 func (session acpSession) historySequence() int {
-	count := len(session.Turns)
+	count := 0
 	for _, turn := range session.Turns {
+		if turn.DSHMemberID != "" {
+			continue
+		}
+		count++
 		if turn.hasHistoryResponse() {
 			count++
 		}
@@ -956,8 +1423,15 @@ func (session acpSession) historySequence() int {
 	return count
 }
 
+func (t acpTurn) hasModelFailureRecord() bool {
+	return t.Failed && !t.DSHReconciled && strings.HasPrefix(t.FailureCode, "dsh_model_")
+}
+
 func (t acpTurn) hasHistoryResponse() bool {
-	return t.Answer != "" || len(t.workspaceTools()) > 0 || t.GoalCheckpoint != nil && t.GoalCheckpoint.Progress != ""
+	if t.DSHMemberID != "" {
+		return false
+	}
+	return t.hasModelFailureRecord() || t.Answer != "" || len(t.DSHMemberNotices) != 0 || len(t.DSHCompactions) != 0 || t.DSHTeamBoard.visible() || len(t.DSHParts) > 0 || len(t.DSHDeliverables) > 0 || len(t.workspaceTools()) > 0 || t.GoalCheckpoint != nil && t.GoalCheckpoint.Progress != "" || t.Interrupted && t.DSHCancelConfirmed && (!t.Failed || t.DSHReconciled)
 }
 
 func (session acpSession) toolHistoryID(turn acpTurn, index, step int) string {
@@ -969,6 +1443,12 @@ func (session acpSession) toolHistoryID(turn acpTurn, index, step int) string {
 
 func (session acpSession) promptMessage(index int, auth *relayAuthorization) map[string]any {
 	turn := session.Turns[index]
+	if len(turn.LegacyPrompt) != 0 {
+		var original map[string]any
+		if json.Unmarshal(turn.LegacyPrompt, &original) == nil && original != nil {
+			return original
+		}
+	}
 	id := fmt.Sprintf("%s-%d", session.ID, index+1)
 	userParts := []map[string]any{{"type": "text", "text": turn.Prompt}}
 	for _, file := range turn.Attachments {
@@ -1004,31 +1484,128 @@ func (session acpSession) responseID(index int) string {
 
 func (session acpSession) responseMessage(index int, calls map[string]any) map[string]any {
 	turn := session.Turns[index]
+	if len(turn.LegacyResponse) != 0 {
+		var original map[string]any
+		if json.Unmarshal(turn.LegacyResponse, &original) == nil && original != nil {
+			for id, call := range turn.LegacyToolCalls {
+				calls[id] = call
+			}
+			return original
+		}
+	}
 	parts := []map[string]string{}
-	for step, run := range turn.workspaceTools() {
-		if run.Preamble != "" {
+	goalTurn := turn.GoalCheckpoint != nil || turn.DSHGoalID != "" || session.Engine == "dsh" && session.Goal != nil && turn.Operation == session.Goal.ID
+	notices := turn.DSHCompactions
+	appendCompactions := func(afterTools int) {
+		for len(notices) > 0 && notices[0].AfterTools <= afterTools {
+			parts = append(parts, notices[0].part(turn))
+			notices = notices[1:]
+		}
+	}
+	runs := turn.workspaceTools()
+	for step, run := range runs {
+		appendCompactions(step)
+		if len(run.DSHParts) != 0 && (!goalTurn || validDSHGoalThoughtProof(run.DSHThoughtProof, turn.DSHGoalID, run.Preamble, run.DSHParts)) {
+			parts = append(parts, dshRenderedParts(run.DSHParts, run.Preamble)...)
+		} else if run.Preamble != "" {
 			parts = append(parts, map[string]string{"type": "text", "text": run.Preamble})
 		}
 		callID, state := session.toolHistoryID(turn, index, step), "completed"
-		if run.Report.Failed > 0 {
+		if run.Pending {
+			state = "pending"
+			if run.DSHCallID != "" && session.State == "running" && turn.Ended.IsZero() {
+				state = "in_progress"
+			}
+		} else if run.Report.Failed > 0 {
 			state = "failed"
 		}
 		kind := workspaceToolKind(run.Report.Name)
 		if run.Report.Category == "connector" {
 			kind = "other"
 		}
-		calls[callID] = map[string]any{"id": callID, "name": run.Report.Name, "title": run.Report.Name, "kind": kind, "status": state,
+		title := run.Report.Name
+		if run.DisplayName != "" {
+			title = run.DisplayName
+		}
+		if run.DisplayKind != "" {
+			kind = run.DisplayKind
+		}
+		calls[callID] = map[string]any{"id": callID, "name": run.Report.Name, "title": title, "kind": kind, "status": state,
 			"output": run.Output, "isError": run.Report.Failed > 0}
+		if turn.Failed && dshRecoverableWorkspaceFailure(turn.FailureCode) && step == len(turn.workspaceTools())-1 && run.Call != nil && (run.Call.Function.Name == "write" || run.Call.Function.Name == "edit") {
+			if turn.DSHUserReviewed {
+				calls[callID].(map[string]any)["userReviewed"] = true
+			} else if !turn.DSHReconciled {
+				calls[callID].(map[string]any)["outcomeUnknown"] = true
+			}
+		}
+		if turn.Failed && ((turn.FailureCode == "dsh_connector_outcome_unknown" && run.Report.Category == "connector") || (turn.FailureCode == "dsh_canvas_outcome_unknown" && run.Report.Category == "canvas" && !turn.DSHReconciled)) && step == len(turn.workspaceTools())-1 {
+			calls[callID].(map[string]any)["outcomeUnknown"] = true
+		}
+		if run.DSHCallID != "" && run.Call != nil {
+			var input any
+			if json.Unmarshal([]byte(run.Call.Function.Arguments), &input) != nil {
+				input = run.Call.Function.Arguments
+			}
+			calls[callID].(map[string]any)["rawInput"] = input
+			calls[callID].(map[string]any)["dshCallId"] = run.DSHCallID
+			if len(run.DSHResultMeta) > 0 {
+				calls[callID].(map[string]any)["dshResultMeta"] = run.DSHResultMeta
+			}
+		}
 		parts = append(parts, map[string]string{"type": "tool_call", "toolCallId": callID})
 	}
+	appendCompactions(len(runs))
 	progress := turn.Answer
 	if turn.GoalCheckpoint != nil {
 		progress = turn.GoalCheckpoint.Progress
 	}
-	if progress != "" {
+	progressParts, proof := turn.DSHParts, turn.DSHThoughtProof
+	if turn.GoalCheckpoint != nil {
+		progressParts, proof = turn.GoalCheckpoint.DSHParts, turn.GoalCheckpoint.DSHThoughtProof
+	}
+	if len(progressParts) != 0 && (!goalTurn || validDSHGoalThoughtProof(proof, turn.DSHGoalID, progress, progressParts)) {
+		parts = append(parts, dshRenderedParts(progressParts, progress)...)
+	} else if progress != "" {
 		parts = append(parts, map[string]string{"type": "text", "text": progress})
 	}
+	if session.Engine == "dsh" && turn.hasModelFailureRecord() {
+		parts = append(parts, map[string]string{"type": "error", "reason": turn.FailureCode})
+	}
 	message := map[string]any{"id": session.responseID(index), "role": "assistant", "at": turn.Started.UnixMilli(), "parts": parts}
+	if session.Engine == "dsh" {
+		message["dshExecution"] = true
+		if len(turn.DSHMemberNotices) != 0 {
+			message["dshMemberNotices"] = turn.DSHMemberNotices
+		}
+		if turn.DSHTeamBoard.visible() && !slices.ContainsFunc(session.Turns[index+1:], func(later acpTurn) bool { return later.DSHTeamBoard != nil }) {
+			message["dshTeamBoard"] = turn.DSHTeamBoard
+		}
+		if turn.Failed && !turn.DSHReconciled {
+			message["dshFailed"] = true
+			if turn.DSHStopObserved {
+				message["dshStopAccountingPending"] = true
+			}
+		}
+		if !turn.Ended.IsZero() {
+			if files := turn.presentedFiles(session.CWD); len(files) > 0 {
+				message["dshDeliverables"] = files
+			}
+		}
+		// The client lists files changed in this conversation from the message.
+		if files := turn.mutatedFiles(session.CWD); len(files) > 0 {
+			message["files"] = files
+		}
+		if !turn.Started.IsZero() {
+			message["startedAt"] = turn.Started.UnixMilli()
+		}
+		if turn.Ended.IsZero() && turn.DSHStep > 0 {
+			message["dshStep"] = turn.DSHStep
+		}
+	}
+	if turn.Interrupted && turn.DSHCancelConfirmed && (!turn.Failed || turn.DSHReconciled) {
+		message["interrupted"] = true
+	}
 	if !turn.Ended.IsZero() {
 		message["at"], message["endedAt"] = turn.Ended.UnixMilli(), turn.Ended.UnixMilli()
 	}
@@ -1045,6 +1622,9 @@ func (session acpSession) historyWindow(query historyQuery, auth *relayAuthoriza
 	calls := map[string]any{}
 	position := 0
 	for index, turn := range session.Turns {
+		if turn.DSHMemberID != "" {
+			continue
+		}
 		userPosition := position
 		position++
 		if turn.hasHistoryResponse() {

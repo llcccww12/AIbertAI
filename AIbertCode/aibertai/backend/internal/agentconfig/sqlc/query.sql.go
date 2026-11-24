@@ -183,6 +183,7 @@ SELECT jsonb_build_object(
     'name_i18n', t.name_i18n,
     'description_i18n', t.description_i18n,
     'prompt', t.prompt,
+    'dsh_plugins', t.dsh_plugins, 'canvas_tools', t.canvas_tools,
     'avatar_s3_key', t.avatar_s3_key
 )
 FROM experts t

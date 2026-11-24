@@ -11,12 +11,15 @@ import (
 var errHistoryCursor = errors.New("invalid_session_history_cursor")
 
 type historyQuery struct {
-	SessionID  string `json:"sessionId"`
-	Limit      int    `json:"limit"`
-	Cursor     string `json:"cursor"`
-	Direction  string `json:"direction"`
-	Action     string `json:"action"`
-	ToolCallID string `json:"toolCallId"`
+	SessionID     string `json:"sessionId"`
+	Limit         int    `json:"limit"`
+	Cursor        string `json:"cursor"`
+	Direction     string `json:"direction"`
+	Action        string `json:"action"`
+	ToolCallID    string `json:"toolCallId"`
+	PageFragments bool   `json:"pageFragments,omitempty"`
+	PageOffset    *int   `json:"pageOffset,omitempty"`
+	PageHash      string `json:"pageHash,omitempty"`
 }
 
 var errHistoryToolOutput = errors.New("session_tool_output_unavailable")
@@ -36,6 +39,25 @@ func (h *relaySessionHost) historyToolOutput(q historyQuery) (any, error) {
 	if h.live != nil {
 		if session, err := h.live.load(q.SessionID); err == nil {
 			for index, turn := range session.Turns {
+				if turn.DSHMemberID != "" {
+					continue
+				}
+				if raw, ok := turn.LegacyToolCalls[q.ToolCallID]; ok {
+					var call struct {
+						ID, Status      string
+						Output          *string
+						OutputTruncated bool
+						OutputLength    *int
+					}
+					if json.Unmarshal(raw, &call) != nil || call.ID != q.ToolCallID || (call.Status != "completed" && call.Status != "failed") || call.Output == nil || call.OutputTruncated {
+						return nil, errHistoryToolOutput
+					}
+					result := toolOutput(*call.Output)
+					if call.OutputLength != nil && *call.OutputLength != result["length"] {
+						return nil, errHistoryToolOutput
+					}
+					return result, nil
+				}
 				for step, run := range turn.workspaceTools() {
 					if session.toolHistoryID(turn, index, step) == q.ToolCallID && run.Report.Failed == 0 {
 						return toolOutput(run.Output), nil

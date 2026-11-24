@@ -20,11 +20,12 @@ const designCommitHTMLTool = "canvas_commit_html"
 
 const designProductionTool = "canvas_production"
 const designPreparePPTXTool = "canvas_prepare_pptx"
+const designStyleChoiceTool = "design_await_style_choice"
 
 func designTool(name string) bool {
 	switch name {
 	case designReadTool, designSelectionTool, designTextTool, designCreateHTMLTool, designCommitHTMLTool,
-		designProductionTool, designPreparePPTXTool, "media_get_image_model", "media_generate_image", "media_edit_image", "design_await_style_choice", "canvas_add_artifact_asset",
+		designProductionTool, designPreparePPTXTool, "media_get_image_model", "media_generate_image", "media_edit_image", designStyleChoiceTool, "canvas_add_artifact_asset",
 		"canvas_capture_preview", "design_jury_submit", "canvas_create_image", "canvas_create_video",
 		"canvas_compose_media_project", "canvas_create_layer_group", "canvas_group_story_assets", "canvas_update_node",
 		"canvas_delete_node", "design_catalog_search", "design_catalog_detail", "design_catalog_logo_batch":
@@ -35,7 +36,7 @@ func designTool(name string) bool {
 
 func designWriteTool(name string) bool {
 	switch name {
-	case designReadTool, designSelectionTool, "media_get_image_model", "design_await_style_choice", "design_catalog_search", "design_catalog_detail":
+	case designReadTool, designSelectionTool, "media_get_image_model", designStyleChoiceTool, "design_catalog_search", "design_catalog_detail":
 		return false
 	}
 	return designTool(name)
@@ -94,6 +95,10 @@ func (b *desktopDesignBridge) read(r io.Reader) {
 }
 
 func (b *desktopDesignBridge) call(ctx context.Context, row acpSession, design json.RawMessage, name string, args json.RawMessage) (string, error) {
+	return b.callGuarded(ctx, row, design, name, args, nil, "", "", "", "")
+}
+
+func (b *desktopDesignBridge) callGuarded(ctx context.Context, row acpSession, design json.RawMessage, name string, args json.RawMessage, revision *int64, digest, artifacts, contextDigest, sourceDigest string) (string, error) {
 	id, err := newUUID()
 	if err != nil {
 		return "", err
@@ -107,13 +112,23 @@ func (b *desktopDesignBridge) call(ctx context.Context, row acpSession, design j
 		delete(b.pending, id)
 		b.mu.Unlock()
 	}()
-	if err := b.send(map[string]any{"event": "design_tool", "id": id, "sessionId": row.ID, "cwd": row.CWD, "design": design, "name": name, "arguments": args}); err != nil {
+	event := map[string]any{"event": "design_tool", "id": id, "sessionId": row.ID, "cwd": row.CWD, "design": design, "name": name, "arguments": args}
+	if revision != nil {
+		event["expectedRevision"], event["expectedCanvasDigest"] = *revision, digest
+		if sourceDigest != "" {
+			event["expectedSourceDigest"] = sourceDigest
+		}
+		if artifacts != "" {
+			event["expectedArtifactsDigest"], event["expectedContextDigest"] = artifacts, contextDigest
+		}
+	}
+	if err := b.send(event); err != nil {
 		return "", err
 	}
 	timeout := 20 * time.Second
 	if name == "media_generate_image" || name == "media_edit_image" {
 		timeout = 21 * time.Minute
-	} else if name == "canvas_capture_preview" || name == "design_await_style_choice" || name == "design_session_open" {
+	} else if name == "canvas_capture_preview" || name == designStyleChoiceTool || name == "design_session_open" {
 		timeout = 125 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -128,7 +143,7 @@ func (b *desktopDesignBridge) call(ctx context.Context, row acpSession, design j
 		}
 		return string(reply.Result), nil
 	case <-ctx.Done():
-		if name == "media_generate_image" || name == "media_edit_image" {
+		if name == "media_generate_image" || name == "media_edit_image" || name == designStyleChoiceTool {
 			_ = b.send(map[string]string{"event": "design_tool_cancel", "id": id})
 		}
 		return "", errors.New("design_tool_unavailable")

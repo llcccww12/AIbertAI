@@ -48,6 +48,8 @@ func (h *relaySessionHost) sessionState(id string) (map[string]any, error) {
 	if row.ConnectorPreferences != nil {
 		state["resourcePreferences"] = row.ConnectorPreferences.normalized()
 	}
+	row.addDSHTodoMetadata(state)
+	row.addAgentTeamMetadata(state)
 	state["status"], state["goal"] = row.State, goalView(row)
 	if row.GoalRun != "" && row.State == "running" {
 		state["executionId"] = row.GoalRun
@@ -75,6 +77,9 @@ func (h *relaySessionHost) sessionDetail(r *http.Request, method string, raw jso
 		return nil, errors.New("invalid_session_parameters")
 	}
 	if method == "_monkeyai/session/state/get" {
+		if h.local != nil && h.live != nil && h.live.dsh != nil && h.acpScope(r, "session:control") == nil {
+			h.restoreLegacyDSHTodos(r.Context(), p.SessionID)
+		}
 		return h.sessionState(p.SessionID)
 	}
 	row, err := h.live.load(p.SessionID)

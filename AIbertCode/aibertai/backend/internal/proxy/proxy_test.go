@@ -278,7 +278,7 @@ func TestModelTransportsIgnoreEnvironmentProxy(t *testing.T) {
 	t.Setenv("HTTP_PROXY", "http://127.0.0.1:1")
 	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
 	for _, transport := range []*http.Transport{
-		NewProxy(nil, discardLogger()).reverse.Transport.(timeoutTransport).base.(outboundTransport).direct.(*http.Transport),
+		NewProxy(nil, discardLogger()).reverse.Transport.(timeoutTransport).base.(dialRetryTransport).base.(outboundTransport).direct.(*http.Transport),
 		NewResponseReconciler().client.Transport.(*http.Transport),
 		DirectTransport(),
 	} {
@@ -380,5 +380,42 @@ func TestProxyErrorHandlerLogsUpstreamError(t *testing.T) {
 	text := logs.String()
 	if !strings.Contains(text, "model-1") || !strings.Contains(text, "transaction-1") || !strings.Contains(text, "proxy_request") || !strings.Contains(text, "upstream-token-and-private-response") {
 		t.Fatalf("代理日志缺少上下文或原始错误: %s", text)
+	}
+}
+
+func TestDSHNotDispatchedProofProvenance(t *testing.T) {
+	const proof = "X-Aibertai-Model-Not-Dispatched"
+	const id = "34343434-3434-4343-8343-343434343434"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(proof, id)
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	t.Cleanup(upstream.Close)
+	proxy := NewProxy(ResolverFunc(func(context.Context, string, string) (Target, error) { return testTarget(upstream.URL), nil }), discardLogger())
+	for _, tc := range []struct {
+		name                string
+		authorized, desktop bool
+		code                int
+		want                string
+	}{
+		{"local refusal", false, true, http.StatusUnauthorized, id},
+		{"ordinary client", false, false, http.StatusUnauthorized, ""},
+		{"upstream refusal with forged header", true, true, http.StatusTooManyRequests, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
+			if tc.desktop {
+				r.Header.Set("X-Aibertai-DSH-Stream", "1")
+			}
+			if tc.authorized {
+				r.Header.Set("Authorization", "Bearer test")
+			}
+			r.Header.Set("Idempotency-Key", id)
+			w := httptest.NewRecorder()
+			proxy.ServeHTTP(w, r)
+			if w.Code != tc.code || w.Header().Get(proof) != tc.want {
+				t.Fatalf("code=%d proof=%q", w.Code, w.Header().Get(proof))
+			}
+		})
 	}
 }

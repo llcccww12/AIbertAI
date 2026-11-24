@@ -213,3 +213,44 @@ func TestDesktopSessionRecoversInterruptedTurn(t *testing.T) {
 		t.Fatal("interrupted turn lost its local failure record or pending report")
 	}
 }
+
+// Like DSH, an earlier failure never locks the conversation. Only a turn whose
+// usage report has not reached the platform waits, and promptACP retries it.
+func TestDSHFailedTurnAdmitsNextMessage(t *testing.T) {
+	const id = "c1bd985c-9f71-4b85-937a-c41b1b104d38"
+	const op = "c2bd985c-9f71-4b85-937a-c41b1b104d38"
+	now := time.Now().UTC()
+	for _, tc := range []struct {
+		name string
+		last acpTurn
+		want string
+	}{
+		{"connector unverified", acpTurn{Failed: true, FailureCode: "dsh_connector_reconciliation_required", Acked: true}, ""},
+		{"connector reviewed", acpTurn{Failed: true, FailureCode: "dsh_connector_reconciliation_required", DSHUserReviewed: true, Acked: true}, ""},
+		{"canvas outcome unknown", acpTurn{Failed: true, FailureCode: "dsh_canvas_outcome_unknown", Acked: true}, ""},
+		{"model outcome unknown", acpTurn{Failed: true, FailureCode: "dsh_model_outcome_unknown", Acked: true}, ""},
+		{"runtime exited", acpTurn{Failed: true, FailureCode: "dsh_runtime_exited", Acked: true}, ""},
+		{"stop not confirmed", acpTurn{Failed: true, FailureCode: "dsh_reconciliation_required", Acked: true}, ""},
+		{"report pending", acpTurn{Failed: true, FailureCode: "dsh_connector_reconciliation_required", DSHReconciled: true}, "session_report_pending"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			last := tc.last
+			last.Ended = now
+			live := &acpLive{dir: t.TempDir(), sessions: map[string]acpSession{id: {ID: id, Engine: "dsh", State: "error", Turns: []acpTurn{last}}}}
+			session, index, replay, err := live.beginTurn(id, op, "", "next", nil, nil)
+			if tc.want != "" {
+				if err == nil || err.Error() != tc.want {
+					t.Fatalf("expected %s, got %v", tc.want, err)
+				}
+				return
+			}
+			if err != nil || replay || index != 1 {
+				t.Fatalf("expected the next message to start a turn, index=%d replay=%v err=%v", index, replay, err)
+			}
+			// The failed turn stays on disk unchanged as evidence.
+			if prior := session.Turns[0]; !prior.Failed || prior.FailureCode != last.FailureCode || prior.DSHReconciled != last.DSHReconciled {
+				t.Fatalf("failed turn was rewritten: %+v", prior)
+			}
+		})
+	}
+}

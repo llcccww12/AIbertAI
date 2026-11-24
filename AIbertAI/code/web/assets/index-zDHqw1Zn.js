@@ -1,3 +1,7 @@
+import { bindChatFramework } from "../dsh/chat-framework.mjs";
+import { contextReading, contextSegments, formatContextTokens } from "../dsh/context-meter.mjs";
+import { beginCompactOperation, finishCompactOperation, applyDSHCompaction } from "../dsh/compact-operation.mjs";
+import { dshToolActions, dshStructuredAction, isDSHTool, displayOtherApproval, displayDSHStructuredOutput, displayReadOffset, dshErrorKey, displayDSHRead, displayDSHWrite, normalizeDSHToolCalls, preserveDSHLiveMessage, applyDSHStream, isSameSequenceCompletion } from "../dsh/tool-actions.mjs?v=20261121-dsh-context-approval";
 const __vite__mapDeps = (
   i,
   m = __vite__mapDeps,
@@ -25153,6 +25157,10 @@ sr([
 const bWe = ce(),
   nO = De({
     content: xA,
+    streamAttemptId: Re(ce().optional(), () => {}),
+    streamRevision: Re(Ar().optional(), () => {}),
+    streamIndex: Re(Ar().optional(), () => {}),
+    streamBlockIndex: Re(Ar().optional(), () => {}),
     messageId: Re(bWe.nullish(), () => {}),
     _meta: Re(wt(ce(), xt()).nullish(), () => {}),
   }),
@@ -25262,6 +25270,12 @@ const bWe = ce(),
   $We = sr([
     nO.and(De({ sessionUpdate: Mt("user_message_chunk") })),
     nO.and(De({ sessionUpdate: Mt("agent_message_chunk") })),
+    De({ sessionUpdate: Mt("agent_message_start"), streamAttemptId: ce(), streamRevision: Ar() }),
+    nO.and(De({ sessionUpdate: Mt("agent_message_settled"), streamAttemptId: ce() })),
+    De({ sessionUpdate: Mt("agent_message_reset"), streamAttemptId: ce() }),
+    De({ sessionUpdate: Mt("dsh_step"), step: Ar(), startedAt: Ar() }),
+    De({ sessionUpdate: Mt("dsh_member_notice"), notice: wt(ce(), xt()) }),
+    De({ sessionUpdate: Mt("dsh_team_board"), board: wt(ce(), xt()) }),
     nO.and(De({ sessionUpdate: Mt("agent_thought_chunk") })),
     xWe.and(De({ sessionUpdate: Mt("tool_call") })),
     o2e.and(De({ sessionUpdate: Mt("tool_call_update") })),
@@ -27308,6 +27322,20 @@ const xVe = 1024,
     invalidTunnelMessage: "invalid_tunnel_message",
     idempotencyConflict: "idempotency_conflict",
     outcomeUnknown: "outcome_unknown",
+    dshConnectorOutcomeUnknown: "dsh_connector_outcome_unknown",
+    dshConnectorReconciliationRequired: "dsh_connector_reconciliation_required",
+    dshCanvasOutcomeUnknown: "dsh_canvas_outcome_unknown",
+    dshModelAccessDenied: "dsh_model_access_denied",
+    dshModelQuota: "dsh_model_quota",
+    dshModelRateLimited: "dsh_model_rate_limited",
+    dshModelServiceUnavailable: "dsh_model_service_unavailable",
+    dshModelRequestRejected: "dsh_model_request_rejected",
+    dshModelStreamEnded: "dsh_model_stream_ended",
+    dshModelOutputLimit: "dsh_model_output_limit",
+    dshModelContentRefused: "dsh_model_content_refused",
+    dshModelOutcomeUnknown: "dsh_model_outcome_unknown",
+    dshModelResponseInterrupted: "dsh_model_response_interrupted",
+    dshReconciliationRequired: "dsh_reconciliation_required",
     operationsUnavailable: "operations_unavailable",
     operationsBusy: "operations_busy",
     unsupportedOperation: "unsupported_operation",
@@ -33190,13 +33218,13 @@ async function Vm(e, t, n, r, s) {
 const Gm = (e) => Kd.acknowledge(e),
   Cve = (e) => Kd.recover(e);
 const directSessionCancel = new WeakMap();
-async function dYe(e, t, n) {
+async function dYe(e, t, n, confirmLocal = false) {
   const endpoint = directSessionCancel.get(e);
   if (endpoint) {
     const check = () => {
       if (Uc !== e) throw new Error(Se.deviceTargetChanged);
     };
-    await OR(endpoint, "write/session/cancel", { sessionId: t }, {
+    return OR(endpoint, "write/session/cancel", { sessionId: t }, {
       signal: new AbortController().signal,
       maxBytes: 4096,
       timeoutMs: 10000,
@@ -33204,11 +33232,12 @@ async function dYe(e, t, n) {
       failed: Se.outcomeUnknown,
       tooLarge: Se.invalidOperationResponse,
     });
-    return;
   }
   if (!IG.get(e)?.remote) {
     if (et.kind === "electron" && et.accountRequest) {
-      await a4("session/cancel", { sessionId: t });
+      return a4("session/cancel", { sessionId: t });
+    } else if (confirmLocal) {
+      return e.request("session/cancel", { sessionId: t });
     } else {
       await e.notify("session/cancel", { sessionId: t });
     }
@@ -33820,12 +33849,12 @@ class gYe {
       });
     return (this.pending.set(o, d), d);
   }
-  async preview(t, n, r) {
+  async preview(t, n, r, textPage) {
     if (!this.remote) {
       if (n.fileRef) throw new Error(Se.deviceTargetChanged);
       return t.request(
         r ? "_monkeyai/session/files/preview" : "_monkeyai/workspace/read",
-        { sessionId: n.sessionId, path: n.path, ...r },
+        { sessionId: n.sessionId, path: n.path, ...r, ...(textPage && { textPage }) },
       );
     }
     const s = this.available(t);
@@ -35299,6 +35328,20 @@ const BYe = {
     [Se.operationsUnavailable]: "errors.codes.operations_unavailable",
     [Se.operationsBusy]: "errors.codes.operations_busy",
     [Se.outcomeUnknown]: "errors.codes.outcome_unknown",
+    [Se.dshConnectorOutcomeUnknown]: "errors.codes.dsh_connector_outcome_unknown",
+    [Se.dshConnectorReconciliationRequired]: "errors.codes.dsh_connector_reconciliation_required",
+    [Se.dshCanvasOutcomeUnknown]: "errors.codes.dsh_canvas_outcome_unknown",
+    [Se.dshModelAccessDenied]: "errors.codes.dsh_model_access_denied",
+    [Se.dshModelQuota]: "errors.codes.dsh_model_quota",
+    [Se.dshModelRateLimited]: "errors.codes.dsh_model_rate_limited",
+    [Se.dshModelServiceUnavailable]: "errors.codes.dsh_model_service_unavailable",
+    [Se.dshModelRequestRejected]: "errors.codes.dsh_model_request_rejected",
+    [Se.dshModelStreamEnded]: "errors.codes.dsh_model_stream_ended",
+    [Se.dshModelOutputLimit]: "errors.codes.dsh_model_output_limit",
+    [Se.dshModelContentRefused]: "errors.codes.dsh_model_content_refused",
+    [Se.dshModelOutcomeUnknown]: "errors.codes.dsh_model_outcome_unknown",
+    [Se.dshModelResponseInterrupted]: "errors.codes.dsh_model_response_interrupted",
+    [Se.dshReconciliationRequired]: "errors.codes.dsh_reconciliation_required",
     [Se.invalidOperationResponse]: "errors.codes.invalid_operation_response",
     [Se.recoveryDraftExists]: "errors.codes.recovery_draft_exists",
     [Se.invalidDeviceTicket]: "errors.codes.invalid_device_ticket",
@@ -35418,8 +35461,11 @@ const BYe = {
     invalid_cwd: "errors.codes.invalid_cwd",
     engine_cancelled: "errors.codes.engine_cancelled",
     engine_timeout: "errors.codes.engine_timeout",
+    backend_request_timeout: "errors.codes.engine_timeout",
+    backend_response_interrupted: "errors.codes.backend_response_interrupted",
     engine_no_response: "errors.timeout",
     engine_no_result: "errors.codes.engine_no_result",
+    model_tool_continuation_incomplete: "errors.codes.model_tool_continuation_incomplete",
     engine_internal: "errors.codes.engine_internal",
     session_missing: "errors.codes.session_missing",
     context_overflow: "errors.codes.context_overflow",
@@ -35508,7 +35554,9 @@ function ni(e, t) {
         : "imageProcessing." + n.reason,
     );
   const r = wn(e),
+    dshKey = dshErrorKey(r),
     s = r.match(/^技能 "([a-zA-Z0-9][a-zA-Z0-9_-]{0,63})" 预检失败: (.+)$/s);
+  if (dshKey) return t(dshKey);
   if (s) {
     const d = hse(s[2], t);
     if (d)
@@ -35517,7 +35565,7 @@ function ni(e, t) {
   const i = hse(r, t);
   if (i) return i;
   const o = r.match(
-    /^(usage_unknown|provider_usage_limit|token_budget|auto_turn_budget|active_time_budget|user_paused|resume_confirmation|interrupted_unknown|handoff_recovery_confirmation):/,
+    /^(approval_unavailable|usage_unknown|provider_usage_limit|token_budget|auto_turn_budget|active_time_budget|user_paused|resume_confirmation|interrupted_unknown|handoff_recovery_confirmation):/,
   );
   if (o) return t("goal.stopReasons." + o[1]);
   if (/^stale_goal:/.test(r)) return t("goal.errors.stale_goal");
@@ -36231,6 +36279,8 @@ class UYe {
 }
 const Ma = new HYe((e) => et.getRuntimeEndpoint(e));
 let Tve = !1;
+let employeeTeamCapability = false;
+let employeeStandardPreset = false;
 const WYe = () => Tve,
   xH = new Set();
 function OG(e) {
@@ -36532,6 +36582,8 @@ function Qn() {
       }
       return (
         (Tve = u.agentCapabilities?._meta?.goalMode?.version === 1),
+        (employeeStandardPreset = s.endpoint?.target?.transport !== "relay" && u.agentCapabilities?._meta?.standardPreset === 1),
+        (employeeTeamCapability = s.endpoint?.target?.transport !== "relay" && u.agentCapabilities?._meta?.agentTeam === 1),
         (Uc = d),
         uYe(
           d,
@@ -36996,7 +37048,7 @@ const pse = (e, t) => ({
   title: "",
   thinking: null,
   configuring: !1,
-  mode: "auto",
+  mode: "workspace-write",
   status: "created",
   messages: [],
   toolCalls: {},
@@ -37170,7 +37222,7 @@ function mZe(e, t) {
           i < 0
             ? [...e.messages, a]
             : e.messages.map((c, u) => (u === i ? a : c)),
-        ...(s ? { toolCalls: { ...e.toolCalls, ...s } } : {}),
+        ...(s ? { toolCalls: { ...e.toolCalls, ...normalizeDSHToolCalls(s) } } : {}),
       };
 }
 const Dve = new Set([
@@ -37222,6 +37274,8 @@ function gZe(e, t, n) {
     kind: t.kind ?? r.kind,
     status: t.status ?? r.status,
     input: t.rawInput ?? r.input,
+    ...(s?.dshResultMeta ? { dshResultMeta: s.dshResultMeta } : {}),
+    ...(typeof s?.dshCallId === "string" ? { dshCallId: s.dshCallId } : {}),
     output: o ?? r.output,
     ...a,
   };
@@ -37275,7 +37329,26 @@ function yZe(e, t, n) {
     u = s?.messageOrigin,
     d = (f) => mse(i, f, n, o, a, u, c);
   switch (r.sessionUpdate) {
+    case "dsh_member_notice": {
+      const notice = r.notice;
+      return d(message => message.dshMemberNotices?.some(prior => prior.id === notice.id)
+        ? message : { ...message, dshExecution: true, dshMemberNotices: [...(message.dshMemberNotices ?? []), { ...notice, liveAfterParts: message.parts.length }] });
+    }
+    case "dsh_team_board": {
+      const board = r.board;
+      if (board.sessionId !== e.id || typeof board.enabled !== "boolean" || !Array.isArray(board.tasks)) return i;
+      i = { ...i, messages: i.messages.map(message => message.dshTeamBoard && message.id !== o
+        ? { ...message, dshTeamBoard: undefined } : message) };
+      return d(message => ({ ...message, dshExecution: true, dshTeamBoard: board.enabled ? board : undefined }));
+    }
+    case "dsh_step":
+      return d((message) => ({ ...message, dshExecution: true, dshStep: r.step, startedAt: r.startedAt }));
+    case "agent_message_start":
+    case "agent_message_settled":
+    case "agent_message_reset":
+      return d((message) => applyDSHStream(message, r));
     case "agent_message_chunk": {
+      if (r.streamAttemptId) return d((message) => applyDSHStream(message, r));
       if (r.content.type === "resource_link") {
         const g = r.content._meta?.fileRef,
           b = {
@@ -37312,6 +37385,7 @@ function yZe(e, t, n) {
       return d((g) => bO(g, "text", m));
     }
     case "agent_thought_chunk": {
+      if (r.streamAttemptId) return d((message) => applyDSHStream(message, r));
       if (r.content.type !== "text") return i;
       const f = r.content.text;
       return d((h) => bO(h, "thought", f));
@@ -37421,8 +37495,9 @@ function yZe(e, t, n) {
                   ? { targetReached: f.targetReached }
                   : {}),
               }),
-        },
-        g = i.messages
+        };
+      if (f.dsh === true) return d(message => applyDSHCompaction(message, r.compactionId, m));
+      const g = i.messages
           .flatMap((b, v) =>
             b.parts.flatMap((w, C) =>
               w.type === "compaction" && w.status === "in_progress"
@@ -37446,9 +37521,9 @@ function yZe(e, t, n) {
         : d((b) => ({ ...b, parts: [...b.parts, m] }));
     }
     case "plan":
-      return { ...i, plan: r.entries };
+      return { ...i, ...employeePlanUpdate(i, r.entries, r._meta?.dshTodoSeq) };
     case "usage_update":
-      return { ...i, context: { used: r.used, size: r.size } };
+      return { ...i, context: contextReading(r._meta?.dshContext ?? { used: r.used, window: r.size }) };
     case "session_info_update":
       return typeof r.title == "string" ? { ...i, title: r.title } : i;
     case "current_mode_update": {
@@ -37464,6 +37539,13 @@ function yZe(e, t, n) {
     default:
       return i;
   }
+}
+function employeePlanUpdate(view, plan, seq) {
+  if (!Array.isArray(plan)) return {};
+  if (Number.isSafeInteger(seq)) {
+    return seq < (view.dshTodoSeq ?? -1) ? {} : { plan, dshTodoSeq: seq };
+  }
+  return view.dshTodoSeq === undefined ? { plan } : {};
 }
 function bZe(e) {
   const t = e.update;
@@ -37531,6 +37613,10 @@ function Pve(e, t) {
       ? { queue: r, queueSeq: s, queueError: void 0 }
       : {}),
     ...(Object.hasOwn(n, "goal") ? { goal: SG(e.goal, n.goal ?? null) } : {}),
+    ...(typeof n.agentTeamEnabled === "boolean" ? { agentTeamEnabled: n.agentTeamEnabled } : {}),
+    ...(n.dshJobsAvailable === true ? {dshJobsAvailable: true} : {}),
+    ...(n.status ? { dshStopAccountingPending: n.dshStopAccountingPending === true } : {}),
+    ...(typeof n.agentTeamAvailable === "boolean" ? { agentTeamAvailable: n.agentTeamAvailable } : {}),
     ...(n.goalModeAvailable !== void 0
       ? { goalModeAvailable: n.goalModeAvailable }
       : {}),
@@ -37559,11 +37645,11 @@ function Pve(e, t) {
     ...(a && n.configurationRevision !== void 0
       ? { configurationRevision: n.configurationRevision }
       : {}),
-    ...(a && n.context
-      ? { context: { used: n.context.used, size: n.context.window } }
+    ...(a && (Object.hasOwn(n, "context") || (n.model && n.model !== e.model))
+      ? { context: contextReading(n.context) }
       : {}),
     ...(n.files ? { files: n.files } : {}),
-    ...(n.plan ? { plan: n.plan } : {}),
+    ...employeePlanUpdate(e, n.plan, n.dshTodoSeq),
     ...(n.tasks ? { tasks: n.tasks } : {}),
     ...(n.parent ? { parent: n.parent } : {}),
     ...(n.agent ? { agent: n.agent } : {}),
@@ -37621,7 +37707,7 @@ function wZe(e) {
   };
 }
 function kZe(e, t) {
-  return e.filter((n) => n.seq > t);
+  return e.filter((n) => n.seq > t || n.seq === t && isSameSequenceCompletion(n));
 }
 const CZe = (e, t) => {
     const n = t ? e.findIndex((r) => r.id === t) : -1;
@@ -37632,6 +37718,7 @@ const CZe = (e, t) => {
     return n >= 0 ? e.slice(0, n) : e;
   };
 function AZe(e, t, n, r) {
+  t = { ...t, toolCalls: normalizeDSHToolCalls(t.toolCalls) };
   const s = t.session,
     i = {
       older: t.olderCursor,
@@ -37705,12 +37792,16 @@ function AZe(e, t, n, r) {
     mode: m ? s.mode : e.mode,
     goal: SG(e.goal, s.goal ?? null),
     goalModeAvailable: s.goalModeAvailable,
+    agentTeamEnabled: s.agentTeamEnabled ?? e.agentTeamEnabled,
+    dshJobsAvailable: s.dshJobsAvailable ?? e.dshJobsAvailable,
+    dshStopAccountingPending: s.dshStopAccountingPending === true,
+    agentTeamAvailable: s.agentTeamAvailable ?? e.agentTeamAvailable,
     status: s.status,
     executionId: s.executionId,
-    messages: a.map((v) => {
+    messages: preserveDSHLiveMessage(e.messages, a.map((v) => {
       const w = g.get(v.id);
       return w ? Lve(b.get(v.id), w, t.eventSeq, n !== "older") : v;
-    }),
+    }), p && (n === "refresh" || n === "latest") && s.status === "running"),
     toolCalls: c,
     pages: u,
     historySeq: p ? t.eventSeq : e.historySeq,
@@ -37718,11 +37809,9 @@ function AZe(e, t, n, r) {
     newerCursor: f,
     ...(n === "older" ? {} : { toolProgress: void 0 }),
     context: m
-      ? s.context
-        ? { used: s.context.used, size: s.context.window }
-        : void 0
+      ? contextReading(s.context)
       : e.context,
-    plan: s.plan ?? [],
+    ...employeePlanUpdate(e, s.plan ?? [], s.dshTodoSeq),
     files: s.files ?? [],
     tasks: s.tasks ?? [],
     parent: s.parent,
@@ -37995,7 +38084,7 @@ class RZe {
     const n = t.type === "update" ? t.value._meta?.eventSeq : t.value.eventSeq;
     typeof n != "number" || !Number.isSafeInteger(n) || n < 0 || n !== t.seq
       ? (this.unknownLoss = !0)
-      : (this.lostThrough = Math.max(this.lostThrough, t.seq));
+      : (this.lostThrough = Math.max(this.lostThrough, t.seq + (isSameSequenceCompletion(t) ? 1 : 0)));
   }
 }
 class IZe {
@@ -52092,6 +52181,7 @@ const zO = 20,
           });
       },
       F = (P, G = !1) => {
+        if (!G && P.finish && typeof P.state?.lastError === "string" && P.state.lastError) t().refresh().catch(() => {});
         (N(w.notice(P), G),
           !G && P.finish && i(P.sessionId, P.eventSeq),
           !G && P.state.readAt !== void 0 && R(P.sessionId, P.state.readAt));
@@ -52248,13 +52338,17 @@ const zO = 20,
           return;
         }
         const G = p.epoch();
-        Jr("design_state", { sessionId: P })
-          .then((Z) => {
-            p.current(G) && t().applyDesign(P, Z);
+        return Jr("design_state", { sessionId: P })
+          .then((design) => {
+            const view = t().views[P];
+            if (!p.current(G) || !view || !design) return false;
+            if (!view.design && (design.designSessionId !== P || !design.canvasId)) return false;
+            t().applyDesign(P, design);
+            return !view.design;
           })
-          .catch(() => {})
+          .catch(() => false)
           .finally(() => {
-            t().views[P] && h(P, (Z) => ({ ...Z, designPending: !1 }));
+            p.current(G) && t().views[P] && h(P, (Z) => ({ ...Z, designPending: !1 }));
           });
       },
       L = DZe({
@@ -52479,6 +52573,21 @@ const zO = 20,
           null,
         );
         const J = t().views[P];
+        if ([Se.dshConnectorReconciliationRequired, Se.dshReconciliationRequired, Se.dshModelOutcomeUnknown, Se.dshModelResponseInterrupted, Se.dshCanvasOutcomeUnknown].includes(J?.error) && et.kind === "electron" && ts()?.transport !== "relay" && !J.configuring) {
+          const epoch = p.epoch(),
+            _cv = J?.error === Se.dshCanvasOutcomeUnknown;
+          try {
+            const result = await L(P, _cv ? "_aibertai/session/reconcile-canvas" : "_aibertai/session/reconcile-workspace", { sessionId: P });
+            if (!p.current(epoch)) return;
+            if (result?.reconciled) await z(P, "refresh", null);
+          } catch (error) {
+            // A stop or another window may have updated the same receipt during the check.
+            if (p.current(epoch) && (String(error?.message ?? error).includes("dsh_stopped_accounting_pending") ||
+                [Se.dshModelOutcomeUnknown, Se.dshModelResponseInterrupted].includes(J.error))) {
+              await z(P, "refresh", null);
+            }
+          }
+        }
         (J?.design && $(P), J && !J.parent && M(P));
       },
       loadOlder: async (P) => {
@@ -52588,9 +52697,7 @@ const zO = 20,
             return { ...Z, design: J, designPending: !1 };
           });
       },
-      reloadDesign: (P) => {
-        t().views[P]?.design && $(P);
-      },
+      reloadDesign: (P) => t().views[P] && $(P),
       designCatalog: (P = {}) => Jr("design_catalog", { ...P }),
       designCatalogDetail: (P) => Jr("design_catalog_detail", { id: P }),
       create: async (P, G, Z = {}, J = [], Q) => {
@@ -52641,6 +52748,9 @@ const zO = 20,
               initializing: !0,
               goal: Ce.goal,
               goalModeAvailable: Ce.goalModeAvailable,
+              agentTeamEnabled: Ce.agentTeamEnabled,
+              dshJobsAvailable: Ce.dshJobsAvailable,
+              agentTeamAvailable: Ce.agentTeamAvailable,
               isDefaultWorkspace: Ce.isDefaultWorkspace,
               projectId: Ce.projectId,
               model: Ce.model,
@@ -52649,7 +52759,7 @@ const zO = 20,
               expertId: Ce.expertId,
               thinking: Ce.thinking ?? null,
               design: Ie,
-              mode: me.modes?.currentModeId ?? "auto",
+              mode: me.modes?.currentModeId ?? "workspace-write",
             },
           },
         })),
@@ -52784,7 +52894,12 @@ const zO = 20,
               : void 0,
           Q = await Qn();
         if (!p.current(G)) throw new Error("Account changed");
-        await dYe(Q, P, J);
+        const receipt = await dYe(Q, P, J, Z?.dshJobsAvailable);
+        if (Z?.dshJobsAvailable && receipt?.stopped === false && p.current(G) && t().views[P]) {
+          await z(P, "refresh", null);
+          if (p.current(G) && t().views[P]?.status === "running") throw new Error(Uo.t("session.stopUnconfirmed"));
+        }
+        return receipt;
       },
       answer: _.answer,
       answerQuestion: _.answerQuestion,
@@ -52865,10 +52980,18 @@ const zO = 20,
             ...Q,
             model: J.model,
             thinking: J.thinking,
-            context: J.contextWindow
-              ? { used: Q.context?.used ?? 0, size: J.contextWindow }
-              : Q.context,
+            context: J.model === Q.model ? Q.context : void 0,
           }));
+      },
+      agentTeamMode: async (sessionId, enabled) => {
+        const epoch = p.epoch(), client = await Qn();
+        if (!p.current(epoch)) throw new Error("Account changed");
+        const mode = await client.request("_aibertai/session/agent-team", {
+          sessionId, ...(typeof enabled === "boolean" ? {enabled} : {}),
+        });
+        if (!p.current(epoch)) throw new Error("Account changed");
+        h(sessionId, view => ({ ...view, agentTeamEnabled: mode.agentTeamEnabled, agentTeamAvailable: mode.agentTeamAvailable }));
+        return mode;
       },
       setThinking: async (P, G) => {
         const Z = await L(P, "_monkeyai/session/thinking/set", {
@@ -52893,12 +53016,15 @@ const zO = 20,
         const G = p.epoch();
         h(P, (Z) => ({ ...Z, compacting: !0 }));
         try {
-          const Z = await L(P, "_monkeyai/session/compact", { sessionId: P });
+          const compactOperation = beginCompactOperation(sessionStorage, P, () => crypto.randomUUID());
+          const Z = await L(P, "_monkeyai/session/compact", { sessionId: P, _meta: { operationId: compactOperation } });
+          if (Z?.status !== "completed" && Z?.status !== "cancelled" && !Z?.context) throw new Error("compaction_result_unverified");
+          finishCompactOperation(sessionStorage, P, compactOperation);
           return (
             Z?.context &&
               h(P, (J) => ({
                 ...J,
-                context: { used: Z.context.used, size: Z.context.window },
+                context: contextReading(Z.context),
               })),
             Z
           );
@@ -112321,7 +112447,7 @@ const qwt = {
       "导入朋友分享的专家包，导入前会先预览其中的技能、规则和连接器依赖。",
     manualTitle: "手动创建专家",
     manualDescription:
-      "填写准备好的角色定义，选择要为这个专家配备的技能和连接器。",
+      "填写角色设定，选择会话插件、画布工具、技能和连接器。",
     aiPrompt: "请在这里描述你想要专家实现的内容…",
     promptTruncated:
       "角色设定过长，这里只显示前一部分；导入时仍会使用完整内容。",
@@ -112358,6 +112484,64 @@ const qwt = {
     editServer: "编辑专家",
     capabilities: "扩展能力",
     selectedResources: "已选 {{count}} 项",
+    pluginsTab: "插件",
+    canvasTab: "画布",
+    pluginLabel: "DSH 会话插件",
+    canvasLabel: "画布工具",
+    pluginsDefault: "使用 DSH 默认组合",
+    canvasDefault: "沿用专家默认画布工具",
+    pluginsDefaultHint: "当前使用运行环境的默认组合。点选下方插件，即可改为仅启用勾选项。",
+    canvasDefaultHint: "当前沿用专家的画布配置。点选下方工具，即可改为仅启用勾选项。",
+    pluginsFilter: "查找会话插件",
+    canvasFilter: "查找画布工具",
+    skillToolHint: "已关联技能。启用技能加载工具后，专家才能按需读取技能说明。",
+    skillToolEnable: "启用技能加载工具",
+    pluginsCustomHint: "仅启用勾选的可选插件。",
+    capabilityNotes: {
+      "tool-bash": "按当前系统的 Bash 环境运行。",
+      "tool-pwsh": "需要当前系统支持 PowerShell。",
+      "tool-web": "网页搜索需要配置搜索服务。",
+      "tool-office": "加载对应的 Office 技能后可用。",
+      "tool-agent-team": "还需在会话模型菜单打开团队协作。",
+      "media_generate_image": "需要配置可用的图片模型。",
+      "canvas_create_image": "用已生成的图片创建画布节点。",
+    },
+    dshPluginNames: {
+      "agent-instructions": "工作区指令",
+      "time-context": "时间感知",
+      "tool-bash": "Bash 命令",
+      "tool-pwsh": "PowerShell 命令",
+      "tool-fs": "文件读写",
+      "tool-fs-search": "文件搜索",
+      "tool-jobs": "后台任务",
+      "skill-filesystem": "发现本地技能",
+      "tool-skill": "按需加载技能",
+      "tool-ask-user": "向用户提问",
+      "tool-todo": "待办清单",
+      "tool-web": "网页搜索与读取",
+      "present": "交付工作区文件",
+      "tool-office": "Office 文档工具",
+      "tool-agent-team": "智能体团队共享任务",
+      "tool-subagent-control": "管理子智能体",
+      "tool-subagent": "委派子任务",
+      "tool-subagent-fork": "分叉子会话",
+      "tool-plugin-manager": "插件管理工具",
+      "tool-workflow": "工作流编排",
+    },
+    canvasToolNames: {
+      canvas_get_document: "读取画布文档",
+      canvas_get_selection: "读取选中节点",
+      canvas_create_text: "创建文本",
+      canvas_create_html: "创建 HTML 节点",
+      canvas_commit_html: "更新 HTML 内容",
+      canvas_prepare_pptx: "准备演示文稿导出",
+      design_catalog_search: "搜索设计资源",
+      design_catalog_detail: "读取设计资源详情",
+      design_await_style_choice: "请求选择设计风格",
+      media_get_image_model: "查看图片模型",
+      media_generate_image: "生成图片",
+      canvas_create_image: "将生成的图片放上画布",
+    },
     toolServices: "工具服务",
     noDependencies: "暂无可关联的资源",
     unavailableDependency: "不可用资源（{{id}}）",
@@ -112443,7 +112627,7 @@ const qwt = {
       "Import an expert package shared with you. Its skills, rules and connector dependencies are previewed first.",
     manualTitle: "Create manually",
     manualDescription:
-      "Fill in the role definition you prepared and choose the skills and connectors to equip.",
+      "Define the role and choose session plugins, canvas tools, skills and connectors.",
     aiPrompt: "Describe what you want this expert to do here…",
     promptTruncated:
       "The instructions are long, so only the beginning is shown here; the full text is still used when importing.",
@@ -112482,6 +112666,64 @@ const qwt = {
     editServer: "Edit expert",
     capabilities: "Capabilities",
     selectedResources: "{{count}} selected",
+    pluginsTab: "Plugins",
+    canvasTab: "Canvas",
+    pluginLabel: "DSH session plugins",
+    canvasLabel: "Canvas tools",
+    pluginsDefault: "Use the DSH default preset",
+    canvasDefault: "Use the expert’s default canvas tools",
+    pluginsDefaultHint: "The runtime preset is active. Select a plugin below to use only the checked plugins.",
+    canvasDefaultHint: "The expert’s canvas preset is active. Select a tool below to use only the checked tools.",
+    pluginsFilter: "Find session plugins",
+    canvasFilter: "Find canvas tools",
+    skillToolHint: "This expert has linked skills. Enable Skill loading so it can read their instructions on demand.",
+    skillToolEnable: "Enable Skill loading",
+    pluginsCustomHint: "Only checked optional plugins are enabled.",
+    capabilityNotes: {
+      "tool-bash": "Runs when Bash is available on this system.",
+      "tool-pwsh": "Requires PowerShell support on this system.",
+      "tool-web": "Web search requires a configured search service.",
+      "tool-office": "Available after loading the corresponding Office skill.",
+      "tool-agent-team": "Also enable team collaboration in the session’s model menu.",
+      "media_generate_image": "Requires a configured image model.",
+      "canvas_create_image": "Creates a canvas node from an existing generated image.",
+    },
+    dshPluginNames: {
+      "agent-instructions": "Workspace instructions",
+      "time-context": "Time context",
+      "tool-bash": "Bash",
+      "tool-pwsh": "PowerShell",
+      "tool-fs": "File operations",
+      "tool-fs-search": "File search",
+      "tool-jobs": "Background jobs",
+      "skill-filesystem": "Local skill discovery",
+      "tool-skill": "Skill loading",
+      "tool-ask-user": "User questions",
+      "tool-todo": "To-do lists",
+      "tool-web": "Web search and reading",
+      "present": "File delivery",
+      "tool-office": "Office tools",
+      "tool-agent-team": "Shared agent team tasks",
+      "tool-subagent-control": "Subagent control",
+      "tool-subagent": "Subagent delegation",
+      "tool-subagent-fork": "Subagent forks",
+      "tool-plugin-manager": "Plugin management",
+      "tool-workflow": "Workflow orchestration",
+    },
+    canvasToolNames: {
+      canvas_get_document: "Read canvas document",
+      canvas_get_selection: "Read selected nodes",
+      canvas_create_text: "Create text",
+      canvas_create_html: "Create HTML node",
+      canvas_commit_html: "Update HTML content",
+      canvas_prepare_pptx: "Prepare presentation export",
+      design_catalog_search: "Search design catalog",
+      design_catalog_detail: "Read design catalog details",
+      design_await_style_choice: "Request a style choice",
+      media_get_image_model: "View image model",
+      media_generate_image: "Generate image",
+      canvas_create_image: "Place a generated image on the canvas",
+    },
     toolServices: "Tool services",
     noDependencies: "No resources available to link",
     unavailableDependency: "Unavailable resource ({{id}})",
@@ -113995,6 +114237,7 @@ const qwt = {
         empty_response: "模型连续多轮没有返回有效内容，系统已停止自动推进。",
         execution_failure: "工具连续多轮执行失败，系统已停止自动推进。",
         permission_denied: "一项操作未获得授权，系统已停止自动推进。",
+        approval_unavailable: "等待授权时没有可用的连接，目标已暂停。重新连接后可继续，并在再次提示时选择是否允许。",
         unsupported_capability: "当前专家或工具配置不支持推进此目标。",
         provider_usage_limit:
           "模型服务拒绝了请求，可能已达到服务方的频率或用量限制。",
@@ -114029,6 +114272,7 @@ const qwt = {
       },
       states: {
         active: "正在推进目标",
+        reconciling: "正在核对目标用量…",
         paused: "目标已暂停",
         blocked: "目标受阻",
         usage_limited: "用量受限",
@@ -114341,6 +114585,33 @@ const qwt = {
           "此操作尚不能在远程窗口执行，请在对应设备上操作。",
         idempotency_conflict: "请求标识已用于其他内容，请先确认原操作的结果。",
         outcome_unknown: "操作结果尚未确认，请先查看会话状态，避免重复提交。",
+        dsh_write_outcome_unknown: "文件操作结果未知。可以直接继续，模型会先读取目标文件再决定是否重改。",
+        dsh_canvas_outcome_unknown: "画布操作结果未知，画布可能已经变化。可以直接继续，模型会先读取画布再决定是否重做。",
+        dsh_connector_outcome_unknown: "连接器结果未知，远端可能已经执行。可以直接继续，模型会先核实远端结果，不会盲目重复。",
+        dsh_connector_reconciliation_required: "工具的执行结果未能确认。可以直接在本会话继续，模型会先检查已有文件和画布再操作。",
+        dsh_model_access_denied: "模型访问被拒绝。检查登录状态或选择有权限的模型，然后在本会话继续。",
+        dsh_model_quota: "模型额度不足。补充额度或更换模型后，可以在本会话继续。",
+        dsh_model_rate_limited: "模型请求达到频率限制。稍后在本会话发送消息即可继续。",
+        dsh_model_service_unavailable: "模型服务暂时不可用。稍后或更换模型后，在本会话发送消息即可继续。",
+        dsh_model_request_rejected: "模型拒绝了这次请求。调整输入或更换模型后，在本会话发送消息即可继续。",
+        dsh_model_stream_ended: "模型输出中断，已收到的内容已保留。用量已核验，在本会话发送“继续”即可接着处理。",
+        dsh_model_output_limit: "本次输出已达到模型长度上限，已有内容已保留。在本会话发送“继续”即可接着处理。",
+        dsh_model_content_refused: "模型的内容过滤器结束了本次输出。调整请求后，可以在本会话继续。",
+        dsh_model_outcome_unknown: "网关已结束连接，已收到的内容和工具结果已保留。发送消息即可继续；如提示仍待核验，点「重新核验」查询回执。",
+        dsh_model_response_interrupted: "模型输出中途断开，已收到的内容已保留。发送“继续”即可接着处理；如提示仍待核验，点「重新核验」查询回执。",
+        dsh_reconciliation_required: "上一次模型调用的结果还在等待网关回执，暂时不能发送新消息。点「重新核验」查询结果后即可继续。",
+        model_vision_unavailable: "当前模型不支持图片输入，请切换支持图片的模型后重试。",
+        attachment_image_invalid: "图片格式不受支持或文件已损坏，请检查附件后重试。",
+        attachment_unavailable_or_too_large: "附件无法读取或会话内容过大，请检查文件、减少附件或新建会话后重试。",
+        dsh_canvas_unavailable: "请先在本机工作台打开设计画布，再发送消息。",
+        design_template_selection_conflict: "此画布已存在，所选模板与当前画布不同。请用此模板新建会话。",
+        owned_model_index_unavailable: "自有模型调用正在准备，请稍后重试；如果持续无法使用，请联系管理员。",
+        dsh_model_request_too_large: "本次模型请求超过 32 MiB。请减少附件或缩短会话上下文后重试。",
+        dsh_compaction_unverified: "上下文压缩的结果尚未核验，请先检查会话状态，避免重复压缩。",
+        dsh_compaction_usage_invalid: "上下文压缩的用量未能核验，会话已暂停，请先检查结果。",
+        dsh_compaction_entry_unavailable: "DSH 的上下文压缩入口正在接入，当前没有执行压缩。",
+        tool_approval_unavailable: "未收到工具审批。请确认此会话仍已连接，再重新发起。",
+        session_turn_failed: "本轮执行未完成，请查看执行过程。",
         operations_unavailable: "当前设备的操作恢复暂不可用。",
         operations_busy: "正在处理的操作过多，请稍后再试。",
         unsupported_operation: "该操作不支持恢复。",
@@ -114480,7 +114751,9 @@ const qwt = {
         invalid_cwd: "这个文件夹不可用，请选择一个已存在的文件夹。",
         engine_cancelled: "本轮已停止。",
         engine_timeout: "等待上游响应超时，请重试。",
+        backend_response_interrupted: "接收后端响应时连接中断，请在当前会话继续。",
         engine_no_result: "引擎没有返回结果，请重试。",
+        model_tool_continuation_incomplete: "已达到本轮工具调用上限。已写入的页面保留在画布，可在当前会话继续。",
         engine_internal: "引擎内部出错，请重试；反复出现可在诊断页查看日志。",
         session_missing: "这个会话在引擎里已不存在，请重新发起。",
         context_overflow:
@@ -114617,6 +114890,8 @@ const qwt = {
       },
       starting: "正在创建…",
       generalExpert: "通用助理",
+      standardMode: "标准模式",
+      standardModeHint: "处理代码、文件和资料，适合大多数任务。Agent 会按需使用检索、编辑和终端等工具。",
       designExpert: "设计专家",
       generalExpertHint: "解答问题、撰写内容、分析资料和编写代码。",
       expertSource: {
@@ -114869,6 +115144,11 @@ const qwt = {
       copyFailed: "复制失败",
       copyRetry: "复制失败，请重试",
       executionProcess: "执行过程",
+      teamUnavailable: "此专家的插件预设未启用团队协作。",
+      dshToolsUsed: "DSH 工具调用记录",
+      dshNoToolsUsed: "已加载的对话中还没有工具调用。",
+      dshStep: "DSH 第 {{step}} 步",
+      dshQuiet: "{{duration}}没有新输出",
       executionCalls: "{{count}} 次调用",
       executionExpand: "展开执行过程",
       executionCollapse: "收起执行过程",
@@ -114881,6 +115161,8 @@ const qwt = {
         failed: "调用失败",
         running: "执行中",
         unfinished: "未完成",
+        outcomeUnknown: "结果待核验",
+        userReviewed: "用户已核验",
       },
       thinkingDepth: "思考深度",
       thinkingHint: "越深越慢，考虑越周全",
@@ -114909,6 +115191,7 @@ const qwt = {
         unavailable: "搜索结果已失效，请重新搜索",
       },
       endedAt: "结束于 {{time}}",
+      stopped: "已停止",
       segmentEndedAt: "本段结束于 {{time}}",
       duration: {
         label: "用时 {{duration}}",
@@ -115044,6 +115327,9 @@ const qwt = {
         editMessage: "编辑待发送消息",
       },
       cancel: "停止",
+      stopping: "正在停止…",
+      stopAccountingPending: "本轮执行已停止，模型调用的用量回执待核验。重新打开会话会再次检查。",
+      stopUnconfirmed: "运行时尚未确认停止，请查看当前会话状态后重试。",
       attach: "附件",
       plan: "计划",
       empty: "这个会话还没有消息",
@@ -115087,6 +115373,21 @@ const qwt = {
       batchCall: "批量执行",
       targetSeparator: "，",
       actions: {
+        jobList: "查看后台任务",
+        jobOutput: "查看后台任务输出",
+        jobKill: "停止后台任务",
+        knowledgeSearch: "搜索知识库",
+        canvasRead: "读取画布",
+        canvasSelection: "读取画布选区",
+        canvasCreateText: "创建画布文字",
+        canvasCreateHTML: "创建画布页面",
+        canvasCommitHTML: "保存画布页面",
+        canvasPreparePPTX: "准备演示文稿",
+        canvasUpdate: "更新画布对象",
+        canvasDelete: "删除画布对象",
+        designCatalogSearch: "搜索设计资源",
+        designCatalogDetail: "查看设计资源",
+        connectorCall: "调用连接器",
         command: "执行命令",
         read: "读取文件",
         write: "写入文件",
@@ -115159,6 +115460,8 @@ const qwt = {
       writeContent: "写入内容",
       program: "程序代码",
       rawResult: "原始返回",
+      dshDiagnostics: "查看诊断数据",
+      dshStructuredResult: "结果已返回，可查看诊断数据了解详情。",
       results: "搜索结果",
       result: "执行结果",
       agentResult: "任务结果",
@@ -115212,10 +115515,11 @@ const qwt = {
       progress: "第 {{current}} 题，共 {{total}} 题",
     },
     mode: {
-      auto: "按需确认",
+      "read-only": "仅可查看",
+      "workspace-write": "工作区内修改",
+      "full-access": "完全权限",
       default: "逐项确认",
       plan: "仅规划",
-      bypassPermissions: "完全信任",
     },
     composer: {
       actions: "更多操作",
@@ -115259,11 +115563,18 @@ const qwt = {
       permissions: "执行权限",
       switchMode: "点击切换为「{{mode}}」",
       currentMode: "当前",
+      modeLocked: "权限在会话开始时确定，如需更换请新建会话。",
       modeHelp: {
-        auto: "常规操作自动执行，受保护的操作会先征求你的确认。",
+        "read-only": "只读查看文件；修改文件或越出沙箱的命令需要你确认。",
+        "workspace-write": "可直接修改工作区内的文件、运行命令；工作区外的操作需要你确认。",
+        "full-access": "不使用沙箱，文件修改和命令直接执行，不再询问。",
         default: "执行操作前向你请求确认",
         plan: "先分析任务并制定计划",
-        bypassPermissions: "文件修改和命令自动执行，跳过常规授权确认。",
+      },
+      fullAccessConfirm: {
+        title: "确认启用完全权限？",
+        description: "启用完全权限后，智能体将减少确认步骤，并且可以直接执行更多操作，包括敏感操作、文件修改或外部命令。仅建议在你信任当前任务时使用。",
+        enable: "启用完全权限",
       },
       addAttachment: "添加附件",
       attachments: "待发送的附件",
@@ -115293,6 +115604,8 @@ const qwt = {
         directory_invalid:
           "附件目录不可用，请检查工作区中的 .aibertai/uploads 目录",
       },
+      contextPercent: "上下文已用 {{percent}}%",
+      contextCategories: { systemTokens: "系统提示词", toolsTokens: "工具定义", messageTokens: "对话消息" },
       contextLabel: "上下文：已用 {{used}} / 容量 {{size}} tokens",
       contextHint: "会话最近一次统计的用量，不含当前草稿。",
       compact: "压缩上下文",
@@ -116997,6 +117310,8 @@ Start with the conclusion, then explain the reasoning.`,
           "Tools failed across several turns, so automatic work stopped.",
         permission_denied:
           "An operation was not authorized, so automatic work stopped.",
+        approval_unavailable:
+          "No connection was available to answer the approval request, so the goal paused. Reconnect and resume to review the request again.",
         unsupported_capability:
           "The current expert or tool configuration cannot advance this goal.",
         provider_usage_limit:
@@ -117038,6 +117353,7 @@ Start with the conclusion, then explain the reasoning.`,
       },
       states: {
         active: "Working toward goal",
+        reconciling: "Checking goal usage…",
         paused: "Paused goal",
         blocked: "Goal blocked",
         usage_limited: "Usage limited",
@@ -117392,6 +117708,37 @@ Start with the conclusion, then explain the reasoning.`,
           "This request ID was used for different content. Check the original operation first.",
         outcome_unknown:
           "The operation result is unconfirmed. Check the session before submitting again.",
+        dsh_write_outcome_unknown:
+          "The file operation result is unknown. You can continue; the model reads the file before changing it again.",
+        dsh_canvas_outcome_unknown: "The canvas action may have completed. You can continue; the model reads the canvas before redoing anything.",
+        dsh_connector_outcome_unknown:
+          "The connector result is unknown and the remote action may have run. You can continue; the model verifies the remote result before repeating it.",
+        dsh_connector_reconciliation_required: "The tool result could not be confirmed. You can continue in this chat; the model checks the existing files and canvas first.",
+        dsh_model_access_denied: "Model access was denied. Check your sign-in or choose an available model, then continue in this chat.",
+        dsh_model_quota: "The model quota is exhausted. Update the quota or choose another model, then continue in this chat.",
+        dsh_model_rate_limited: "The model rate limit was reached. Send a message in this chat after a short wait to continue.",
+        dsh_model_service_unavailable: "The model service is temporarily unavailable. Try again later or choose another model to continue in this chat.",
+        dsh_model_request_rejected: "The model rejected this request. Adjust the input or choose another model, then send a message in this chat.",
+        dsh_model_stream_ended: "The model stream ended early. The partial response is saved and usage has been verified. Send “continue” in this chat to pick up from there.",
+        dsh_model_output_limit: "The model reached its output limit. The partial response is saved. Send “continue” in this chat to pick up from there.",
+        dsh_model_content_refused: "The model’s content filter ended this response. Adjust the request to continue in this chat.",
+        dsh_model_outcome_unknown: "The gateway connection ended. Received content and tool results are saved. Send a message to continue; if it still needs verification, use Recheck.",
+        dsh_model_response_interrupted: "The model stream was interrupted. Received content is saved. Send “continue” to resume; if it still needs verification, use Recheck.",
+        dsh_reconciliation_required:
+          "The previous model call is still waiting for its gateway receipt, so a new message cannot be sent yet. Use Recheck to look it up, then continue.",
+        model_vision_unavailable: "The current model does not support image input. Choose a vision-capable model and try again.",
+        attachment_image_invalid: "The image format is unsupported or the file is damaged. Check the attachment and try again.",
+        attachment_unavailable_or_too_large: "The attachment cannot be read or the session is too large. Check the file, reduce attachments, or start a new session.",
+        dsh_canvas_unavailable: "Open the design canvas on this device before sending a message.",
+        design_template_selection_conflict: "This canvas uses a different template. Start a new session with the selected template.",
+        owned_model_index_unavailable: "Your own model is being prepared. Try again later; if the problem persists, contact your administrator.",
+        dsh_model_request_too_large: "The model request exceeds 32 MiB. Reduce attachments or shorten the conversation context and try again.",
+        dsh_compaction_unverified: "The compaction result is unverified. Check the session before trying again.",
+        dsh_compaction_usage_invalid: "Compaction usage could not be verified. The session is paused until the result is checked.",
+        dsh_compaction_entry_unavailable:
+          "DSH context compaction is not yet available from this control; no compaction was performed.",
+        tool_approval_unavailable: "Tool approval was unavailable. Check your connection to this session and try again.",
+        session_turn_failed: "This turn did not complete. Check the execution details.",
         operations_unavailable:
           "Operation recovery is temporarily unavailable on this device.",
         operations_busy:
@@ -117578,7 +117925,9 @@ Start with the conclusion, then explain the reasoning.`,
         engine_cancelled: "This turn was stopped.",
         engine_timeout:
           "Timed out waiting for the upstream model. Please try again.",
+        backend_response_interrupted: "The backend connection closed while receiving a response. Continue in this conversation.",
         engine_no_result: "The engine returned no result. Please try again.",
+        model_tool_continuation_incomplete: "This turn reached its tool call limit. The canvas retains your pages. Continue in this conversation.",
         engine_internal:
           "The engine hit an internal error. Try again; check Diagnostics if it keeps happening.",
         session_missing:
@@ -117734,6 +118083,8 @@ Start with the conclusion, then explain the reasoning.`,
       },
       starting: "Creating…",
       generalExpert: "General assistant",
+      standardMode: "Standard mode",
+      standardModeHint: "Work with code, files, and information. Suitable for most tasks, with search, editing, terminal commands, and other tools available as needed.",
       designExpert: "Design expert",
       generalExpertHint:
         "Answer questions, draft content, analyze information, and write code.",
@@ -117998,6 +118349,11 @@ Start with the conclusion, then explain the reasoning.`,
       copyFailed: "Copy failed",
       copyRetry: "Copy failed. Try again.",
       executionProcess: "Activity",
+      teamUnavailable: "This expert’s plugin preset does not allow team collaboration.",
+      dshToolsUsed: "DSH tool history",
+      dshNoToolsUsed: "No tool calls in the loaded conversation.",
+      dshStep: "DSH step {{step}}",
+      dshQuiet: "No new output for {{duration}}",
       executionCalls: "{{count}} tool calls",
       executionExpand: "Expand activity",
       executionCollapse: "Collapse activity",
@@ -118010,6 +118366,8 @@ Start with the conclusion, then explain the reasoning.`,
         failed: "Call failed",
         running: "Running",
         unfinished: "Unfinished",
+        outcomeUnknown: "Result needs review",
+        userReviewed: "Reviewed by user",
       },
       thinkingDepth: "Thinking depth",
       thinkingHint: "Deeper is slower but more thorough",
@@ -118039,6 +118397,7 @@ Start with the conclusion, then explain the reasoning.`,
         unavailable: "This result is no longer available. Search again.",
       },
       endedAt: "Ended {{time}}",
+      stopped: "Stopped",
       segmentEndedAt: "This segment ended {{time}}",
       duration: {
         label: "Took {{duration}}",
@@ -118185,6 +118544,9 @@ Start with the conclusion, then explain the reasoning.`,
         editMessage: "Edit queued message",
       },
       cancel: "Stop",
+      stopping: "Stopping…",
+      stopAccountingPending: "Execution has stopped. The model usage receipt is pending. Reopen this chat to check again.",
+      stopUnconfirmed: "The runtime has not confirmed the stop. Check the session status and try again.",
       attach: "Attach",
       plan: "Plan",
       empty: "No messages in this session yet",
@@ -118233,6 +118595,21 @@ Start with the conclusion, then explain the reasoning.`,
       batchCall: "Batch call",
       targetSeparator: ", ",
       actions: {
+        jobList: "List background tasks",
+        jobOutput: "View background task output",
+        jobKill: "Stop background task",
+        knowledgeSearch: "Search knowledge bases",
+        canvasRead: "Read canvas",
+        canvasSelection: "Read canvas selection",
+        canvasCreateText: "Create canvas text",
+        canvasCreateHTML: "Create canvas page",
+        canvasCommitHTML: "Save canvas page",
+        canvasPreparePPTX: "Prepare presentation",
+        canvasUpdate: "Update canvas object",
+        canvasDelete: "Delete canvas object",
+        designCatalogSearch: "Search design resources",
+        designCatalogDetail: "View design resource",
+        connectorCall: "Call connector",
         command: "Run command",
         read: "Read file",
         write: "Write file",
@@ -118305,6 +118682,8 @@ Start with the conclusion, then explain the reasoning.`,
       writeContent: "Content to write",
       program: "Program code",
       rawResult: "Raw result",
+      dshDiagnostics: "View diagnostic data",
+      dshStructuredResult: "Result received. View diagnostic data for details.",
       results: "Search results",
       result: "Result",
       agentResult: "Task result",
@@ -118361,10 +118740,11 @@ Start with the conclusion, then explain the reasoning.`,
       progress: "Question {{current}} of {{total}}",
     },
     mode: {
-      auto: "Ask when needed",
+      "read-only": "Read Only",
+      "workspace-write": "Workspace Write",
+      "full-access": "Full access",
       default: "Ask each time",
       plan: "Plan only",
-      bypassPermissions: "Full trust",
     },
     composer: {
       actions: "More actions",
@@ -118411,12 +118791,18 @@ Start with the conclusion, then explain the reasoning.`,
       permissions: "Permissions",
       switchMode: "Switch to {{mode}}",
       currentMode: "Current",
+      modeLocked: "The permission level is set when a conversation starts. Start a new conversation to change it.",
       modeHelp: {
-        auto: "Routine actions run automatically. Protected actions pause for your approval.",
+        "read-only": "Read files only. File changes and commands outside the sandbox need your approval.",
+        "workspace-write": "Edit files and run commands inside the workspace. Anything outside it needs your approval.",
+        "full-access": "No sandbox. File changes and commands run directly without asking.",
         default: "Ask for approval before taking action",
         plan: "Analyze the task and prepare a plan first",
-        bypassPermissions:
-          "File edits and commands run automatically, without the usual approval prompts.",
+      },
+      fullAccessConfirm: {
+        title: "Enable Full access?",
+        description: "Full access reduces confirmation steps and lets the agent perform more actions directly, including sensitive operations, file changes, or external commands. Only use it when you trust the current task.",
+        enable: "Enable Full access",
       },
       addAttachment: "Add attachment",
       attachments: "Attachments to send",
@@ -118451,6 +118837,8 @@ Start with the conclusion, then explain the reasoning.`,
         directory_invalid:
           "The attachment folder is unavailable. Check .aibertai/uploads in the workspace.",
       },
+      contextPercent: "{{percent}}% of context used",
+      contextCategories: { systemTokens: "System prompt", toolsTokens: "Tool definitions", messageTokens: "Conversation" },
       contextLabel: "Context: {{used}} used / {{size}} tokens",
       contextHint: "Latest context usage, excluding your draft.",
       compact: "Compact context",
@@ -140737,6 +141125,54 @@ function _Et(e) {
   );
   return l.jsx(TEt, { ...e }, t + ":" + (e.id ?? "new"));
 }
+function ExpertCapabilityPicker({ canvas, selected, onChange }) {
+  const { t } = Xe();
+  const labels = t("settings.experts." + (canvas ? "canvasToolNames" : "dshPluginNames"), { returnObjects: true });
+  const text = (key) => t("settings.experts." + key);
+  const label = text(canvas ? "canvasLabel" : "pluginLabel");
+  const notes = t("settings.experts.capabilityNotes", { returnObjects: true });
+  return l.jsxs("div", {
+    className: "flex h-full min-h-0 flex-col",
+    children: [
+      l.jsxs("label", {
+        className: "expert-dependency-row",
+        children: [
+          l.jsx(fl, {
+            id: canvas ? "expert-default-canvas" : "expert-default-plugins",
+            checked: selected === null,
+            onCheckedChange: (checked) => onChange(checked ? null : []),
+          }),
+          l.jsxs("span", {
+            className: "expert-dependency-text",
+            children: [
+              text(canvas ? "canvasDefault" : "pluginsDefault"),
+              !canvas && selected !== null && l.jsx("small", { children: text("pluginsCustomHint") }),
+            ],
+          }),
+        ],
+      }),
+      selected === null && l.jsx("p", {
+        className: "mb-2 px-2 text-xs text-muted-foreground",
+        children: text(canvas ? "canvasDefaultHint" : "pluginsDefaultHint"),
+      }),
+      l.jsx("div", {
+        className: "min-h-0 flex-1",
+        children: l.jsx(Rfe, {
+          label,
+          findLabel: text(canvas ? "canvasFilter" : "pluginsFilter"),
+          prefix: canvas ? "expert-canvas" : "expert-plugin",
+          items: Object.entries(labels).map(([id, name]) => ({
+            id, name, label: name,
+            meta: notes[id] ? id + " · " + notes[id] : id,
+            search: name + " " + id,
+          })),
+          selected: selected ?? [],
+          onChange,
+        }),
+      }),
+    ],
+  });
+}
 function TEt({ id: e, onCreated: t, onClose: n }) {
   const { t: r } = Xe(),
     s = ir((C) => C.account?.user.id),
@@ -140753,6 +141189,8 @@ function TEt({ id: e, onCreated: t, onClose: n }) {
       rules: [],
       skills: [],
       connectors: [],
+      plugins: null,
+      canvas: null,
     });
   y.useEffect(() => {
     if (!a.detail) return;
@@ -140767,6 +141205,8 @@ function TEt({ id: e, onCreated: t, onClose: n }) {
         rules: C.rule_ids ?? [],
         skills: C.skill_ids ?? [],
         connectors: C.connectors ?? [],
+        plugins: C.dsh_plugins ?? null,
+        canvas: C.canvas_tools ?? null,
       }));
   }, [a.detail]);
   function m(C, S) {
@@ -140817,11 +141257,17 @@ function TEt({ id: e, onCreated: t, onClose: n }) {
       (!C ||
         JSON.stringify(h.connectors) !== JSON.stringify(C.connectors ?? [])) &&
         (S.connectors = h.connectors),
+      (!C || JSON.stringify(h.plugins) !== JSON.stringify(C.dsh_plugins ?? null)) &&
+        (S.dsh_plugins = h.plugins),
+      (!C || JSON.stringify(h.canvas) !== JSON.stringify(C.canvas_tools ?? null)) &&
+        (S.canvas_tools = h.canvas),
       o("expert", S, e ?? void 0, a.detail?.etag)
     );
   }
   const v = h.connectors.filter((C) => C.connector_id !== wA).length,
     w = [
+      { value: "plugins", label: r("settings.experts.pluginsTab"), count: h.plugins?.length ?? 0 },
+      { value: "canvas", label: r("settings.experts.canvasTab"), count: h.canvas?.length ?? 0 },
       {
         value: "skills",
         label: r("settings.sections.skills"),
@@ -140948,7 +141394,7 @@ function TEt({ id: e, onCreated: t, onClose: n }) {
           "aria-label": r("settings.experts.capabilities"),
           children: [
             l.jsxs(jp, {
-              defaultValue: "skills",
+              defaultValue: "plugins",
               className: "expert-dialog-tabs",
               children: [
                 l.jsx(Mp, {
@@ -140977,6 +141423,15 @@ function TEt({ id: e, onCreated: t, onClose: n }) {
                 l.jsxs("div", {
                   className: "expert-dialog-tab-panels",
                   children: [
+                    ...["plugins", "canvas"].map((field) => l.jsx(gp, {
+                      value: field,
+                      keepMounted: !0,
+                      children: l.jsx(ExpertCapabilityPicker, {
+                        canvas: field === "canvas",
+                        selected: h[field],
+                        onChange: (value) => p({ ...h, [field]: value }),
+                      }),
+                    }, field)),
                     l.jsx(gp, {
                       value: "skills",
                       keepMounted: !0,
@@ -141015,11 +141470,23 @@ function TEt({ id: e, onCreated: t, onClose: n }) {
                 }),
               ],
             }),
+            h.skills.length > 0 && h.plugins !== null && !h.plugins.includes("tool-skill") &&
+              l.jsxs("div", {
+                className: "mt-2 text-xs text-muted-foreground",
+                children: [
+                  l.jsx("p", { children: r("settings.experts.skillToolHint") }),
+                  l.jsx(Te, {
+                    type: "button", variant: "link", size: "sm",
+                    onClick: () => p({ ...h, plugins: [...h.plugins, "tool-skill"] }),
+                    children: r("settings.experts.skillToolEnable"),
+                  }),
+                ],
+              }),
             l.jsx("p", {
               className: "sr-only",
               role: "status",
               children: r("settings.experts.selectedResources", {
-                count: h.skills.length + h.rules.length + v,
+                count: h.skills.length + h.rules.length + v + (h.plugins?.length ?? 0) + (h.canvas?.length ?? 0),
               }),
             }),
           ],
@@ -151568,6 +152035,31 @@ function JEe() {
 function Og(e) {
   return typeof e == "number" && Number.isFinite(e) ? e : void 0;
 }
+function dshFileTabKey(file, sessionId, cwd) {
+  const path = file.fileRef?.path || file.path;
+  return JSON.stringify([
+    file.origin?.sessionId ?? file.fileRef?.sessionId ?? sessionId,
+    file.fileRef ? [file.fileRef.serverId, file.fileRef.userId, file.fileRef.machineId] : null,
+    xw(path, file.origin?.cwd ?? cwd ?? ""),
+  ]);
+}
+// Saved tabs contain locators. File bytes and grants always come from the session host.
+function dshSavedFile(file) {
+  if (!file || !["workspace", "session", "git"].includes(file.source) ||
+      !["content", "preview", "changes", "plain", "interactive", "print"].includes(file.mode) ||
+      typeof file.path !== "string" || !file.path || file.path.length > 4096 || file.path.includes("\0")) return null;
+  const saved = { path: file.path, source: file.source, mode: file.mode };
+  if (file.wrap === true) saved.wrap = true;
+  if (file.zoom?.kind === "fixed" && Number.isFinite(file.zoom.scale) && file.zoom.scale > 0) saved.zoom = { kind: "fixed", scale: file.zoom.scale };
+  if (file.fileRef) {
+    try { saved.fileRef = lp(file.fileRef); } catch { return null; }
+  }
+  for (const key of ["toolCallId", "messageId", "label", "heading"]) {
+    if (typeof file[key] === "string") saved[key] = file[key];
+  }
+  if (Number.isSafeInteger(file.position?.line) && file.position.line > 0) saved.position = { line: file.position.line };
+  return saved;
+}
 function Z2(e) {
   if (!e) return {};
   try {
@@ -151643,6 +152135,8 @@ function Z2(e) {
               n.workspaceTab === "changes" ? "files" : n.workspaceTab,
           }
         : {}),
+      ...(n.workspaceSelectedFile ? { workspaceSelectedFile: dshSavedFile(n.workspaceSelectedFile) } : {}),
+      ...(Array.isArray(n.workspaceFileTabs) ? { workspaceFileTabs: n.workspaceFileTabs.map(dshSavedFile).filter(Boolean) } : {}),
       ...(["all", "session", "git"].includes(n.workspaceFileScope ?? "")
         ? { workspaceFileScope: n.workspaceFileScope }
         : n.workspaceTab === "changes"
@@ -151742,6 +152236,9 @@ const ji = uc((e, t) => {
           workspaceFileScope: f.fileScope,
           workspaceFileTreeOpen: f.treeOpen,
           workspaceFileTreeWidth: f.treeWidth,
+          workspaceSelectedFile: !f.files?.origin || f.files.origin.sessionId === o.sessionId ? dshSavedFile(f.files) : null,
+          workspaceFileTabs: (f.fileTabs ?? []).filter(file => !file.origin || file.origin.sessionId === o.sessionId)
+            .map(dshSavedFile).filter(Boolean),
           browserBackend: f.browserBackend,
           ...(f.navigation?.url ? { browserUrl: f.navigation.url } : {}),
         };
@@ -151820,6 +152317,8 @@ const ji = uc((e, t) => {
             ];
         n(o, {
           ...o1,
+          files: c.workspaceSelectedFile ?? null,
+          fileTabs: c.workspaceFileTabs ?? (c.workspaceSelectedFile ? [c.workspaceSelectedFile] : []),
           fileScope: u.workspaceFileScope ?? "all",
           treeOpen: u.workspaceFileTreeOpen,
           treeWidth: u.workspaceFileTreeWidth,
@@ -151836,16 +152335,38 @@ const ji = uc((e, t) => {
             : {}),
         });
       },
-      selectFile: (o, a, c) =>
-        r(o, {
-          tab: "files",
-          files: a,
-          directoryOrigin: a.origin,
-          fileScope: c ?? "all",
-        }),
-      fileMode: (o, a) => {
-        const c = t().views[Yu(o)]?.files;
-        c && r(o, { tab: "files", files: { ...c, mode: a } });
+      selectFile: (scope, file, fileScope) => {
+        const view = t().views[Yu(scope)];
+        const tabs = [...(view?.fileTabs ?? [])];
+        const cwd = file.origin?.cwd ?? view?.files?.origin?.cwd ?? view?.directoryOrigin?.cwd;
+        const key = dshFileTabKey(file, scope.sessionId, cwd);
+        const index = tabs.findIndex(tab => dshFileTabKey(tab, scope.sessionId, cwd) === key);
+        if (index < 0) tabs.push(file);
+        else tabs[index] = file;
+        r(scope, {
+          tab: "files", files: file, fileTabs: tabs, directoryOrigin: file.origin,
+          fileScope: fileScope ?? "all", treeOpen: Boolean(fileScope && view?.files && view.treeOpen),
+        });
+      },
+      focusFileTab: (scope, file) => r(scope, { files: file, directoryOrigin: file.origin }),
+      closeFileTab: (scope, file) => {
+        const view = t().views[Yu(scope)];
+        const tabs = view?.fileTabs ?? [];
+        const index = tabs.indexOf(file);
+        if (index < 0) return;
+        const remaining = tabs.filter((_, offset) => offset !== index);
+        const active = view.files && dshFileTabKey(view.files, scope.sessionId, view.directoryOrigin?.cwd)
+          === dshFileTabKey(file, scope.sessionId, view.directoryOrigin?.cwd)
+            ? remaining[Math.max(0, index - 1)] ?? null : view.files;
+        r(scope, { fileTabs: remaining, files: active, directoryOrigin: active?.origin });
+      },
+      fileMode: (scope, mode, preferences) => {
+        const view = t().views[Yu(scope)];
+        if (!view?.files) return;
+        const file = { ...view.files, ...preferences, mode };
+        const key = dshFileTabKey(file, scope.sessionId, view.directoryOrigin?.cwd);
+        r(scope, { files: file, fileTabs: (view.fileTabs ?? [file]).map(tab =>
+          dshFileTabKey(tab, scope.sessionId, view.directoryOrigin?.cwd) === key ? file : tab) });
       },
       fileList: (o) => r(o, { tab: "files", files: null }),
       openDirectory: (o, a, c) =>
@@ -151897,7 +152418,7 @@ function TL() {
     ),
     h = y.useCallback(() => (u ? a() : f()), [u, a, f]),
     p = y.useCallback(
-      (E, T = "content") => {
+      (E, T = Nnn(E.path)) => {
         if (!t) return;
         const M = ji.getState();
         (M.selectFile(d, {
@@ -152129,7 +152650,7 @@ function D7t({ session: e }) {
       c?.name ??
       (u === "monkeyai-design"
         ? t("home.designExpert")
-        : u || t("home.generalExpert")),
+        : u || t(i.dshJobsAvailable ? "home.standardMode" : "home.generalExpert")),
     f = l.jsx(A4, {
       id: u,
       plain: !0,
@@ -156857,6 +157378,7 @@ const GF = new Intl.NumberFormat("en-US", {
     "empty_response",
     "execution_failure",
     "permission_denied",
+    "approval_unavailable",
     "unsupported_capability",
     "provider_usage_limit",
     "token_budget",
@@ -156885,7 +157407,7 @@ function _9t({ goal: e }) {
     A9t(t)
   );
 }
-function T9t({ goal: e, disabled: t, onAction: n }) {
+function T9t({ goal: e, disabled: t, onAction: n, pauseInComposer }) {
   const { t: r } = Xe(),
     [s, i] = y.useState(!1),
     [o, a] = y.useState(e.objective),
@@ -157028,7 +157550,7 @@ function T9t({ goal: e, disabled: t, onAction: n }) {
                       children: l.jsx(ke, { icon: dk, size: 14 }),
                     }),
                   e.is_current &&
-                    e.status === "active" &&
+                    e.status === "active" && !pauseInComposer &&
                     l.jsx(Te, {
                       type: "button",
                       variant: "ghost",
@@ -157340,6 +157862,7 @@ function RL({ className: e, containerClassName: t, ...n }) {
   });
 }
 const ehe = {
+  ...dshToolActions,
   Bash: "command",
   PowerShell: "command",
   Cmd: "command",
@@ -157551,7 +158074,7 @@ function P9t(e) {
 function ih(e, t = "", n, r) {
   const s = rf(e.input),
     i = e.name ?? "",
-    o = Object.hasOwn(ehe, i) ? ehe[i] : "other",
+    o = dshStructuredAction(i) ?? (Object.hasOwn(ehe, i) ? ehe[i] : "other"),
     a =
       s.run_in_background === !0 && (o === "command" || o === "agent")
         ? o + "Background"
@@ -157637,6 +158160,29 @@ function ih(e, t = "", n, r) {
     case "executeCode":
       c = e.summary?.trim() ?? "";
       break;
+    case "jobOutput":
+    case "jobKill":
+      c = Bo(s, "job_id");
+      break;
+    case "knowledgeSearch":
+    case "canvasRead":
+    case "canvasSelection":
+    case "canvasCreateText":
+    case "canvasCreateHTML":
+    case "canvasCommitHTML":
+    case "canvasPreparePPTX":
+    case "canvasUpdate":
+    case "canvasDelete":
+    case "designCatalogSearch":
+    case "designCatalogDetail":
+      c = Bo(s, "query", "title", "name", "path", "node_id", "nodeId");
+      break;
+    case "connectorCall": {
+      const title = typeof e.title === "string" && e.title !== i ? e.title.trim() : "";
+      const target = Bo(s, "name", "title", "query", "path");
+      c = [title, target].filter(Boolean).join(" · ");
+      break;
+    }
     default:
       c = Bo(
         s,
@@ -158577,8 +159123,8 @@ function f_e({ experts: e, value: t, onSelect: n, ...r }) {
     c = ts()?.transport === "relay" && !a,
     u = {
       id: "",
-      name: s("home.generalExpert"),
-      description: s("home.generalExpertHint"),
+      name: s(r.standardMode ? "home.standardMode" : "home.generalExpert"),
+      description: s(r.standardMode ? "home.standardModeHint" : "home.generalExpertHint"),
       skills: [],
     },
     d = (v) => ASe({ ...v, selected: v.id === t }, v),
@@ -159434,6 +159980,19 @@ function sTt({
   });
 }
 function y_e(e) {
+  const usedDSHTools = y.useMemo(() => {
+    const messages = e.session?.messages?.filter(message => message.dshExecution);
+    if (!messages?.length) return null;
+    const names = new Set();
+    for (const message of messages) {
+      for (const part of message.parts) {
+        if (part.type !== "tool_call") continue;
+        const name = e.session.toolCalls[part.toolCallId]?.name;
+        if (name) names.add(name);
+      }
+    }
+    return [...names].sort();
+  }, [e.session?.messages, e.session?.toolCalls]);
   const { t } = Xe(),
     {
       config: n,
@@ -159564,6 +160123,17 @@ function y_e(e) {
       });
   return l.jsxs(l.Fragment, {
     children: [
+      usedDSHTools && l.jsx(j5, {
+        label: t("session.dshToolsUsed"),
+        count: usedDSHTools.length,
+        icon: c4,
+        children: usedDSHTools.length
+          ? l.jsx("ul", {
+              className: "p-3 text-sm",
+              children: usedDSHTools.map(name => l.jsx("li", { children: l.jsx("code", { children: name }) }, name)),
+            })
+          : l.jsx("p", { className: "capability-note", children: t("session.dshNoToolsUsed") }),
+      }),
       l.jsxs(j5, {
         label: t("capabilities.rules.label"),
         count: c.rules,
@@ -159588,6 +160158,7 @@ function y_e(e) {
           children: l.jsx(f_e, {
             ...E,
             experts: n?.expertSummaries ?? [],
+            standardMode: e.session ? e.session.dshJobsAvailable : employeeStandardPreset,
             value: e.expertId ?? "",
             onSelect: (N) => {
               (e.onCloseMenu(),
@@ -159705,7 +160276,13 @@ function iTt({ expertId: e }) {
       : null
   );
 }
+const EmployeePreset = y.lazy(async () => {
+  bindChatFramework(y, l, la);
+  return import("../dsh/native-presets/preset.js");
+});
 function b_e({
+  standardMode = false,
+  inHeader = false,
   sessionId: e,
   expertId: t,
   configurationRevision: n,
@@ -159714,7 +160291,7 @@ function b_e({
   onSelect: i,
   onManage: o,
 }) {
-  const { t: a } = Xe(),
+  const { t: a, i18n } = Xe(),
     [c, u] = y.useState(!1),
     d = zp(),
     f = yn((C) => (e ? C.sessionResources[e] : void 0)),
@@ -159733,6 +160310,13 @@ function b_e({
       className: b,
       fallback: l.jsx(A4, { id: p, plain: !0, className: b }),
     });
+  if (i && standardMode) {
+    const experts = d?.expertSummaries ?? [];
+    return l.jsx(y.Suspense, { fallback: null, children: l.jsx(EmployeePreset, {
+      experts: p && !experts.some(expert => expert.id === p) ? [...experts, {id: p, name: g, description: m?.description}] : experts,
+      expertId: p, busy: r || !d, designName: a("home.designExpert"), language: i18n.language, onSelect: i,
+    }) });
+  }
   if (i) {
     const C = a("capabilities.experts.currentRole", { name: g });
     return l.jsxs(Cs, {
@@ -159750,7 +160334,7 @@ function b_e({
                   type: "button",
                   variant: "ghost",
                   size: "xs",
-                  className: "composer-expert",
+                  className: inHeader ? "composer-expert session-header-expert" : "composer-expert",
                 }),
               }),
               children: [
@@ -159759,10 +160343,11 @@ function b_e({
                   className: "composer-expert-name",
                   children: g,
                 }),
+                inHeader && l.jsx(ke, { icon: zs, size: 12, "aria-hidden": true }),
               ],
             }),
             l.jsx(fi, {
-              side: "top",
+              side: inHeader ? "bottom" : "top",
               align: "start",
               sideOffset: 8,
               className: "composer-tooltip",
@@ -159771,7 +160356,7 @@ function b_e({
           ],
         }),
         l.jsx(bs, {
-          side: "top",
+          side: inHeader ? "bottom" : "top",
           align: "start",
           sideOffset: 8,
           className: "composer-menu capability-submenu",
@@ -160130,7 +160715,59 @@ const KF = (e) =>
     : e >= 1e3
       ? `${Math.round(e / 1e3)}K`
       : String(Math.round(e));
+function ContextMeter({ context }) {
+  const { t } = Xe();
+  if (!context) return null;
+  const percent = Math.min(100, Math.round(100 * context.used / context.size));
+  const heading = t("composer.contextPercent", { percent });
+  const categories = context.breakdown ? ["systemTokens", "toolsTokens", "messageTokens"] : [];
+  return l.jsxs(pp, {
+    children: [
+      l.jsx(mp, {
+        render: l.jsx(Te, {
+          type: "button", size: "xs", variant: "ghost", className: "composer-tool dsh-meter-trigger",
+          style: { "--dsh-filled": `${percent}%` }, title: heading, "aria-label": heading,
+        }),
+        children: `${percent}%`,
+      }),
+      l.jsxs(_0, {
+        className: "dsh-meter-panel", side: "top", align: "end", sideOffset: 8, "aria-label": heading,
+        children: [
+          l.jsxs("div", { className: "dsh-meter-heading", children: [
+            l.jsx(lEe, { children: heading }),
+            l.jsx("span", { children: `~${formatContextTokens(context.used)} / ${formatContextTokens(context.size)}` }),
+          ] }),
+          l.jsx("div", { className: "dsh-meter-bar", "aria-hidden": true, children:
+            contextSegments(context).map(({ key, width }) => l.jsx("i", {
+              className: "dsh-meter-segment", "data-context-category": key, style: { width: width + "%" },
+            }, key))
+          }),
+          categories.length > 0 && l.jsx("dl", { className: "dsh-meter-rows", children:
+            categories.map(key => l.jsxs("div", {
+              className: "dsh-meter-row", "data-context-category": key, children: [
+                l.jsx("dt", { children: t("composer.contextCategories." + key) }),
+                l.jsx("dd", { children: "~" + formatContextTokens(context.breakdown[key]) }),
+              ],
+            }, key))
+          }),
+        ],
+      }),
+    ],
+  });
+}
+function nativeChatControl(name) {
+  return y.lazy(async () => {
+    bindChatFramework(y, l, la);
+    const controls = await import("../dsh/native-chat/reply.js");
+    return { default: controls[name] };
+  });
+}
+const EmployeeTeamMode = nativeChatControl("EmployeeTeamMode");
+const EmployeeTodoPanel = nativeChatControl("EmployeeTodoPanel");
+const EmployeeTeamConfirmation = nativeChatControl("EmployeeTeamConfirmation");
+const EmployeeRunningStatus = nativeChatControl("EmployeeRunningStatus");
 function E_e({
+  teamMode,
   models: e,
   modelId: t,
   thinking: n,
@@ -160142,6 +160779,8 @@ function E_e({
   onModelChange: c,
   onThinkingChange: u,
 }) {
+  const [confirmTeam, setConfirmTeam] = y.useState(false);
+  const [teamRead, setTeamRead] = y.useState(null);
   const { t: d, i18n: f } = Xe(),
     { show: h } = Ly(),
     { workspaceName: p } = Bp(),
@@ -160167,6 +160806,31 @@ function E_e({
     y.useEffect(() => {
       (I("text"), T(""), S(!1));
     }, [i?.sessionId]));
+  // Older sessions may only have the setting in the SDK log. Read it on opening
+  // this menu so the switch always reflects the active session and expert.
+  y.useEffect(() => {
+    if (!C || !teamMode?.sessionId || teamMode.locked) return;
+    let current = true;
+    setTeamRead(null);
+    Jt.getState().agentTeamMode(teamMode.sessionId).then(
+      mode => { if (current) setTeamRead(mode); },
+      error => { if (current) setTeamRead({ error: wn(error) }); },
+    );
+    return () => { current = false; };
+  }, [C, teamMode?.sessionId, teamMode?.expertId, teamMode?.locked]);
+  const currentTeam = teamMode?.sessionId
+    ? { ...teamMode, ...(teamMode.locked ? {} : teamRead) }
+    : teamMode;
+  const saveTeam = async enabled => {
+    if (teamMode.sessionId) {
+      const mode = await Jt.getState().agentTeamMode(teamMode.sessionId, enabled);
+      if (mode.agentTeamEnabled !== enabled) throw new Error(d("session.teamUnavailable"));
+      setTeamRead(mode);
+    } else {
+      teamMode.onChange(enabled);
+    }
+    return null;
+  };
   const V = (Ee) => {
       const Ke = fh(Ee, g);
       return Ke === "team"
@@ -160286,7 +160950,11 @@ function E_e({
     $e = B === "text" && G && Q.length > 1,
     [Ve, Ne] = y.useState(null),
     qe = k_e(C ? Ve : null, '[aria-checked="true"]');
-  return l.jsxs(Cs, {
+  return l.jsxs(l.Fragment, { children: [
+    confirmTeam && teamMode?.sessionId && l.jsx(y.Suspense, { fallback: null, children:
+      l.jsx(EmployeeTeamConfirmation, { sessionId: teamMode.sessionId, language: f.language, cancel: () => setConfirmTeam(false), save: saveTeam }),
+    }),
+    l.jsxs(Cs, {
     open: C,
     onOpenChange: (Ee) => {
       (Ee && (r || A || N.saving)) || (S(Ee), Ee && T(""));
@@ -160567,6 +161235,20 @@ function E_e({
                 }),
               ],
             }),
+          teamMode && B === "text" && (typeof currentTeam?.agentTeamAvailable === "boolean" || currentTeam?.error) &&
+            l.jsxs(l.Fragment, { children: [
+              l.jsx(Hi, { className: "composer-model-divider" }),
+              typeof currentTeam.agentTeamAvailable === "boolean" && l.jsx(y.Suspense, {fallback: null, children: l.jsx(EmployeeTeamMode, {
+                enabled: currentTeam.agentTeamEnabled === true,
+                locked: O || A || teamMode.locked || !currentTeam.agentTeamAvailable ||
+                  (teamMode.sessionId && (!teamRead || !!teamRead.error)),
+                hasModelHistory: teamMode.hasModelHistory, language: f.language, dismiss: () => S(false),
+                requestDisable: () => setConfirmTeam(true), save: saveTeam, reportFailure: error => rn.error(error),
+              })}),
+              (currentTeam.error || currentTeam.agentTeamAvailable === false) && l.jsx("p", {
+                className: "capability-note", children: currentTeam.error || d("session.teamUnavailable"),
+              }),
+            ] }),
           Ie &&
             l.jsxs(l.Fragment, {
               children: [
@@ -160652,7 +161334,7 @@ function E_e({
         ],
       }),
     ],
-  });
+  }), ] });
 }
 const gTt = 48,
   Wh = new Map(),
@@ -160942,15 +161624,14 @@ function FS({
     ],
   });
 }
-const VM = (e) => (e === "bypassPermissions" ? Kwe : Nnt),
-  T_e = (e) =>
-    e === "auto" || e === "bypassPermissions"
-      ? ["auto", "bypassPermissions"]
-      : [e, "auto", "bypassPermissions"];
+// DSH's three permission levels; a conversation keeps the level it started with.
+const VM = (e) => (e === "full-access" ? Kwe : e === "read-only" ? VH : Nnt),
+  T_e = () => ["read-only", "workspace-write", "full-access"];
 function wTt({ mode: e, disabled: t, onChange: n }) {
   const { t: r } = Xe(),
-    s = r("mode." + e, { defaultValue: e });
-  return l.jsxs(Cs, {
+    s = r("mode." + e, { defaultValue: e }),
+    [c, u] = y.useState(!1);
+  return l.jsxs(l.Fragment, { children: [l.jsxs(Cs, {
     modal: !1,
     children: [
       l.jsxs(Ms, {
@@ -160989,7 +161670,7 @@ function wTt({ mode: e, disabled: t, onChange: n }) {
         children: l.jsxs(Ic, {
           value: e,
           onValueChange: (i) => {
-            i !== e && n(i);
+            i !== e && (i === "full-access" ? u(!0) : n(i));
           },
           children: [
             l.jsx(P1, { children: r("composer.permissions") }),
@@ -161030,13 +161711,38 @@ function wTt({ mode: e, disabled: t, onChange: n }) {
         }),
       }),
     ],
-  });
+  }),
+    l.jsx(b0, {
+      open: c,
+      onOpenChange: (i) => !i && u(!1),
+      children: l.jsxs(x0, {
+        children: [
+          l.jsxs(v0, {
+            children: [
+              l.jsx(k0, { children: r("composer.fullAccessConfirm.title") }),
+              l.jsx(C0, { children: r("composer.fullAccessConfirm.description") }),
+            ],
+          }),
+          l.jsxs(w0, {
+            children: [
+              l.jsx(A0, { children: r("common.cancel") }),
+              l.jsx(S0, {
+                variant: "destructive",
+                onClick: () => {
+                  (u(!1), n("full-access"));
+                },
+                children: r("composer.fullAccessConfirm.enable"),
+              }),
+            ],
+          }),
+        ],
+      }),
+    })] });
 }
 function kTt({ mode: e, disabled: t, onChange: n }) {
   const { t: r } = Xe(),
-    s = e === "auto" ? "bypassPermissions" : "auto",
     i = r("mode." + e, { defaultValue: e }),
-    o = r("composer.switchMode", { mode: r("mode." + s) });
+    o = r("composer.modeLocked");
   return l.jsxs(ui, {
     children: [
       l.jsxs(di, {
@@ -161046,11 +161752,8 @@ function kTt({ mode: e, disabled: t, onChange: n }) {
           size: "icon-sm",
           className: "composer-tool composer-permission",
           "data-mode": e,
-          disabled: t,
+          "aria-disabled": !0,
           "aria-label": r("composer.permissions") + ": " + i + " · " + o,
-          onClick: () => {
-            t || n(s);
-          },
         }),
         children: [
           l.jsx(ke, {
@@ -161070,14 +161773,14 @@ function kTt({ mode: e, disabled: t, onChange: n }) {
         align: "center",
         sideOffset: 8,
         className: "composer-tooltip composer-permission-tooltip",
-        children: l.jsx(CTt, { mode: e, nextMode: s }),
+        children: l.jsx(CTt, { mode: e }),
       }),
     ],
   });
 }
-function CTt({ mode: e, nextMode: t }) {
+function CTt({ mode: e }) {
   const { t: n } = Xe(),
-    r = T_e(e);
+    r = T_e();
   return l.jsxs("div", {
     className: "space-y-3",
     children: [
@@ -161123,7 +161826,7 @@ function CTt({ mode: e, nextMode: t }) {
       }),
       l.jsx("p", {
         className: "opacity-60",
-        children: n("composer.switchMode", { mode: n("mode." + t) }),
+        children: n("composer.modeLocked"),
       }),
     ],
   });
@@ -161664,6 +162367,8 @@ function PTt({
   onCancelQueuedEdit: z,
   onCancel: H,
   stopDisabled = C,
+  dshControls = false,
+  stopExecutionId,
   onCompact: P,
 }) {
   const { t: G } = Xe(),
@@ -161671,8 +162376,11 @@ function PTt({
     J = ts()?.transport !== "relay" || (Z.remote && Z.available),
     [Q, te] = y.useState(!1),
     re = i?.goal?.is_current ? i.goal : null,
-    se = i?.executing && i.onAction ? () => i.onAction("pause") : H,
-    ie = G(i?.executing ? "goal.pause" : "session.cancel"),
+    pausesGoal = !b && !!i?.onAction && (i.executing || (re?.status === "active" && !A)),
+    se = pausesGoal ? () => i.onAction("pause") : H,
+    canStop = !b && !!se && (A || pausesGoal),
+    [stopping, setStopping] = y.useState(false),
+    ie = G(stopping ? "session.stopping" : pausesGoal ? "goal.pause" : "session.cancel"),
     [le, ae] = y.useState(() => Lwe(t)),
     pe = y.useRef(le),
     ue = y.useRef(null),
@@ -161720,6 +162428,9 @@ function PTt({
     Kt = Math.min(pt, Math.max(0, un.length - 1)),
     Lr = ETt(kt, qe, Ee, In || en),
     Mn = y.useRef(!0);
+  y.useEffect(() => {
+    setStopping(false);
+  }, [canStop, stopExecutionId]);
   y.useEffect(() => {
     const restore = (key) => {
       const saved = W_(key);
@@ -162142,6 +162853,18 @@ function PTt({
       !me &&
       (!le.editing || (Ue && At)) &&
       !!(le.text.trim() || Vn.length),
+    primaryStops = canStop && !Ve && !le.editing && (dshControls || pausesGoal || w || !(le.text.trim() || Vn.length)),
+    stopCurrent = async () => {
+      if (!canStop || stopDisabled || stopping) return;
+      setStopping(true);
+      try {
+        const receipt = await se();
+        if (Mn.current && !(dshControls && receipt?.stopped === true)) setStopping(false);
+      } catch (error) {
+        if (Mn.current) setStopping(false);
+        Ft(error);
+      }
+    },
     ss = y.useRef(new Set()),
     As =
       !b &&
@@ -162391,8 +163114,8 @@ function PTt({
         (it.preventDefault(), te(!1));
         return;
       }
-      if (it.key === "Escape" && A && se && !stopDisabled) {
-        (it.preventDefault(), se().catch(Ft));
+      if (it.key === "Escape" && canStop && !stopDisabled) {
+        (it.preventDefault(), stopCurrent());
         return;
       }
       if (it.key === "Enter" && !it.shiftKey) {
@@ -162695,25 +163418,6 @@ ${it.preview}`
                   ],
                 }),
             }),
-            A &&
-              se &&
-              !i?.executing &&
-              l.jsxs(Te, {
-                type: "button",
-                variant: "ghost",
-                size: "xs",
-                className: "composer-stop",
-                disabled: stopDisabled,
-                "aria-label": ie,
-                title: ie + (qe ? "" : " · Esc"),
-                onClick: () => {
-                  se().catch(Ft);
-                },
-                children: [
-                  l.jsx(ke, { icon: RA, size: 12, "aria-hidden": "true" }),
-                  ie,
-                ],
-              }),
           ],
         }),
       qe &&
@@ -162729,7 +163433,7 @@ ${it.preview}`
             i.onAction &&
             l.jsx(
               T9t,
-              { goal: i.goal, disabled: C, onAction: i.onAction },
+              { goal: i.goal, disabled: C, onAction: i.onAction, pauseInComposer: pausesGoal },
               i.goal.goal_id,
             ),
           l.jsxs("div", {
@@ -162994,37 +163698,23 @@ ${it.preview}`
                                 type: "button",
                                 size: "icon-sm",
                                 className: "composer-send",
-                                disabled: !gr,
-                                "aria-label": G(
-                                  Q
-                                    ? "goal.start"
-                                    : le.editing
-                                      ? "common.save"
-                                      : b
-                                        ? "home.start"
-                                        : A
-                                          ? "session.queue.add"
-                                          : "session.send",
+                                "data-action": primaryStops ? "stop" : "send",
+                                disabled: primaryStops ? stopDisabled || stopping : !gr,
+                                "aria-busy": primaryStops && stopping || undefined,
+                                "aria-label": primaryStops ? ie : G(
+                                  Q ? "goal.start" : le.editing ? "common.save" : b ? "home.start" : A ? "session.queue.add" : "session.send",
                                 ),
-                                title:
-                                  G(
-                                    Q
-                                      ? "goal.start"
-                                      : le.editing
-                                        ? "common.save"
-                                        : A
-                                          ? "session.queue.add"
-                                          : "session.send",
-                                  ) +
-                                  " · " +
-                                  Cr,
-                                onClick: () => {
-                                  $n();
-                                },
+                                title: primaryStops
+                                  ? ie + (qe ? "" : " · Esc")
+                                  : G(Q ? "goal.start" : le.editing ? "common.save" : A ? "session.queue.add" : "session.send") + " · " + Cr,
+                                onClick: primaryStops ? stopCurrent : () => $n(),
                                 children:
-                                  !b && (Ve || S)
+                                  (primaryStops ? stopping : !b && (Ve || S))
                                     ? l.jsx(Kn, { className: "size-4" })
-                                    : l.jsx(ke, {
+                                    : primaryStops
+                                      ? l.jsx("svg", { viewBox: "0 0 16 16", width: 18, height: 18, "aria-hidden": true,
+                                          children: l.jsx("rect", { x: 3, y: 3, width: 10, height: 10, rx: 2, fill: "currentColor" }) })
+                                      : l.jsx(ke, {
                                         icon: le.editing ? tu : MA,
                                         size: 19,
                                         strokeWidth: 2,
@@ -163963,12 +164653,14 @@ function YTt({
                   b && (u(!1), i(b));
                 },
                 children: [
-                  l.jsx(Qa, {
-                    value: "__no_project__",
-                    closeOnClick: !0,
-                    children: a("composer.noProject"),
-                  }),
-                  l.jsx(Hi, {}),
+                  // With 默认工作区 listed, every conversation has a project.
+                  !e.some((g) => g.isDefault) &&
+                    l.jsx(Qa, {
+                      value: "__no_project__",
+                      closeOnClick: !0,
+                      children: a("composer.noProject"),
+                    }),
+                  !e.some((g) => g.isDefault) && l.jsx(Hi, {}),
                   l.jsxs(D1, {
                     children: [
                       l.jsx(P1, { children: a("projects.title") }),
@@ -165075,6 +165767,8 @@ function fhe() {
     E = yn((Je) => Je.load),
     T = _?.experts.filter((Je) => !_.expertIssues[Je.id]) ?? [],
     [M, I] = y.useState(h),
+    [draftAgentTeam, setDraftAgentTeam] = y.useState(false),
+    [expertTeam, setExpertTeam] = y.useState(null),
     [O, N] = y.useState([]),
     R = x_e({ onDraftChange: (Je) => N((dt) => rhe(dt, Je)) }),
     [B, q] = y.useState(() => (h === "monkeyai-design" ? W7() : void 0)),
@@ -165102,9 +165796,23 @@ function fhe() {
       be({}),
       (J.current = null));
   }, [o, m, h]);
+  y.useEffect(() => { setDraftAgentTeam(false); }, [o, m, $, p]);
+  const localTeams = w && employeeTeamCapability && ts()?.transport !== "relay";
+  const customTeamPreset = !!$ && $ !== "monkeyai-design";
+  y.useEffect(() => {
+    setExpertTeam(null);
+    if (!localTeams || !customTeamPreset) return;
+    let current = true;
+    Qn().then(client => client.request("_aibertai/session/agent-team", { expertId: $ })).then(
+      mode => { if (current) setExpertTeam({ expertId: $, ...mode }); },
+      error => { if (current) setExpertTeam({ expertId: $, error: wn(error) }); },
+    );
+    return () => { current = false; };
+  }, [localTeams, customTeamPreset, $, o]);
+  const draftTeamAvailable = !customTeamPreset || (expertTeam?.expertId === $ && expertTeam.agentTeamAvailable === true);
   const [se, ie] = y.useState(),
     [le, ae] = y.useState(null),
-    [pe, ue] = y.useState("auto"),
+    [pe, ue] = y.useState("workspace-write"),
     [me, be] = y.useState({}),
     Ce = _?.models.all.filter(X1) ?? [],
     xe = (Je) => {
@@ -165138,7 +165846,11 @@ function fhe() {
   const Ee = JSON.stringify([o, m, p]),
     [Ke, ot] = y.useState(),
     X = Ke?.context === Ee ? Ke : void 0,
-    ve = X ? X.projectId : (m ?? g.find((Je) => Je.cwd === p)?.id),
+    ve = X
+      ? X.projectId
+      : (m ??
+        g.find((Je) => Je.cwd === p)?.id ??
+        (p ? void 0 : g.find((Je) => Je.isDefault)?.id)),
     We = g.find((Je) => Je.id === ve),
     je = We?.cwd ?? X?.cwd ?? p,
     Oe = y.useRef(null);
@@ -165241,6 +165953,7 @@ ${e("settings.experts.aiPrompt")}`,
             profile: $ || void 0,
             model: Ve.id,
             thinking: Ne,
+            ...(localTeams ? { agentTeamEnabled: draftTeamAvailable && draftAgentTeam } : {}),
             mode: pe,
             resourceChanges: O,
             design: B,
@@ -165396,7 +166109,7 @@ ${e("settings.experts.aiPrompt")}`,
                     },
                   }),
                 expertControl: l.jsx(b_e, {
-                  expertId: $,
+                  standardMode: employeeStandardPreset, expertId: $,
                   disabled: !w || at,
                   onSelect: xe,
                   onManage: f.show,
@@ -165415,6 +166128,12 @@ ${e("settings.experts.aiPrompt")}`,
                   media: { kind: A_e(B?.designType), value: me, onChange: be },
                   modelId: se ?? $e,
                   thinking: Ne,
+                  teamMode: localTeams ? {
+                    agentTeamAvailable: customTeamPreset && expertTeam?.expertId !== $ ? undefined : draftTeamAvailable,
+                    agentTeamEnabled: draftTeamAvailable && draftAgentTeam,
+                    error: expertTeam?.expertId === $ ? expertTeam.error : undefined,
+                    onChange: setDraftAgentTeam,
+                  } : undefined,
                   disabled: !w || at,
                   onModelChange: (Je, dt) => {
                     (ie(Je), ae({ model: Je, value: dt }));
@@ -165939,6 +166658,7 @@ async function yjt(e, t, n) {
   });
 }
 function WX({
+  memberNavigation,
   title: e,
   breadcrumb: t,
   subtitle: n,
@@ -165969,8 +166689,10 @@ function WX({
           l.jsxs("div", {
             className: "flex min-w-0 items-center gap-2 text-sm",
             children: [
+              memberNavigation,
               e &&
-                l.jsxs(l.Fragment, {
+                l.jsxs(memberNavigation ? "div" : l.Fragment, {
+                  ...(memberNavigation && { className: "dsh-root-session-heading" }),
                   children: [
                     t &&
                       l.jsxs(l.Fragment, {
@@ -166002,7 +166724,7 @@ function WX({
                 }),
               r &&
                 l.jsx("div", {
-                  className: "ml-1 flex shrink-0 items-center gap-2",
+                  className: Vr("ml-1 flex shrink-0 items-center gap-2", memberNavigation && "dsh-root-session-controls"),
                   children: r,
                 }),
             ],
@@ -166304,7 +167026,33 @@ function Cjt({ sessionId: e, tasks: t }) {
     ],
   });
 }
+const EmployeeMembers = y.lazy(async () => {
+  bindChatFramework(y, l, la);
+  return import("../dsh/native-members/members.js");
+});
+const EmployeeMemberHistoryLink = y.lazy(async () => {
+  bindChatFramework(y, l, la);
+  const { MemberHistoryLink } = await import("../dsh/native-members/members.js");
+  return { default: MemberHistoryLink };
+});
+async function employeeInterruptMember(params) {
+  return (await Qn()).request("_aibertai/session/member-interrupt", params);
+}
+async function employeePromptMember(params) {
+  return (await Qn()).request("_aibertai/session/member-prompt", params);
+}
+async function employeeMemberRequest(params) {
+  return (await Qn()).request("_aibertai/session/members", params);
+}
+const EmployeeJobs = y.lazy(async () => {
+  bindChatFramework(y, l, la);
+  return import("../dsh/native-jobs/jobs.js");
+});
+async function employeeJobRequest(params) {
+  return (await Qn()).request("_aibertai/session/jobs", params);
+}
 function phe({
+  expertControl,
   session: e,
   projectName: t,
   awaitingInput: n = !1,
@@ -166313,13 +167061,15 @@ function phe({
   tools: i,
   sidebarTrigger: o = !0,
 }) {
-  const { t: a } = Xe(),
+  const { t: a, i18n } = Xe(),
+    accountId = ir(state => state.account?.id),
+    [headerTarget, setHeaderTarget] = y.useState(null),
     c = e.isDefaultWorkspace
       ? ""
       : e.cwd.split(/[\\/]/).filter(Boolean).pop() || e.cwd,
     u = e.title || c || a("nav.newSession"),
     d = t || c,
-    f = Mwe(e.status, !!e.ask, !!e.question || n),
+    f = Mwe(e.dshStopAccountingPending ? "interrupted" : e.status, !!e.ask, !!e.question || n),
     h = l.jsxs(ui, {
       children: [
         l.jsx(di, {
@@ -166340,12 +167090,18 @@ function phe({
     });
   return l.jsx(WX, {
     className: "session-page-header",
+    memberNavigation: e.dshJobsAvailable && accountId && l.jsx("div", { className: "dsh-member-navigation-slot", ref: setHeaderTarget }),
     title: d === u ? h : u,
     breadcrumb: d && d !== u ? h : void 0,
     sidebarTrigger: o,
     right: l.jsxs(l.Fragment, {
       children: [
-        l.jsx(Cjt, { sessionId: e.id, tasks: e.tasks }),
+        e.dshJobsAvailable && accountId && l.jsx(y.Suspense, { fallback: null, children:
+          l.jsx(EmployeeMembers, { accountId, sessionId: e.id, rootTitle: u, headerTarget, running: e.status === "running", request: employeeMemberRequest, promptMember: employeePromptMember, interruptMember: employeeInterruptMember,
+            language: i18n.language }, JSON.stringify([accountId, e.id])) }),
+        e.dshJobsAvailable && l.jsx(y.Suspense, {fallback: null, children:
+          l.jsx(EmployeeJobs, {sessionId: e.id, request: employeeJobRequest, language: i18n.language}, e.id)}),
+        l.jsx(Cjt, { sessionId: e.id, tasks: e.dshJobsAvailable ? e.tasks.filter(task => task.type === "agent") : e.tasks }),
         i,
         !i &&
           r &&
@@ -166391,7 +167147,7 @@ function phe({
           }),
       ],
     }),
-    children: l.jsx(jX, { status: f }),
+    children: l.jsxs(l.Fragment, { children: [expertControl, l.jsx(jX, { status: f })] }),
   });
 }
 const O_e = ["files", "canvas", "browser", "terminal"],
@@ -168357,6 +169113,7 @@ function yMt(e, t) {
           ? { kind: "replying" }
           : { kind: "working" },
     busy: !!n,
+    lastActivity: `${e.length}:${r?.type ?? ""}:${r?.text?.length ?? 0}:${r?.toolCallId ? t[r.toolCallId]?.status ?? "" : ""}`,
   };
 }
 function bMt({ count: e, onClick: t }) {
@@ -170044,6 +170801,7 @@ function XM({
     V = w === "edit" ? u_e(b) : [],
     K = n && (e.status === "pending" || e.status === "in_progress"),
     $ =
+      e.outcomeUnknown ? "outcomeUnknown" : e.userReviewed ? "userReviewed" :
       e.status === "completed"
         ? "completed"
         : e.status === "failed"
@@ -170084,7 +170842,7 @@ function XM({
       L.push({ key: te, value: b[te] });
   (w === "read" &&
     typeof b.offset == "number" &&
-    L.push({ key: "startLine", value: String(b.offset + 1) }),
+    L.push({ key: "startLine", value: String(displayReadOffset(e.name, b.offset)) }),
     typeof b.limit == "number" &&
       L.push({ key: "limit", value: String(b.limit) }),
     typeof b.timeout == "number" &&
@@ -170107,8 +170865,8 @@ function XM({
             l.jsx("code", {
               className: "tool-full-name select-text",
               tabIndex: 0,
-              title: e.name,
-              children: e.name || d("session.executionTool"),
+              title: dshStructuredAction(e.name) ? d("tools.actions." + w) : e.name,
+              children: dshStructuredAction(e.name) ? d("tools.actions." + w) : e.name || d("session.executionTool"),
             }),
             e.name && l.jsx(sh, { text: e.name, label: d("tools.copyName") }),
           ],
@@ -170303,13 +171061,13 @@ function XM({
                     ? e.status === "failed"
                       ? l.jsx(Sl, {
                           title: d("tools.error"),
-                          copy: g,
+                          copy: dshStructuredAction(e.name) ? displayDSHStructuredOutput(g) || d("tools.dshStructuredResult") : g,
                           className: "tool-error",
                           collapsible: !r,
-                          children: l.jsx(Cl, { text: g }),
+                          children: l.jsx(Cl, { text: dshStructuredAction(e.name) ? displayDSHStructuredOutput(g) || d("tools.dshStructuredResult") : g }),
                         })
                       : w === "read"
-                        ? l.jsx(RMt, { output: g })
+                        ? l.jsx(RMt, { output: e.name === "read" ? displayDSHRead(g) : g })
                         : z
                           ? l.jsx(IMt, {
                               output: g,
@@ -170332,10 +171090,10 @@ function XM({
                                       ? "tools.instructions"
                                       : "tools.result",
                                 ),
-                                copy: q ? the(g) : g,
+                                copy: dshStructuredAction(e.name) ? displayDSHStructuredOutput(g) || d("tools.dshStructuredResult") : e.name === "write" ? displayDSHWrite(g) : q ? the(g) : g,
                                 collapsible: !r,
                                 children: l.jsx(Cl, {
-                                  text: q ? the(g) : g,
+                                  text: dshStructuredAction(e.name) ? displayDSHStructuredOutput(g) || d("tools.dshStructuredResult") : e.name === "write" ? displayDSHWrite(g) : q ? the(g) : g,
                                   prose:
                                     q || w === "skillLoad" || w === "skill",
                                 }),
@@ -170359,18 +171117,27 @@ function XM({
         Z,
         C && Object.keys(E).length > 0 && l.jsx(Ihe, { input: E }),
         J,
-        l.jsx(Sl, {
-          title: d("tools.rawResult"),
-          copy: g,
-          children:
-            T !== void 0
-              ? l.jsx(Cl, { text: T })
-              : l.jsx("p", {
-                  className: "tool-empty",
-                  children: d(K ? "tools.waitingOutput" : "tools.noResult"),
-                }),
+        l.jsxs(isDSHTool(e.name) || w === "other" ? "details" : l.Fragment, {
+          ...(isDSHTool(e.name) || w === "other"
+            ? { className: "tool-call-details" }
+            : {}),
+          children: [
+            (isDSHTool(e.name) || w === "other") &&
+              l.jsx("summary", { children: d("tools.dshDiagnostics") }),
+            l.jsx(Sl, {
+              title: d("tools.rawResult"),
+              copy: g,
+              children:
+                T !== void 0
+                  ? l.jsx(Cl, { text: T })
+                  : l.jsx("p", {
+                      className: "tool-empty",
+                      children: d(K ? "tools.waitingOutput" : "tools.noResult"),
+                    }),
+            }),
+            l.jsx(Dhe, { call: e, full: p, recordCall: a, recordFull: m }),
+          ],
         }),
-        l.jsx(Dhe, { call: e, full: p, recordCall: a, recordFull: m }),
       ],
     });
   return l.jsxs("div", {
@@ -170591,6 +171358,33 @@ function e7e({ part: e }) {
         }),
     ],
   });
+}
+function EmployeeModelReceiptCheck({ sessionId }) {
+  const { i18n } = Xe();
+  const [phase, setPhase] = y.useState("idle");
+  const checking = y.useRef(false);
+  const zh = i18n.language.startsWith("zh");
+  async function verify() {
+    if (checking.current) return;
+    checking.current = true;
+    setPhase("checking");
+    try {
+      // The normal open path refreshes history and queries the existing receipt.
+      await Jt.getState().open(sessionId);
+      setPhase("pending");
+    } catch {
+      setPhase("unavailable");
+    } finally {
+      checking.current = false;
+    }
+  }
+  return l.jsxs("div", { className: "dsh-receipt-check", children: [
+    l.jsx("button", { type: "button", onClick: verify, disabled: phase === "checking",
+      children: phase === "checking" ? (zh ? "正在核验…" : "Checking…") : (zh ? "重新核验" : "Check receipt") }),
+    l.jsx("span", { role: "status", children: phase === "pending"
+      ? (zh ? "暂未核验完成，可稍后再查。" : "Still awaiting confirmation. Check again later.")
+      : phase === "unavailable" ? (zh ? "暂时无法查询，请重试。" : "Could not check the receipt. Try again.") : "" }),
+  ] });
 }
 function t7e({ part: e }) {
   const { t } = Xe(),
@@ -173196,6 +173990,77 @@ const CNt = {
       ],
     });
   });
+const EmployeeNativeReply = y.lazy(() => {
+  bindChatFramework(y, l, la);
+  return import("../dsh/native-chat/reply.js");
+});
+function EmployeeDSHReply(props) {
+  const { message, sessionId, cwd = "", files, running, onOpenWorkspaceFile, toolCalls } = props;
+  const { t, i18n } = Xe();
+  const memberAccountId = ir(state => state.account?.id);
+  const workspace = K_e(sessionId, cwd, files, running, onOpenWorkspaceFile);
+  const openFile = y.useMemo(() => workspace && (async (path, options) => {
+    try {
+      const relative = Ru(path, cwd);
+      const result = await workspace.resolve(relative || path, true);
+      if (result.status === "resolved") {
+        workspace.open(result, options?.line ? { line: options.line } : void 0);
+      } else {
+        ln(new Error(t("files.reference." + result.status)), path);
+      }
+    } catch (err) { ln(err, path); }
+  }), [workspace, cwd, t]);
+  const mentions = y.useMemo(() => openFile && ({
+    resolve(value) {
+      const relative = Ru(value, cwd);
+      if (!relative || !workspace.paths?.includes(relative)) return;
+      return { open: () => openFile(value), title: value, label: t("files.reference.open") };
+    },
+  }), [workspace, openFile, cwd, t]);
+  const images = y.useMemo(() => sessionId && ({
+    render: (path, name) => l.jsx(FS, { variant: "inline", source: { kind: "workspace", sessionId, path }, name }),
+    renderRemote: (url, name) => l.jsx(FS, { variant: "inline", deferred: true, source: { kind: "remote", url }, name }),
+  }), [sessionId]);
+  const media = y.useMemo(() => ({
+    render: (src, alt) => l.jsx(Avt, { node: { src, alt } }),
+  }), []);
+  const renderHostPart = part => {
+    const component = { file: ANt, error: t7e, compaction: e7e, history_notice: n7e }[part.type];
+    return component ? l.jsx(component, { part }) : null;
+  };
+  const renderHostTool = call => (call.outcomeUnknown || call.userReviewed || call.outputTruncated ||
+    (message.endedAt !== void 0 && (call.status === "pending" || call.status === "in_progress")))
+    ? l.jsx(u7e, { call, tasks: props.tasks, running, cwd, sessionId,
+        onOpenWorkspaceFile, onOpenBrowser: props.onOpenBrowser })
+    : null;
+  const calls = message.parts.filter(part => part.type === "tool_call").map(part => toolCalls[part.toolCallId]).filter(Boolean);
+  const renderToolAccessory = call => (call.name === "subagent" || call.name === "subagent_fork") && call.dshCallId && memberAccountId
+    ? l.jsx(y.Suspense, { fallback: null, children: l.jsx(EmployeeMemberHistoryLink, { accountId: memberAccountId,
+      sessionId, callId: call.dshCallId, language: i18n.language }) })
+    : (call.status === "completed" && pNt(call) && gNt(call.output)
+    || (props.inlineGeneratedImages ? pNt(call) : mNt(call, running)))
+    ? l.jsx(wNt, { sessionId, call }) : null;
+  return l.jsx(Fp.Provider, { value: workspace ?? null, children: l.jsxs(fSe.Provider, {
+    value: images, children: [
+      l.jsx(y.Suspense, { fallback: null, children: l.jsx(EmployeeNativeReply, {
+        ...props, language: i18n.language, openFile, mentions, media, renderHostPart,
+        openExternalLink: async href => {
+          try {
+            if (props.onOpenBrowser && /^https?:\/\//i.test(href) && et.kind === "electron" && et.browser) {
+              const { parseBrowserAddress } = await import("../dsh/native-browser/panel.js");
+              const parsed = parseBrowserAddress(href, window.location.origin);
+              if (!parsed.ok) throw new Error(t("errors.codes.invalid_browser_url"));
+              props.onOpenBrowser(parsed.target.url);
+            } else await et.openExternal(href);
+          } catch (err) { ln(err, href); }
+        },
+        renderHostTool, renderToolAccessory,
+      }) }),
+      sessionId && calls.filter(call => qMt(call, running)).map(call => l.jsx(lNt, { call }, call.id)),
+      sessionId && calls.filter(WMt).map(call => l.jsx(cNt, { call, sessionId }, call.id)),
+    ],
+  }) });
+}
 function ANt({ part: e }) {
   const t = y.useContext(Fp),
     n = l.jsxs(l.Fragment, {
@@ -173309,6 +174174,7 @@ function TNt({
           .map(({ part: O }) => (O.type === "thought" ? O.text : ""))
           .join("")
       : null,
+    detail = E === null ? e.summary : "",
     T = h(m ? "session.thought" : "session.executionProcess"),
     M = l.jsxs(l.Fragment, {
       children: [
@@ -173319,12 +174185,11 @@ function TNt({
             children: T,
           }),
         }),
-        E === null &&
-          e.summary &&
+        detail &&
           l.jsx("span", {
             className: "execution-summary-detail",
-            title: e.summary,
-            children: e.summary,
+            title: E === null ? detail : void 0,
+            children: detail,
           }),
       ],
     }),
@@ -173692,7 +174557,7 @@ function u7e({
             children: Ne,
           }),
     Ke = e.status === "failed" || K?.status === "failed",
-    ot = Ke
+    ot = e.outcomeUnknown ? "outcomeUnknown" : e.userReviewed ? "userReviewed" : Ke
       ? "failed"
       : e.status === "completed"
         ? "completed"
@@ -173857,7 +174722,8 @@ function u7e({
                   cwd: r,
                   running: n,
                   sessionId: s,
-                  recordOnly: !0,
+                  recordOnly: !isDSHTool(e.name) && E !== "other",
+                  disclosure: !isDSHTool(e.name) && E !== "other",
                 }),
             ],
           }),
@@ -187401,6 +188267,7 @@ function p9e({
   }, [o, e.questions]);
   const [p, m] = y.useState({}),
     [g, b] = y.useState({}),
+    [dshSkipped, setDSHSkipped] = y.useState({}),
     [v, w] = y.useState(!1),
     [C, S] = y.useState(""),
     [A, _] = y.useState(!1),
@@ -187430,7 +188297,7 @@ function p9e({
     });
   const M = (K) => p[K] ?? [],
     I = (K, $, L) => {
-      ($.multiSelect || b((z) => ({ ...z, [K]: "" })),
+      (setDSHSkipped((z) => ({ ...z, [K]: !1 })), $.multiSelect || b((z) => ({ ...z, [K]: "" })),
         m((z) => {
           const H = z[K] ?? [];
           return $.multiSelect
@@ -187442,7 +188309,7 @@ function p9e({
         }));
     },
     O = (K, $, L) => {
-      (b((z) => ({ ...z, [K]: L })),
+      (setDSHSkipped((z) => ({ ...z, [K]: !1 })), b((z) => ({ ...z, [K]: L })),
         m((z) => {
           const H = (z[K] ?? []).filter((P) => P !== I5);
           return { ...z, [K]: L ? [...($.multiSelect ? H : []), I5] : H };
@@ -187461,7 +188328,7 @@ function p9e({
       ),
     R = (K) => {
       const $ = M(K);
-      return $.includes(I5) ? (g[K] ?? "").trim() !== "" : $.length > 0;
+      return dshSkipped[K] || ($.includes(I5) ? (g[K] ?? "").trim() !== "" : $.length > 0);
     },
     B =
       !A &&
@@ -187479,7 +188346,7 @@ function p9e({
             e.questions.map((K, $) => {
               const L = M($),
                 z = L.includes(I5),
-                H = z ? [...L.filter((P) => P !== I5), (g[$] ?? "").trim()] : L;
+                H = dshSkipped[$] ? [] : z ? [...L.filter((P) => P !== I5), (g[$] ?? "").trim()] : L;
               return {
                 header: K.header,
                 question: K.question,
@@ -187562,6 +188429,10 @@ function p9e({
                               "question-title m-0 whitespace-pre-wrap break-words text-sm font-medium leading-6 select-text",
                             children: z.body,
                           }),
+						  K.detail && l.jsx("p", {
+						    className: "whitespace-pre-wrap break-words text-sm select-text",
+						    children: K.detail,
+						  }),
                         ],
                       }),
                       e.questions.length > 1 &&
@@ -187637,7 +188508,7 @@ function p9e({
                               ),
                             ),
                           }))),
-                  l.jsx(nu, {
+                  K.intent?.kind !== "approval" && l.jsx(nu, {
                     ref: d,
                     rows: 1,
                     autoFocus: P.length === 0,
@@ -187656,6 +188527,10 @@ function p9e({
                         F && B ? V() : !F && R($) && a($ + 1));
                     },
                   }),
+				  K._dshNative && dshSkipped[$] && l.jsx("p", {
+				    className: "text-sm text-muted-foreground",
+				    children: "已跳过本题",
+				  }),
                 ],
               },
               $,
@@ -187715,6 +188590,17 @@ function p9e({
                     }),
                   ],
                 }),
+              e.questions[q]?._dshNative && e.questions[q]?.intent?.kind !== "approval" && l.jsx(Te, {
+				size: "sm",
+				variant: "ghost",
+				disabled: W,
+				onClick: () => {
+				  b((K) => ({ ...K, [q]: "" }));
+				  m((K) => ({ ...K, [q]: [] }));
+				  setDSHSkipped((K) => ({ ...K, [q]: !0 }));
+				},
+				children: "跳过本题",
+			  }),
               l.jsx(Te, {
                 size: "sm",
                 variant: "ghost",
@@ -187803,7 +188689,8 @@ function GIt({ ask: e, cwd: t, disabled: n, onAnswer: r, permissions: s }) {
     g = y.useRef(null),
     b = y.useRef(null),
     [v, w] = y.useState(!1),
-    C = !!(s && s.mode !== "bypassPermissions"),
+    // The level is fixed once a conversation starts (DSH pins its preset).
+    C = !1,
     S = C && v;
   if (
     (y.useLayoutEffect(() => {
@@ -187876,7 +188763,7 @@ function GIt({ ask: e, cwd: t, disabled: n, onAnswer: r, permissions: s }) {
         ? Bo(rf(_.input), "description").trim()
         : "") ||
       (E === "other"
-        ? T || i("session.executionTool")
+        ? displayOtherApproval(_.name, _.title, T, i("session.executionTool"))
         : i("tools.actions." + E) + (M && T ? " " + T : "")),
     N = e.options.filter((W) => W.kind !== "allow_always"),
     R = { allow_once: "session.allow", reject_once: "session.reject" },
@@ -187924,7 +188811,7 @@ function GIt({ ask: e, cwd: t, disabled: n, onAnswer: r, permissions: s }) {
             className:
               "select-text whitespace-pre-wrap break-words text-sm font-medium",
             "data-permission-purpose": !0,
-            children: O,
+            children: displayOtherApproval(_.name, _.title, O, i("session.executionTool")),
           }),
           l.jsxs("details", {
             className: "min-w-0 text-sm",
@@ -187961,50 +188848,6 @@ function GIt({ ask: e, cwd: t, disabled: n, onAnswer: r, permissions: s }) {
           className:
             "col-span-full mx-4 mb-4 select-text break-words text-sm text-destructive",
           children: u,
-        }),
-      C &&
-        s &&
-        l.jsxs(ui, {
-          children: [
-            l.jsx(di, {
-              render: l.jsx(Te, {
-                ref: g,
-                type: "button",
-                variant: S ? "outline" : "ghost",
-                className:
-                  "permission-trust cursor-pointer px-3 shadow-none hover:bg-muted focus-visible:ring-inset active:not-aria-[haspopup]:translate-y-0 " +
-                  (S
-                    ? "col-start-2 row-start-2 mb-4 mr-4 h-9 rounded-[8px]"
-                    : "h-11 w-full rounded-none border-0 border-t border-border bg-muted/50"),
-                disabled: B,
-                onClick: () => {
-                  q(() => s.onChange("bypassPermissions"));
-                },
-              }),
-              children: l.jsxs("span", {
-                ref: b,
-                className: "inline-flex w-max shrink-0 items-center gap-2",
-                children: [
-                  l.jsx(ke, {
-                    icon: Kwe,
-                    size: 14,
-                    strokeWidth: 1.6,
-                    className: "size-3.5",
-                    "aria-hidden": "true",
-                  }),
-                  i("session.trustConversation"),
-                ],
-              }),
-            }),
-            l.jsx(fi, {
-              side: "top",
-              align: S ? "end" : "center",
-              sideOffset: 8,
-              className:
-                "permission-trust-tooltip max-w-[min(280px,calc(100vw-32px))] whitespace-normal leading-relaxed",
-              children: i("session.trustConversationHint"),
-            }),
-          ],
         }),
     ],
   });
@@ -188387,7 +189230,7 @@ function oLt({ message: e, activity: t, attention: n, stage: r }) {
   const { t: s, i18n: i } = Xe(),
     o = e?.at,
     a = y.useMemo(() => ({ at: o, client: Date.now() }), [o]),
-    c = y.useMemo(() => Date.now(), [o, e?.id, r, t.busy, n]),
+    c = y.useMemo(() => Date.now(), [o, e?.id, e?.dshStep, r, t.busy, t.lastActivity, n]),
     [, u] = y.useReducer((g) => g + 1, 0);
   y.useEffect(() => {
     const g = setInterval(u, 1e3);
@@ -188396,10 +189239,15 @@ function oLt({ message: e, activity: t, attention: n, stage: r }) {
   const d = Date.now(),
     f = !n && !r && !t.busy && d - c >= iLt,
     { phase: h } = t,
+    dshLabel = e?.dshStep > 0 ? s("session.dshStep", { step: e.dshStep }) : void 0,
     p = r
       ? s("session.activity.stage." + r)
       : n
         ? s("composer.activity." + n)
+        : dshLabel
+          ? dshLabel + (t.busy
+              ? ` · ${s("session.activity.tool", { action: s("tools.actions." + h.action) })}`
+              : f ? ` · ${s("session.dshQuiet", { duration: y9e(d - c, s, i.language) })}` : "")
         : f
           ? s("session.activity.waiting")
           : h.kind === "tool"
@@ -188513,9 +189361,15 @@ function Dpe({
         f(!1);
       }
     };
-  if (!p && !v) return null;
+  if (!p && !v && !e.interrupted) return null;
   const A = l.jsxs(l.Fragment, {
       children: [
+        h && e.interrupted === !0 &&
+          l.jsx("span", {
+            className: "message-duration",
+            role: "status",
+            children: o("session.stopped"),
+          }),
         g &&
           l.jsx("span", {
             className: "message-steer",
@@ -188549,7 +189403,7 @@ function Dpe({
               }),
             ],
           }),
-        m !== void 0 &&
+        m !== void 0 && !e.dshExecution &&
           l.jsx("span", {
             className: "message-duration",
             children: o("session.duration.label", {
@@ -196060,6 +196914,44 @@ function ZPt({ files: e, cwd: t, selected: n, onSelect: r }) {
     }),
   });
 }
+const DSHDocumentOpenControl = y.lazy(async () => {
+  bindChatFramework(y, l, la);
+  const { EmployeeOpenTarget } = await import("../dsh/native-chat/reply.js");
+  return { default: EmployeeOpenTarget };
+});
+function EmployeeDocumentAction({ scope, path, cwd }) {
+  const { i18n } = Xe();
+  const relative = Ru(path, cwd);
+  if (!scope?.accountId || !scope.sessionId || !relative || et.kind !== "electron"
+    || ts()?.transport === "relay" || !et.workspaceDocumentAction
+    || !/\.(?:md|markdown|txt|docx|xlsx|pptx|pdf)$/i.test(relative)) return null;
+  return l.jsx(y.Suspense, { fallback: null, children: l.jsx(DSHDocumentOpenControl, {
+    scope, path: relative, bridge: et.workspaceDocumentAction, language: i18n.language,
+    reportError: message => rn.error(message),
+  }) });
+}
+const DSHPresentedFiles = y.lazy(async () => {
+  bindChatFramework(y, l, la);
+  const { PresentedFileCard, deliverableStyles, deliverableZh, deliverableEn } = await import("../dsh/native-chat/reply.js");
+  return { default: function PresentedFiles({ files, cwd, sessionId, onOpen }) {
+    const accountId = ir(state => state.account?.id);
+    const { i18n } = Xe();
+    const locale = (i18n.resolvedLanguage || i18n.language || "").startsWith("en") ? deliverableEn : deliverableZh;
+    const translate = (key, values) => locale[key].replace(/\{(\w+)\}/g, (_, name) => values[name]);
+    return l.jsx("div", {
+      className: "dsh-native-theme " + deliverableStyles.root,
+      children: l.jsx("div", {
+        className: deliverableStyles.presented,
+        "data-single": files.length === 1,
+        children: files.map((file) => l.jsx(PresentedFileCard, {
+          file, cwd, t: translate, host: null, contextMenuProps: {},
+          actions: l.jsx(EmployeeDocumentAction, { scope: { accountId, sessionId }, path: file.path, cwd }),
+          onPreview: () => onOpen(file.path, { mode: "preview" }),
+        }, file.path)),
+      }),
+    });
+  }};
+});
 function XPt({ files: e, cwd: t, onOpenFile: n }) {
   const { t: r } = Xe(),
     [s, i] = y.useState(!1),
@@ -196291,7 +197183,7 @@ function iOt({
   renderQuestionDetails: d,
   renderQuestionCard: f,
 }) {
-  const { t: h } = Xe(),
+  const { t: h, i18n } = Xe(),
     {
       scrollRef: p,
       escapedFromLock: m,
@@ -196767,18 +197659,28 @@ function iOt({
           ),
         le &&
           !Z &&
-          l.jsx("div", {
-            className: "message-activity-slot",
-            children: l.jsx(oLt, {
-              message: pe,
-              activity: yMt(
-                pe?.role === "assistant" ? pe.parts : [],
-                e.toolCalls,
-              ),
-              attention: re,
-              stage: ie,
-            }),
-          }),
+          (se && !re && (e.dshJobsAvailable || pe?.dshExecution)
+            ? l.jsx(y.Suspense, { fallback: null, children: l.jsx(EmployeeRunningStatus, {
+                startTime: pe?.startedAt ?? (ae?.role === "user" ? ae.at : void 0),
+                paused: !A,
+                waitingForMember: pe?.parts.some(part => {
+                  const call = part.type === "tool_call" && e.toolCalls[part.toolCallId];
+                  return (call?.name ?? call?.title) === "wait_agent" && (call.status === "in_progress" || call.status === "pending");
+                }),
+                language: i18n.language,
+              }) })
+            : l.jsx("div", {
+                className: "message-activity-slot",
+                children: l.jsx(oLt, {
+                  message: pe,
+                  activity: yMt(
+                    pe?.role === "assistant" ? pe.parts : [],
+                    e.toolCalls,
+                  ),
+                  attention: re,
+                  stage: ie,
+                }),
+              })),
         L && l.jsx(yOt, { view: e, onOpenWorkspaceFile: s }),
         P &&
           l.jsx(VS, {
@@ -196810,14 +197712,18 @@ function iOt({
         L &&
           e.error &&
           !e.errorInTranscript &&
+          !e.messages.at(-1)?.parts?.some(part => part.type === "error" && part.reason === e.error) &&
           l.jsxs(e0, {
             variant: "destructive",
             className: "mr-12",
             children: [
               l.jsx(ke, { icon: ph, size: 16 }),
-              l.jsx(t0, { className: "break-all", children: ni(e.error, h) }),
+              l.jsx(t0, { className: "break-all", children: e.dshStopAccountingPending ? h("session.stopAccountingPending") : ni(e.error, h) }),
             ],
           }),
+        L && et.kind === "electron" && ts()?.transport !== "relay" &&
+          [Se.dshModelOutcomeUnknown, Se.dshModelResponseInterrupted].includes(e.error) &&
+          l.jsx(EmployeeModelReceiptCheck, { sessionId: e.id }, e.id + ":" + e.error),
         e.loading === "newer" &&
           l.jsx("div", {
             className: "chat-history-status flex justify-center",
@@ -197422,7 +198328,8 @@ const bOt = y.memo(function ({
                     parts: E.parts,
                     streaming: c,
                     children: [
-                      l.jsx(SNt, {
+                      l.jsx(E.dshExecution ? EmployeeDSHReply : SNt, {
+                        message: E,
                         sessionId: t,
                         parts: E.parts,
                         toolCalls: O,
@@ -197439,13 +198346,18 @@ const bOt = y.memo(function ({
                         inlineGeneratedImages: g,
                         summariesEnabled: b,
                       }),
+                      !c && E.dshDeliverables?.length > 0 &&
+                        l.jsx(y.Suspense, {
+                          fallback: null,
+                          children: l.jsx(DSHPresentedFiles, { files: E.dshDeliverables, cwd: f, sessionId: t, onOpen: p }),
+                        }),
                       !c && E.files?.length
                         ? l.jsx(XPt, { files: E.files, cwd: f, onOpenFile: h })
                         : null,
                     ],
                   }),
                 }),
-                !c && (E.parts.length > 0 || E.files?.length)
+                !c && (E.parts.length > 0 || E.files?.length || E.interrupted === !0)
                   ? l.jsx(Dpe, {
                       message: E,
                       toolCalls: O,
@@ -265007,6 +265919,8 @@ function vtn(e) {
   return Array.from(e.trim())[0] ?? "?";
 }
 function wtn({
+  nativeBrowser,
+  nativeToolbar,
   state: e,
   url: t,
   addressRef: n,
@@ -265035,7 +265949,10 @@ function wtn({
   toolbarEnd: M,
 }) {
   const { t: I } = Xe(),
-    O = !!(e?.url && e.url !== "about:blank");
+    O = !!(e?.url && e.url !== "about:blank"),
+    placeToolbar = element => nativeBrowser
+      ? nativeToolbar && la.createPortal(element, nativeToolbar)
+      : element;
   return l.jsxs("div", {
     className: "design-browser-chrome",
     onPointerEnter: p,
@@ -265080,9 +265997,10 @@ function wtn({
           onSelectTab: m,
           onCloseTab: g,
         }),
-      l.jsxs("form", {
+      placeToolbar(l.jsxs(nativeBrowser ? "div" : "form", {
+        style: nativeBrowser ? { display: "contents" } : void 0,
         className: "design-browser-nav",
-        onSubmit: (N) => {
+        onSubmit: nativeBrowser ? void 0 : (N) => {
           (N.preventDefault(), o());
         },
         children: [
@@ -265091,7 +266009,7 @@ function wtn({
               className: "browser-workspace-toolbar-start",
               children: T,
             }),
-          l.jsxs("span", {
+          !nativeBrowser && l.jsxs("span", {
             className: "design-browser-nav-group",
             children: [
               l.jsx(O9, {
@@ -265117,7 +266035,7 @@ function wtn({
               }),
             ],
           }),
-          l.jsx(Nr, {
+          !nativeBrowser && l.jsx(Nr, {
             ref: n,
             className: "design-browser-address",
             value: t,
@@ -265134,7 +266052,7 @@ function wtn({
           l.jsxs("span", {
             className: "design-browser-nav-group",
             children: [
-              l.jsx(O9, {
+              !nativeBrowser && l.jsx(O9, {
                 label: I("workspace.browser.external"),
                 disabled: !O,
                 onClick: w,
@@ -265156,6 +266074,7 @@ function wtn({
                     align: "end",
                     className: "w-max min-w-48 whitespace-nowrap",
                     children: [
+                      nativeBrowser && e?.loading && l.jsx(hn, { onClick: () => a("stop"), children: I("workspace.browser.stop") }),
                       l.jsx(hn, {
                         disabled: !O,
                         onClick: C,
@@ -265189,7 +266108,7 @@ function wtn({
           }),
           M,
         ],
-      }),
+      })),
     ],
   });
 }
@@ -265782,6 +266701,10 @@ function ZJ({
   );
 }
 const z1e = 16;
+const EmployeeNativeBrowser = y.lazy(() => {
+  bindChatFramework(y, l, la);
+  return import("../dsh/native-browser/panel.js");
+});
 function dR({
   scope: e,
   active: t,
@@ -265800,7 +266723,8 @@ function dR({
   navigationOnly: m = !1,
   onClosePanel: g,
 }) {
-  const { t: b } = Xe(),
+  const { t: b, i18n: browserLocale } = Xe(),
+    [nativeToolbar, setNativeToolbar] = y.useState(null),
     v = y.useRef(null),
     [w, C] = y.useState(""),
     [S, A] = y.useState(null),
@@ -266161,10 +267085,11 @@ function dR({
   }, [V]);
   const gt = { ...e, tabId: V },
     Fe = !S || S.url === "about:blank",
+    nativeBrowser = !pe && et.kind === "electron" && !!et.browser,
     Qe = l.jsx(ZJ, {
       surface: "browser",
       identity: JSON.stringify([gt, a]),
-      active: t && Q && z?.ok && !pe && et.kind === "electron" && !!et.browser,
+      active: t && Q && z?.ok && nativeBrowser && !Fe && !_,
       className: "workspace-browser-viewport",
       snapshotKey:
         S && S.url !== "about:blank" && !S.error
@@ -266204,7 +267129,7 @@ function dR({
                   }),
               ],
             })
-          : Fe
+          : Fe && !nativeBrowser
             ? l.jsx(Btn, {
                 value: w,
                 onValue: C,
@@ -266213,12 +267138,21 @@ function dR({
                 },
               })
             : null),
-    });
+    }),
+    browserBody = nativeBrowser ? l.jsx(y.Suspense, {
+      fallback: null,
+      children: l.jsx(EmployeeNativeBrowser, {
+        tabId: V, language: browserLocale.language, state: S, addressRef: v,
+        onNavigate: (url) => Ke(url, void 0, !0), onAction: ot, onToolbar: setNativeToolbar,
+        children: !Fe || _ ? Qe : null,
+      }, JSON.stringify([L, V])),
+    }) : Qe;
   return Q
     ? l.jsxs("div", {
         className: "workspace-browser",
         children: [
           l.jsx(wtn, {
+            nativeBrowser, nativeToolbar,
             state: pe ? null : S,
             url: w,
             addressRef: v,
@@ -266256,16 +267190,16 @@ function dR({
               onImport: je,
               onDismiss: Ve,
             }),
-          S?.loading &&
+          !nativeBrowser && S?.loading &&
             l.jsx("div", { className: "workspace-browser-loading" }),
           ue
             ? l.jsxs("div", {
                 className:
                   "design-browser-stage" +
                   (o && (pe || Dtn(S?.url, n?.url)) ? " is-letterbox" : ""),
-                children: [ue, Qe],
+                children: [ue, browserBody],
               })
-            : Qe,
+            : browserBody,
         ],
       })
     : l.jsxs("div", {
@@ -271445,28 +272379,64 @@ function zIe(e) {
     ? { body: e, marp: !1 }
     : { body: e.slice(t[0].length), frontmatter: n, marp: r.marp === !0 };
 }
-function xnn({ scope: e, path: t, content: n, active: r }) {
-  const s = y.useMemo(() => zIe(n), [n]);
-  return s.marp
-    ? r
-      ? l.jsx(vnn, { scope: e, path: t, content: n }, t)
-      : null
-    : l.jsx($Ie, { ...s });
+const DshDocument = y.lazy(async () => {
+  bindChatFramework(y, l, la);
+  const { EmployeeDocument } = await import("../dsh/native-chat/reply.js");
+  return { default: EmployeeDocument };
+});
+function employeeDocumentView({ scope, panelScope, cwd, path, content, eof, kind, heading, position, wrap }) {
+  const { i18n, t } = Xe();
+  function besideDocument(target) {
+    const file = Ru(path, cwd);
+    const directory = file === null ? null : Jet(file);
+    if (dK(target.replaceAll("\\", "/"))) return Ru(target, cwd);
+    if (directory === null) return null;
+    return Ru((directory ? directory + "/" : "") + target, cwd);
+  }
+  const openFile = async (target, position, heading) => {
+    try {
+      const relative = besideDocument(target);
+      if (!relative) throw new Error(t("files.reference.outside"));
+      const result = await gj.resolveCurrent(scope.sessionId, relative, true);
+      if (result.status !== "resolved") throw new Error(t("files.reference." + result.status));
+      const origin = { sessionId: scope.sessionId, cwd };
+      if (result.kind === "directory") ji.getState().openDirectory(panelScope, result.path, origin);
+      else ji.getState().selectFile(panelScope, {
+        source: "workspace", path: result.path, fileRef: result.fileRef, origin, position, heading,
+        mode: position ? "content" : Nnn(result.path),
+      });
+    } catch (error) { ln(error, target); }
+  };
+  const media = {
+    render: (target, name) => {
+      const relative = besideDocument(target);
+      return relative && l.jsx(FS, { variant: "inline", name, source: { kind: "workspace", sessionId: scope.sessionId, path: relative } });
+    },
+    renderRemote: (url, name) => l.jsx(FS, { variant: "inline", deferred: true, name, source: { kind: "remote", url } }),
+  };
+  return l.jsx(fSe.Provider, { value: media, children: l.jsx(DshDocument, {
+    kind, language: i18n.language, content, eof, path, cwd, heading, position, wrap, sessionId: scope.sessionId, openFile,
+    openExternalLink: async href => {
+      try {
+        if (et.kind === "electron" && et.browser && /^https?:\/\//i.test(href)) {
+          const { parseBrowserAddress } = await import("../dsh/native-browser/panel.js");
+          const parsed = parseBrowserAddress(href, window.location.origin);
+          if (!parsed.ok) throw new Error(t("errors.codes.invalid_browser_url"));
+          ji.getState().browse(panelScope, parsed.target.url);
+          ji.getState().showTool(panelScope, "browser");
+        } else await et.openExternal(href);
+      } catch (error) { ln(error, href); }
+    },
+    renderImage: (src, alt) => l.jsx(Avt, { node: { src, alt } }),
+  }) });
 }
-function $Ie({ body: e, frontmatter: t }) {
-  return l.jsxs("div", {
-    className: "workspace-markdown-document",
-    children: [
-      t !== void 0 &&
-        l.jsx("pre", {
-          className: "workspace-markdown-frontmatter select-text",
-          children: t,
-        }),
-      l.jsx(O0, { text: e }),
-    ],
-  });
+function xnn(props) {
+  const doc = y.useMemo(() => zIe(props.content), [props.content]);
+  return doc.marp
+    ? props.active ? l.jsx(vnn, props, props.path) : null
+    : l.jsx(employeeDocumentView, { ...props, kind: "markdown" });
 }
-function vnn({ scope: e, path: t, content: n }) {
+function vnn({ scope: e, panelScope, cwd, path: t, content: n }) {
   const { t: r } = Xe(),
     [s, i] = y.useState();
   return (
@@ -271507,7 +272477,7 @@ function vnn({ scope: e, path: t, content: n }) {
                 role: "alert",
                 children: r("files.loadError"),
               }),
-              l.jsx($Ie, { ...zIe(n) }),
+              l.jsx(employeeDocumentView, { scope: e, panelScope, cwd, path: t, content: n, kind: "markdown" }),
             ],
           })
         : l.jsx(XJ, { scope: e, path: t, content: s.html })
@@ -271639,11 +272609,9 @@ function Snn({
   onDownload: h,
   downloading: p,
   actions: m,
-  compact: g = !1,
 }) {
   const { t: b } = Xe(),
     v = k1(f ?? t, e),
-    w = Ru(v, e) ?? v,
     C = ett(t, e),
     S = C && C.length > 4 ? C.slice(1, -2) : [],
     A = S.length ? [C[0], ...C.slice(-2)] : C,
@@ -271663,30 +272631,7 @@ function Snn({
         className: "workspace-breadcrumb",
         "aria-label": b("workspace.files.location"),
         children: [
-          g
-            ? l.jsxs(ui, {
-                children: [
-                  l.jsx(di, {
-                    render: l.jsx("span", {
-                      className: "workspace-file-title",
-                      tabIndex: 0,
-                    }),
-                    children: l.jsx("span", {
-                      children: r || t.replaceAll("\\", "/").split("/").at(-1),
-                    }),
-                  }),
-                  l.jsx(fi, {
-                    side: "bottom",
-                    align: "start",
-                    className: "workspace-file-path-tooltip",
-                    children: l.jsx("span", {
-                      className: "min-w-0",
-                      children: w,
-                    }),
-                  }),
-                ],
-              })
-            : A
+          A
               ? l.jsx("ol", {
                   children: A.map((E, T) =>
                     l.jsxs(
@@ -271885,15 +272830,16 @@ function Enn({
   hideToolbar: s = !1,
   embedded: i = !1,
   changeFile: o,
+  navigator,
 }) {
-  const { t: a } = Xe(),
+  const { t: a, i18n } = Xe(),
     c = y.useMemo(
       () => (t.origin ? { ...e, sessionId: t.origin.sessionId } : e),
       [e, t.origin],
     );
   n = t.origin?.cwd ?? n;
   const [u, d] = y.useState(null),
-    f = y.useMemo(() => (u?.kind === "html" ? GPt(u.content ?? "") : ""), [u]),
+    f = y.useMemo(() => (u?.kind === "html" && (!i || t.mode === "interactive") ? GPt(u.content ?? "") : ""), [i, t.mode, u]),
     [h, p] = y.useState(null),
     [m, g] = y.useState(!1),
     [b, v] = y.useState(0),
@@ -271912,6 +272858,19 @@ function Enn({
       b,
     ]),
     M = (re) => ji.getState().fileMode(e, re);
+  const readWorkbook = y.useCallback(async (signal, limit) => {
+    const connection = await Qn();
+    const url = await Jn.resourceUrl(connection, { sessionId: c.sessionId, path: t.path, fileRef: t.fileRef }, signal);
+    try {
+      const response = await fetch(url, { signal });
+      if (!response.ok) throw new Error("unavailable");
+      const bytes = await uve(response, limit);
+      if (!bytes) throw new Error("tooLarge");
+      return bytes;
+    } finally {
+      Jn.releaseResource(url);
+    }
+  }, [c.accountId, c.sessionId, t.path, t.fileRef, b]);
   y.useEffect(() => {
     if (!r || E.current === T) return;
     let re = !0;
@@ -271932,6 +272891,7 @@ function Enn({
               t.source === "session"
                 ? { toolCallId: t.toolCallId, messageId: t.messageId }
                 : void 0,
+              {},
             ).catch((ae) => {
               if (t.source === "git")
                 return {
@@ -271964,6 +272924,39 @@ function Enn({
     r,
     b,
   ]);
+  const [pageRequest, requestPage] = y.useState(null);
+  const [failedPage, setFailedPage] = y.useState(null);
+  const nextOffset = E.current === T ? u?.nextOffset : undefined;
+  const pageKey = JSON.stringify([T, nextOffset, u?.version]);
+  const lineTarget = t.mode === "content" || t.mode === "plain" ? t.position?.line : undefined;
+  // A distant line link advances by bounded pages. After one MiB the reader
+  // can explicitly continue, including when the requested line does not exist.
+  const autoThrough = pageRequest?.view === T ? pageRequest.autoThrough : 1 << 20;
+  const loadedLines = u?.lineBreaks + (u?.content?.endsWith("\n") ? 0 : 1);
+  const readingPage = r && nextOffset !== undefined && failedPage?.key !== pageKey &&
+    (pageRequest?.page === pageKey || (lineTarget > loadedLines && nextOffset < autoThrough));
+  const nextPage = () => requestPage({ view: T, page: pageKey, autoThrough: nextOffset + (1 << 20) });
+  y.useEffect(() => {
+    if (!readingPage) return;
+    let active = true;
+    (async () => {
+      try {
+        const client = await Qn();
+        if (!active) return;
+        const page = await Jn.preview(client, { sessionId: c.sessionId, path: t.path, fileRef: t.fileRef },
+          t.source === "session" ? { toolCallId: t.toolCallId, messageId: t.messageId } : undefined,
+          { offset: nextOffset, version: u.version });
+        if (!active) return;
+        if (page.version !== u.version || typeof page.content !== "string" ||
+          (page.nextOffset !== undefined && page.nextOffset <= nextOffset)) throw new Error("workspace_file_changed");
+        d(prior => prior === u ? { ...prior, ...page, content: prior.content + page.content,
+          lineBreaks: prior.lineBreaks + page.lineBreaks, nextOffset: page.nextOffset } : prior);
+      } catch (error) {
+        if (active) setFailedPage({ key: pageKey, changed: error?.message?.includes("workspace_file_changed") });
+      }
+    })();
+    return () => { active = false; };
+  }, [readingPage, pageKey]);
   const I = o ?? (t.source !== "workspace" ? t : void 0),
     O = I === t && t.source === "session" ? u : null,
     [N, R] = y.useState(null),
@@ -272010,7 +273003,10 @@ function Enn({
       }
     );
   }, [r, t.mode, K, O]);
-  const $ = Ann.test(t.path),
+  const sheet = i && /\.(?:xlsx?|csv|tsv)$/i.test(t.path),
+    nativeImage = i && /\.(?:png|jpe?g|gif|webp|bmp|ico|svg)$/i.test(t.path) &&
+      (u?.kind === "image" || (/\.svg$/i.test(t.path) && u?.content !== undefined)),
+    $ = Ann.test(t.path),
     L =
       CQ(t.path) &&
       u &&
@@ -272018,11 +273014,13 @@ function Enn({
         u.kind === "unavailable" &&
         (u.reason === "missing" || u.reason === "not_file")
       ),
-    z = u && (["html", "markdown", "image"].includes(u.kind) || $ || L),
+    z = u && (["html", "markdown", "image"].includes(u.kind) || nativeImage || sheet || $ || L),
     H = !!(I || u?.tool),
     P = [
       ...(z ? ["preview"] : []),
-      ...(u?.content !== void 0 ? ["content"] : []),
+      ...(i && u?.kind === "html" ? ["interactive"] : []),
+      ...(sheet && $ && et.kind === "electron" ? ["print"] : []),
+      ...(u?.content !== void 0 ? (i ? ["content", "plain"] : ["content"]) : []),
       ...(H ? ["changes"] : []),
     ],
     G = P.includes(t.mode) ? t.mode : L ? "preview" : P[0],
@@ -272062,12 +273060,30 @@ function Enn({
             onChange: (re) => M(re),
           })
         : null;
-  return l.jsxs("div", {
-    className: "workspace-file-view",
+  const nativeHeader = i && !s;
+  const content = l.jsxs(nativeHeader ? DshFilePreview : "div", {
+    ...(nativeHeader ? {
+      path: Ru(t.path, n) ?? Owe(t.path),
+      navigator,
+      viewer: { language: i18n.language, kind: sheet ? "spreadsheet" : nativeImage ? "image" : u?.kind, modes: P, mode: G, select: M, label: a,
+        wrap: t.wrap === true, toggleWrap: () => ji.getState().fileMode(e, G, { wrap: !t.wrap }),
+        reload: () => v((count) => count + 1), loading: w,
+      },
+      handoff: l.jsxs(l.Fragment, {
+        children: [
+          l.jsx(sh, {
+            text: k1(E.current === T ? (u?.path ?? t.path) : t.path, n),
+            label: a("files.copyFullPath"), tooltipSide: "bottom",
+            onCopyResult: (ok) => ok ? rn.success(a("files.pathCopied")) : rn.error(a("files.reference.copyFailed")),
+          }),
+          _ && l.jsx(z9, { icon: xK, label: a("files.download"), disabled: S, onClick: Q }),
+          !_ && l.jsx(EmployeeDocumentAction, { scope: c, path: t.path, cwd: n }),
+        ],
+      }),
+    } : { className: "workspace-file-view" }),
     children: [
-      !s &&
+      !s && !i &&
         l.jsx(Snn, {
-          compact: i,
           cwd: n,
           path: t.path,
           copyPath: E.current === T ? (u?.path ?? t.path) : t.path,
@@ -272116,12 +273132,12 @@ function Enn({
           ? l.jsxs("div", {
               className:
                 "file-panel-body" +
-                (G === "preview" &&
+                ((G === "preview" || G === "interactive") &&
                 (u.kind === "html" || u.kind === "markdown" || $)
                   ? " file-panel-page"
                   : G === "preview" && L
                     ? " file-panel-video"
-                    : G === "content" || G === "changes"
+                    : G === "content" || G === "plain" || G === "changes"
                       ? " file-panel-code"
                       : ""),
               "aria-busy": w,
@@ -272129,6 +273145,7 @@ function Enn({
                 G !== "changes" &&
                   u.kind === "unavailable" &&
                   !$ &&
+                  !sheet &&
                   !L &&
                   l.jsx("p", {
                     className: "file-panel-notice",
@@ -272165,12 +273182,13 @@ function Enn({
                           path: t.path,
                           cwd: n,
                         })
-                      : G === "content"
-                        ? l.jsx(kIe, {
-                            content: u.content ?? "",
-                            position: t.position,
-                            path: t.path,
-                          })
+                      : G === "plain" || (G === "content" && /\.txt$/i.test(t.path))
+                        ? l.jsx(DshFileText, { content: u.content ?? "", position: t.position, wrap: t.wrap === true })
+                        : G === "content"
+                          ? l.jsx(employeeDocumentView, {
+                              kind: "code", scope: c, panelScope: e, cwd: n, path: t.path, content: u.content ?? "", eof: !u.nextOffset,
+                              position: t.position, wrap: t.wrap === true,
+                            })
                         : G === "preview" && L && E.current === T
                           ? l.jsx(
                               Cnn,
@@ -272182,6 +273200,16 @@ function Enn({
                               },
                               T,
                             )
+                          : G === "preview" && sheet && E.current === T
+                            ? l.jsx(DshFileSheet, { sessionId: c.sessionId, path: t.path, cwd: n, language: i18n.language, load: readWorkbook })
+                          : G === "preview" && nativeImage && E.current === T
+                            ? l.jsx(DshFileImage, {
+                                imageUrl: u.imageUrl, content: u.content, sessionId: c.sessionId, path: t.path, cwd: n,
+                                language: i18n.language, zoom: t.zoom,
+                                onZoom: zoom => ji.getState().fileMode(e, G, { zoom }),
+                                drag: transfer => transfer.setData(aN, xTe({ sessionId: c.sessionId, path: t.path, name: Owe(t.path) })),
+                                reportFailure: () => rn.error(a("files.loadError")),
+                              }, t.path)
                           : G === "preview" && u.kind === "image"
                             ? l.jsx("img", {
                                 className: "file-panel-image",
@@ -272190,24 +273218,29 @@ function Enn({
                               })
                             : G === "preview" && u.kind === "markdown"
                               ? l.jsx(xnn, {
-                                  scope: c,
+                                  scope: c, panelScope: e, cwd: n, heading: t.heading, eof: !u.nextOffset,
                                   path: _ ? u.path : t.path,
                                   content: u.content ?? "",
                                   active: r,
                                 })
-                              : G === "preview" && $ && r
+                              : (G === "preview" || G === "print") && $ && r
                                 ? l.jsx(knn, {
                                     scope: c,
                                     path: t.path,
                                     fileRef: t.fileRef,
                                   })
-                                : G === "preview" && u.kind === "html" && r
+                                : G === "preview" && i && u.kind === "html" && r
+                                  ? l.jsx(DshFileHtml, { content: u.content ?? "", path: t.path, language: i18n.language })
+                                  : (G === "interactive" || G === "preview") && u.kind === "html" && r
                                     ? l.jsx(XJ, {
                                         scope: c,
                                         path: _ ? u.path : t.path,
                                         content: f,
                                       })
                                     : null,
+                nextOffset !== undefined && ["preview", "content", "plain"].includes(G) &&
+                  l.jsx(DshFilePageAction, { language: i18n.language, busy: readingPage, failed: failedPage?.key === pageKey, changed: failedPage?.changed,
+                    next: nextPage, reload: () => v(count => count + 1) }),
               ],
             })
           : l.jsxs("div", {
@@ -272220,379 +273253,45 @@ function Enn({
             }),
     ],
   });
+  return l.jsx(y.Suspense, {
+    fallback: l.jsx("p", { role: "status", children: a("session.loading") }),
+    children: content,
+  });
 }
-function _nn({
-  nodes: e,
-  outsideNodes: t = [],
-  directories: n,
-  fileScope: r,
-  git: s,
-  query: i,
-  expanded: o,
-  selected: a,
-  sessionId: c,
-  loading: u,
-  error: d,
-  truncated: f,
-  onScope: h,
-  onQuery: p,
-  onToggle: m,
-  onSelect: g,
-  onLoad: b,
-  onRefresh: v,
-  onOpenWorkspace: w,
-}) {
-  const { t: C } = Xe(),
-    S = y.useRef(null),
-    A = y.useRef(null);
-  y.useEffect(() => YM(A.current), []);
-  const [_, E] = y.useState(void 0),
-    T = [],
-    M = (q) => {
-      for (const F of q)
-        (F.kind !== "symlink" && T.push(F.path),
-          o.has(F.path) && M(F.children));
-    };
-  (M(e), M(t));
-  const I = _ && T.includes(_) ? _ : a && T.includes(a) ? a : T[0],
-    O = (q) => C("workspace.fileTree." + q),
-    N = (q, F) => {
-      const W = [...S.current.querySelectorAll('[role="treeitem"]')].filter(
-          ($) => !$.disabled,
-        ),
-        V = W.indexOf(q.currentTarget);
-      let K;
-      if (q.key === "ArrowDown") K = W[V + 1];
-      else if (q.key === "ArrowUp") K = W[V - 1];
-      else if (q.key === "Home") K = W[0];
-      else if (q.key === "End") K = W.at(-1);
-      else if (q.key === "ArrowRight" && F.kind === "directory")
-        o.has(F.path)
-          ? Number(W[V + 1]?.getAttribute("aria-level")) >
-              Number(q.currentTarget.getAttribute("aria-level")) &&
-            (K = W[V + 1])
-          : m(F.path);
-      else if (q.key === "ArrowLeft")
-        o.has(F.path)
-          ? m(F.path)
-          : (K = W.slice(0, V)
-              .reverse()
-              .find(
-                ($) =>
-                  Number($.getAttribute("aria-level")) <
-                  Number(q.currentTarget.getAttribute("aria-level")),
-              ));
-      else return;
-      (q.preventDefault(), K?.focus());
-    },
-    R = (q) => {
-      const F = n[q];
-      return l.jsxs(l.Fragment, {
-        children: [
-          F?.loading &&
-            l.jsxs("span", {
-              className: "files-tree-loading",
-              role: "status",
-              children: [
-                l.jsx(Kn, { className: "size-3" }),
-                C("session.loading"),
-              ],
-            }),
-          F?.error &&
-            l.jsxs(Te, {
-              variant: "ghost",
-              size: "xs",
-              className: "files-tree-more",
-              onClick: () => b(q),
-              children: [
-                C("workspace.files.loadError"),
-                " · ",
-                C("session.retry"),
-              ],
-            }),
-          F?.data?.nextOffset != null &&
-            l.jsx(Te, {
-              variant: "ghost",
-              size: "xs",
-              className: "files-tree-more",
-              disabled: F.loading,
-              onClick: () => b(q, F.data.nextOffset),
-              children: C("workspace.files.more"),
-            }),
-        ],
-      });
-    },
-    B = (q, F = 1) =>
-      q.map((W) => {
-        const V = W.kind === "directory",
-          K = V && o.has(W.path),
-          $ = !V && W.kind !== "symlink" && bTe(W.file?.path ?? W.path);
-        return l.jsxs(
-          "li",
-          {
-            role: "none",
-            children: [
-              l.jsxs(Te, {
-                variant: "ghost",
-                className: "files-tree-row",
-                role: "treeitem",
-                "aria-label": W.name,
-                tabIndex: W.path === I ? 0 : -1,
-                onFocus: () => E(W.path),
-                "aria-level": F,
-                "aria-expanded": V ? K : void 0,
-                "aria-selected": !V && a === W.path,
-                "data-path": W.path,
-                "data-current-branch":
-                  (V && a?.startsWith(W.path + "/")) || void 0,
-                style: { paddingLeft: 8 + (F - 1) * 14 },
-                disabled: W.kind === "symlink",
-                title:
-                  W.kind === "symlink" ? C("workspace.files.symlink") : W.path,
-                draggable: $,
-                onDragStart: (L) => {
-                  $ &&
-                    ((L.dataTransfer.effectAllowed = "copy"),
-                    L.dataTransfer.setData(
-                      aN,
-                      xTe({
-                        sessionId: c,
-                        path: W.file?.path ?? W.path,
-                        name: W.name,
-                      }),
-                    ));
-                },
-                onKeyDown: (L) => N(L, W),
-                onClick: () => (V ? m(W.path) : g(W)),
-                children: [
-                  l.jsx(ke, {
-                    icon: K ? Tc : zs,
-                    size: 11,
-                    className: V ? void 0 : "invisible",
-                    "aria-hidden": "true",
-                  }),
-                  V
-                    ? l.jsx(ke, { icon: Eo, size: 15, "aria-hidden": "true" })
-                    : l.jsx(x9e, { path: W.name }),
-                  l.jsx("span", {
-                    className: "files-tree-name",
-                    children: W.name,
-                  }),
-                  V &&
-                    !K &&
-                    a?.startsWith(W.path + "/") &&
-                    l.jsx("span", {
-                      className: "files-tree-current-dot",
-                      title: C("workspace.fileTree.containsCurrent"),
-                    }),
-                  W.operation &&
-                    l.jsx("span", {
-                      className: "files-tree-operation",
-                      "data-operation": W.operation,
-                      title: C("workspace.changes.operation." + W.operation),
-                      children: C("workspace.changes.operation." + W.operation),
-                    }),
-                  W.staged &&
-                    l.jsx("span", {
-                      title: C("workspace.changes.staged"),
-                      children: "●",
-                    }),
-                ],
-              }),
-              K &&
-                l.jsxs("ul", {
-                  role: "group",
-                  children: [
-                    B(W.children, F + 1),
-                    r === "all" &&
-                      !i &&
-                      l.jsx("li", { role: "none", children: R(W.path) }),
-                  ],
-                }),
-            ],
+function loadDshFilePanel() {
+  bindChatFramework(y, l, la);
+  return import("../dsh/native-files/files.js");
+}
+const DshFilePanel = y.lazy(loadDshFilePanel),
+  DshFileTabs = y.lazy(() => loadDshFilePanel().then((m) => ({ default: m.EmployeeFileTabs }))),
+  DshFilePreview = y.lazy(() => loadDshFilePanel().then((m) => ({ default: m.EmployeePreview }))),
+  DshFileSheet = y.lazy(() => loadDshFilePanel().then((m) => ({ default: m.EmployeeSpreadsheet }))),
+  DshFileImage = y.lazy(() => loadDshFilePanel().then((m) => ({ default: m.EmployeeImage }))),
+  DshFileHtml = y.lazy(() => loadDshFilePanel().then((m) => ({ default: m.EmployeeHtml }))),
+  DshFilePageAction = y.lazy(() => loadDshFilePanel().then(m => ({ default: m.EmployeePageAction }))),
+  DshFileText = y.lazy(() => loadDshFilePanel().then((m) => ({ default: m.EmployeeText })));
+function _nn(props) {
+  const { t, i18n } = Xe();
+  return l.jsx(y.Suspense, {
+    fallback: l.jsx("p", { role: "status", children: t("session.loading") }),
+    children: l.jsx(DshFilePanel, {
+      ...props,
+      label: t,
+      language: (i18n.resolvedLanguage || i18n.language || "").startsWith("en") ? "en" : "zh",
+      reveal: props.onOpenWorkspace && l.jsx(z9, {
+        icon: dnt, label: t("workspace.fileTree.openWorkspace"), onClick: props.onOpenWorkspace,
+      }),
+      dragProps: (entry) => {
+        const path = entry.file?.path ?? entry.path;
+        if (entry.kind !== "file" || !bTe(path)) return {};
+        return {
+          draggable: true, onDragStart: (event) => {
+            event.dataTransfer.effectAllowed = "copy";
+            event.dataTransfer.setData(aN, xTe({ sessionId: props.sessionId, path, name: entry.name }));
           },
-          W.path,
-        );
-      });
-  return l.jsxs(l.Fragment, {
-    children: [
-      l.jsxs("div", {
-        className: "files-tree-header",
-        children: [
-          l.jsxs(Cs, {
-            children: [
-              l.jsxs(Ms, {
-                render: l.jsx(Te, {
-                  variant: "ghost",
-                  size: "xs",
-                  className: "files-tree-scope",
-                  "aria-label": C("workspace.fileTree.scope"),
-                }),
-                children: [
-                  l.jsx("span", { children: O(r) }),
-                  l.jsx(ke, { icon: Tc, size: 12 }),
-                ],
-              }),
-              l.jsx(bs, {
-                align: "start",
-                className: "w-max",
-                children: l.jsx(Ic, {
-                  value: r,
-                  onValueChange: (q) => h(q),
-                  children: ["all", "session", ...(s ? ["git"] : [])].map((q) =>
-                    l.jsx(
-                      Qa,
-                      {
-                        value: q,
-                        closeOnClick: !0,
-                        children: l.jsxs("span", {
-                          className: "files-scope-option",
-                          children: [
-                            l.jsx("span", { children: O(q) }),
-                            l.jsx("small", {
-                              children: C(
-                                "workspace.fileTree.description." + q,
-                              ),
-                            }),
-                          ],
-                        }),
-                      },
-                      q,
-                    ),
-                  ),
-                }),
-              }),
-            ],
-          }),
-          w &&
-            l.jsxs(ui, {
-              children: [
-                l.jsx(di, {
-                  render: l.jsx(Te, {
-                    variant: "ghost",
-                    size: "icon-xs",
-                    "aria-label": C("workspace.fileTree.openWorkspace"),
-                    onClick: w,
-                  }),
-                  children: l.jsx(ke, { icon: Yd, size: 14 }),
-                }),
-                l.jsx(fi, {
-                  side: "bottom",
-                  children: C("workspace.fileTree.openWorkspace"),
-                }),
-              ],
-            }),
-          l.jsx(Te, {
-            variant: "ghost",
-            size: "icon-xs",
-            "aria-label": C("workspace.fileTree.refresh"),
-            disabled: u,
-            onClick: v,
-            children: l.jsx(ke, { icon: wd, size: 14 }),
-          }),
-        ],
-      }),
-      l.jsxs(F0, {
-        "data-search-field": !0,
-        className: "files-tree-search",
-        children: [
-          l.jsx(Du, { children: l.jsx(ke, { icon: Va, size: 14 }) }),
-          l.jsx(Oy, {
-            type: "search",
-            className: "h-full text-xs",
-            value: i,
-            onChange: (q) => p(q.target.value),
-            "aria-label": C("workspace.fileTree.search"),
-            placeholder: C("workspace.fileTree.search"),
-          }),
-        ],
-      }),
-      r !== "all" &&
-        l.jsxs("div", {
-          className: "files-tree-filter",
-          children: [
-            l.jsx("span", { children: C("workspace.fileTree.filtered") }),
-            l.jsx(Te, {
-              variant: "ghost",
-              size: "xs",
-              onClick: () => {
-                (p(""), h("all"));
-              },
-              children: C("workspace.fileTree.viewAll"),
-            }),
-          ],
-        }),
-      l.jsxs("div", {
-        ref: A,
-        className: "files-tree-scroll auto-hide-scrollbar",
-        "aria-busy": u,
-        children: [
-          d &&
-            l.jsxs("div", {
-              className: "workspace-pane-notice",
-              role: "alert",
-              children: [
-                l.jsx("span", { children: C("workspace.files.loadError") }),
-                l.jsx(Te, {
-                  variant: "ghost",
-                  size: "xs",
-                  onClick: v,
-                  children: C("session.retry"),
-                }),
-              ],
-            }),
-          l.jsxs("ul", {
-            ref: S,
-            role: "tree",
-            "aria-label": O(r),
-            children: [
-              B(e),
-              t.length > 0 &&
-                l.jsxs(l.Fragment, {
-                  children: [
-                    l.jsx("li", {
-                      role: "none",
-                      className: "files-tree-section",
-                      children: C("workspace.fileTree.outside"),
-                    }),
-                    B(t),
-                  ],
-                }),
-            ],
-          }),
-          r === "all" && !i && R(""),
-          !e.length &&
-            !t.length &&
-            (u
-              ? l.jsxs("span", {
-                  className: "files-tree-loading",
-                  role: "status",
-                  children: [
-                    l.jsx(Kn, { className: "size-3" }),
-                    C("session.loading"),
-                  ],
-                })
-              : !d &&
-                l.jsx("p", {
-                  className: "files-tree-empty",
-                  children: C(
-                    i
-                      ? "workspace.fileTree.noResults"
-                      : r === "session"
-                        ? "workspace.fileTree.noSessionChanges"
-                        : r === "git"
-                          ? "workspace.fileTree.noGitChanges"
-                          : "workspace.files.empty",
-                  ),
-                })),
-          f &&
-            l.jsx("p", {
-              className: "files-tree-empty",
-              children: C("workspace.fileTree.truncated"),
-            }),
-        ],
-      }),
-    ],
+        };
+      },
+    }),
   });
 }
 const UIe = 320,
@@ -272819,7 +273518,7 @@ function Mnn(e, t, n, r) {
 }
 const Nnn = (e) =>
   CQ(e) ||
-  /\.(html?|md|markdown|svg|png|jpe?g|gif|webp|pdf|docx|pptx|xlsx)$/i.test(e)
+  /\.(html?|md|markdown|svg|png|jpe?g|gif|webp|bmp|ico|pdf|docx|pptx|xlsx?|csv|tsv)$/i.test(e)
     ? "preview"
     : "content";
 function Rnn(e) {
@@ -272827,7 +273526,7 @@ function Rnn(e) {
   return l.jsx(Inn, { ...e }, JSON.stringify([e.scope, t, e.cwd]));
 }
 function Inn({ scope: e, cwd: t, files: n, view: r, active: s }) {
-  const { t: i } = Xe(),
+  const { t: i, i18n } = Xe(),
     o = r.files?.origin ?? r.directoryOrigin,
     a = o?.sessionId ?? e.sessionId;
   t = o?.cwd ?? t;
@@ -272838,7 +273537,7 @@ function Inn({ scope: e, cwd: t, files: n, view: r, active: s }) {
     g = y.useRef(null),
     b = y.useRef(null),
     v = y.useId(),
-    w = r.treeOpen ?? !p,
+    w = !r.files || (r.treeOpen ?? false),
     C = u.trim(),
     S = y.useMemo(
       () => (a === e.sessionId ? JSON.stringify(n) : ""),
@@ -272984,7 +273683,20 @@ function Inn({ scope: e, cwd: t, files: n, view: r, active: s }) {
       ? A.search.query !== C || (!A.search.data && !A.search.error)
       : A.changesLoading || Object.values(A.directories).some((L) => L.loading),
     $ = V ? !!A.search.error : c === "git" && A.changesError;
-  return l.jsxs("div", {
+  const tabItems = (r.fileTabs ?? []).map(file => ({
+    id: dshFileTabKey(file, e.sessionId, t), file,
+    path: xw(file.path, file.origin?.cwd ?? t), title: file.label || Owe(file.path),
+  }));
+  const filesState = ji.getState();
+  return l.jsxs("div", { className: "dsh-files-surface", children: [
+    tabItems.length > 0 && l.jsx(y.Suspense, { fallback: null, children: l.jsx(DshFileTabs, {
+      items: tabItems, active: r.files ? dshFileTabKey(r.files, e.sessionId, t) : undefined,
+      language: i18n.language, directoryLabel: i("workspace.fileTree.all"),
+      onBrowse: () => filesState.fileList(e),
+      onSelect: id => filesState.focusFileTab(e, tabItems.find(tab => tab.id === id).file),
+      onClose: id => filesState.closeFileTab(e, tabItems.find(tab => tab.id === id).file),
+    }) }),
+    l.jsxs("div", {
     ref: g,
     className: "files-workspace",
     style: {
@@ -272994,29 +273706,17 @@ function Inn({ scope: e, cwd: t, files: n, view: r, active: s }) {
         : {}),
     },
     "data-tree-open": w,
+    "data-directory-page": !r.files,
     "data-narrow": p,
     onKeyDown: (L) => {
       !L.defaultPrevented &&
         L.key === "Escape" &&
-        p &&
+        p && r.files &&
         w &&
         (E(!1), b.current?.focus());
     },
     children: [
-      l.jsx(Te, {
-        ref: b,
-        variant: "ghost",
-        size: "icon-sm",
-        className: "files-tree-toggle",
-        "aria-label": i(
-          w ? "workspace.fileTree.collapse" : "workspace.fileTree.expand",
-        ),
-        "aria-expanded": w,
-        "aria-controls": v,
-        onClick: () => E(!w),
-        children: l.jsx(ke, { icon: ike, size: 16 }),
-      }),
-      p &&
+      p && r.files &&
         w &&
         l.jsx("button", {
           className: "files-tree-scrim",
@@ -273032,6 +273732,7 @@ function Inn({ scope: e, cwd: t, files: n, view: r, active: s }) {
         "aria-label": i("workspace.fileTree.title"),
         children: [
           l.jsx(_nn, {
+            cwd: t,
             nodes: N,
             outsideNodes: R,
             directories: A.directories,
@@ -273062,14 +273763,14 @@ function Inn({ scope: e, cwd: t, files: n, view: r, active: s }) {
               }),
             onSelect: (L) => {
               (L.file && ji.getState().selectFile(e, L.file, c),
-                p && (E(!1), b.current?.focus()));
+                p && E(!1));
             },
             onLoad: (L, z) => {
               A.load(L, z);
             },
             onRefresh: A.refresh,
           }),
-          s &&
+          s && r.files &&
             w &&
             !p &&
             l.jsx(jnn, {
@@ -273079,11 +273780,10 @@ function Inn({ scope: e, cwd: t, files: n, view: r, active: s }) {
             }),
         ],
       }),
-      l.jsx("section", {
+      r.files && l.jsx("section", {
         className: "files-reader",
         "aria-label": i("files.viewMode"),
-        children: r.files
-          ? l.jsx(
+        children: l.jsx(
               Enn,
               {
                 scope: e,
@@ -273092,6 +273792,7 @@ function Inn({ scope: e, cwd: t, files: n, view: r, active: s }) {
                 cwd: t,
                 active: s,
                 embedded: !0,
+                navigator: { open: w, onOpen: E, buttonRef: b, language: i18n.language, sessionId: a, cwd: t },
               },
               JSON.stringify([
                 r.files.origin,
@@ -273101,25 +273802,11 @@ function Inn({ scope: e, cwd: t, files: n, view: r, active: s }) {
                 r.files.toolCallId,
                 r.files.messageId,
               ]),
-            )
-          : l.jsxs(l.Fragment, {
-              children: [
-                l.jsx("div", {
-                  className: "files-reader-empty-header",
-                  children: i("workspace.tabs.files"),
-                }),
-                l.jsxs("div", {
-                  className: "file-panel-empty",
-                  children: [
-                    l.jsx(ke, { icon: Nc, size: 26 }),
-                    l.jsx("p", { children: i("workspace.fileTree.select") }),
-                  ],
-                }),
-              ],
-            }),
+            ),
       }),
     ],
-  });
+  }),
+  ] });
 }
 let cA = null;
 const BV = new Set();
@@ -274585,6 +275272,22 @@ function trn() {
   y.useLayoutEffect(() => {
     h && Q.restore(!!h.design);
   }, [n, Q.restore, !!h, !!h?.design]);
+  y.useEffect(() => {
+    if (ts()?.transport === "relay") return;
+    let current = true;
+    const unsubscribe = window.aibertai?.onPrivateCanvasChanged?.((id) => {
+      if (id !== n || Jt.getState().views[id]?.design) return;
+      // The local host also emits this event for file-only image generation.
+      // Read the persisted design before showing a canvas for this session.
+      Jt.getState().reloadDesign(id)?.then((discovered) => {
+        if (current && discovered) Q.showTool("canvas");
+      });
+    });
+    return () => {
+      current = false;
+      unsubscribe?.();
+    };
+  }, [n, o, Q.showTool]);
   const qe = y.useCallback((Me) => {
     const { text: It, files: Gt } = Nve(Me);
     re.current?.insertMessage(It, Gt);
@@ -274854,6 +275557,9 @@ function trn() {
     Xt = Q9e(h),
     An =
       at &&
+      h.status !== "error" &&
+      (h.status === "running" || h.queue?.submittingId || !!h.question) &&
+      !h.design?.templateRef &&
       kOt(h, {
         submitting: !!h.queue?.submittingId,
         styleChosen: !!le,
@@ -274880,7 +275586,9 @@ function trn() {
             ? Rve(h.submission)
               ? "uploading"
               : "submitting"
-            : h.status === "error"
+            : h.dshStopAccountingPending
+              ? "interrupted"
+              : h.status === "error"
               ? "error"
               : Oe
                 ? "running"
@@ -274970,7 +275678,10 @@ function trn() {
           })
         : "",
     pt = async () => {
-      (await z(h.id))?.skipped && rn.info(e("session.compaction.skipped"));
+      const result = await z(h.id);
+      if (result?.skipped) rn.info(e("session.compaction.skipped"));
+      else if (result?.status === "cancelled") rn.info(e("session.compaction.cancelled"));
+      else if (result?.status === "completed") rn.success(result.text || e("session.compaction.manual"));
     },
     ut = async (Me, It) => {
       h.design && (await zn.getState().syncSelection(h.id));
@@ -275022,7 +275733,7 @@ function trn() {
     _e =
       !Oe && xn > 0
         ? l.jsx(bMt, { count: xn, onClick: () => M(!0) })
-        : h.plan.length > 0
+        : !h.dshJobsAvailable && h.plan.length > 0
           ? l.jsx(pMt, { plan: h.plan, running: Oe, activity: In })
           : (In === "running" && q_e(h)) ||
               (h.newerCursor === null && h.queue?.inputStage)
@@ -275145,6 +275856,8 @@ function trn() {
                         },
                       }),
                     l.jsx(iTt, { expertId: h.expertId }, `${o}:${h.id}`),
+                    h.dshJobsAvailable && h.plan.length > 0 && l.jsx(y.Suspense, {fallback: null, children:
+                      l.jsx(EmployeeTodoPanel, {todos: h.plan, language: t.language, terminal: h.status === "error" || h.status === "interrupted" || (!Oe && !h.ask && !h.question && !h.compacting && h.goal?.status !== "active")}, h.id)}),
                     l.jsx(HX, {
                       ref: re,
                       appearance: h.design ? "canvas" : "default",
@@ -275250,14 +275963,14 @@ function trn() {
                           h.goal?.is_current &&
                           h.goal.status === "active" &&
                           h.goal.current_execution_id &&
-                          h.goal.current_execution_id === h.executionId
+                          (!h.executionId || h.goal.current_execution_id === h.executionId)
                         ),
                         goal: h.goal,
                         onAction: (Me, It) =>
                           Jt.getState().goalAction(h.id, Me, It),
                       },
                       inputHistory: dZe(h),
-                      running: Oe,
+                      running: Oe || !!h.compacting,
                       activity: In,
                       activitySlot: _e,
                       disabled: !w || mn || !!h.pendingExpertSwitch,
@@ -275324,7 +276037,9 @@ function trn() {
                         }
                       },
                       onCancel: () => F(h.id),
-                      stopDisabled: !g,
+                      dshControls: !!h.dshJobsAvailable,
+                      stopExecutionId: h.executionId,
+                      stopDisabled: !g || (h.goal?.status === "paused" && !!h.goal.current_execution_id),
                       onCompact: pt,
                       skillCommands: C,
                       onPrepareSkill: J,
@@ -275334,6 +276049,7 @@ function trn() {
                         l.jsx(
                           y_e,
                           {
+                            session: h,
                             sessionId: h.id,
                             expertId: h.expertId,
                             configurationRevision: h.configurationRevision,
@@ -275346,16 +276062,9 @@ function trn() {
                           },
                           h.id,
                         ),
-                      expertControl: l.jsx(b_e, {
-                        sessionId: h.id,
-                        expertId: h.expertId,
-                        configurationRevision: h.configurationRevision,
-                        disabled: Ue,
-                        onSelect: bn,
-                        onManage: s.show,
-                      }),
-                      modelControl: l.jsx(
-                        E_e,
+                      modelControl: l.jsxs(l.Fragment, { children: [
+                        l.jsx(ContextMeter, { context: h.context }, h.id + "-context"),
+                        l.jsx(E_e,
                         {
                           models: H,
                           media: {
@@ -275364,15 +276073,20 @@ function trn() {
                           },
                           modelId: h.model,
                           thinking: h.thinking,
+                          teamMode: employeeTeamCapability && !h.parent && ts()?.transport !== "relay" ? {
+                            sessionId: h.id, expertId: h.expertId,
+                            agentTeamEnabled: h.agentTeamEnabled, agentTeamAvailable: h.agentTeamAvailable,
+                            locked: Ue || h.goal?.status === "active",
+                            hasModelHistory: h.messages.some(message => message.role === "assistant" || message.role === "user") || h.olderCursor != null,
+                          } : undefined,
                           disabled: !w,
                           viewOnly: Oe || h.configuring,
                           context: h.context,
                           onCompact: pt,
                           onModelChange: (Me, It) => $(h.id, Me, It),
                           onThinkingChange: (Me) => L(h.id, Me),
-                        },
-                        h.id,
-                      ),
+                        }, h.id),
+                      ] }),
                     }),
                   ],
                 }),
@@ -275391,6 +276105,11 @@ function trn() {
     }),
     Ct = l.jsx(phe, {
       session: h,
+      expertControl: l.jsx(b_e, {
+        standardMode: h.dshJobsAvailable, inHeader: true, sessionId: h.id, expertId: h.expertId,
+        configurationRevision: h.configurationRevision, disabled: Ue,
+        onSelect: bn, onManage: s.show,
+      }, h.id),
       awaitingInput: An,
       projectName: p?.name ?? (h.projectId ? e("projects.title") : void 0),
       tools: je,

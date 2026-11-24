@@ -21,6 +21,7 @@ import (
 )
 
 type relaySessionHost struct {
+	interactions         *desktopDSHInteractions
 	access               *relayAccess
 	local                *desktopRuntimeAccess
 	profile, sessionID   string
@@ -263,12 +264,20 @@ func (h *relaySessionHost) history(w http.ResponseWriter, r *http.Request, auth 
 	if req.Params.SessionID != h.sessionID {
 		if h.live != nil {
 			if session, err := h.live.load(req.Params.SessionID); err == nil {
-				page, err := session.historyWindow(req.Params, &auth)
+				query := req.Params
+				if query.PageFragments && query.PageOffset == nil {
+					query, err = fitRelayDSHHistoryQuery(session, query, &auth)
+					if err != nil {
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+				}
+				page, err := session.historyWindow(query, &auth)
 				if err != nil {
 					w.WriteHeader(http.StatusBadRequest)
 					return
 				}
-				writeRelayResult(w, auth, page)
+				writeRelayHistoryResult(w, auth, page, query)
 				return
 			}
 		}
@@ -294,7 +303,7 @@ func (h *relaySessionHost) history(w http.ResponseWriter, r *http.Request, auth 
 	if h.shareDesktopSessions {
 		decorateLegacyAttachments(&page, archive, req.Params.SessionID, &auth)
 	}
-	writeRelayResult(w, auth, page)
+	writeRelayHistoryResult(w, auth, page, req.Params)
 }
 
 func (h *relaySessionHost) tool(w http.ResponseWriter, r *http.Request) {

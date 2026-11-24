@@ -413,9 +413,24 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 	if err != nil {
 		return err
 	}
+	// New conversations without a project share one visible folder, as in DSH.
+	live.workspaces.shared = dshDefaultWorkspaceDirectory()
+	// Like DSH's first-use workspace, it is listed as the 默认工作区 project.
+	if project, err := live.workspaces.seedDefaultProject(); err != nil {
+		fmt.Fprintf(os.Stderr, "default workspace project unavailable: %v\n", err)
+	} else if project != "" {
+		if err := live.fileSharedDefaultSessions(project); err != nil {
+			fmt.Fprintf(os.Stderr, "default workspace sessions not filed: %v\n", err)
+		}
+	}
 	live.client, live.source, live.key, live.protocol = c, source, key.Value, model.Protocol
 	live.modelBudget = model.inputBudget()
 	live.modelLocked = modelLocked
+	if err := configureInstalledDSH(live, profile, serverID, device.machine); err != nil {
+		live.store.Close()
+		live.workspaces.root.Close()
+		return err
+	}
 	defer live.store.Close()
 	defer live.workspaces.root.Close()
 	attachments, err := openDesktopAttachments(profile)
@@ -433,6 +448,14 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 			protocol: "monkeyai.token." + init.Token, serverID: serverID, reportMachine: ready.MachineID,
 			userID: init.UserID, installedMachine: init.MachineID, clientVersion: init.ClientVersion, attachments: attachments},
 		live: live, designBridge: designBridge, goals: newGoalRuntime()}
+	if live.dsh != nil {
+		host.interactions = newDesktopDSHInteractions()
+		defer func() {
+			shutdown, stop := context.WithTimeout(context.Background(), 10*time.Second)
+			defer stop()
+			_ = live.dsh.LeasePool.close(shutdown)
+		}()
+	}
 	host.terminals, err = newDesktopTerminals()
 	if err != nil {
 		return err
@@ -462,7 +485,11 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 		<-lifetime.Done()
 		_ = server.Close()
 	}()
-	if err := sendEvent(map[string]any{"event": "ready", "port": listener.Addr().(*net.TCPAddr).Port, "version": version}); err != nil {
+	readyEvent := map[string]any{"event": "ready", "port": listener.Addr().(*net.TCPAddr).Port, "version": version}
+	if live.dsh != nil {
+		readyEvent["dshResources"] = live.dsh.VerifiedResourceRoot
+	}
+	if err := sendEvent(readyEvent); err != nil {
 		return err
 	}
 	remoteDone := make(chan struct{})

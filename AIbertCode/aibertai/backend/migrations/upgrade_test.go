@@ -81,7 +81,7 @@ func TestUpgradeFrom14(t *testing.T) {
 		"21/u video_output_metadata_optional", "22/u video_poll_retry_limit", "23/u video_seedance_provider", "24/u remote_runtime", "25/u remote_runtime_access_version",
 		"26/u endpoint_platform_text", "31/u session_client_runtime_add",
 		"35/u billing_activity_lock_retry", "36/u user_profile_add", "37/u oauth_pairing", "38/u embedding_model", "39/u create_kb_tables", "40/u cloud_environments", "41/u kb_permissions",
-		"42/u mcp_live_tools", "43/u mcp_network_settings", "44/u connector_skip_tls_verify", "45/u environment_soft_delete",
+		"42/u mcp_live_tools", "43/u mcp_network_settings", "44/u connector_skip_tls_verify", "45/u environment_soft_delete", "53/u expert_dsh_plugins",
 	} {
 		index := strings.Index(output, migration)
 		if index <= last {
@@ -102,7 +102,7 @@ func TestUpgradeFrom14(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != latest || latest != 45 || dirty {
+	if version != latest || dirty {
 		t.Fatalf("迁移状态错误: version=%d, dirty=%v", version, dirty)
 	}
 	var balance, frozen, description, origin, nameI18n string
@@ -131,6 +131,8 @@ func TestUpgradeFrom14(t *testing.T) {
 			AND table_name IN ('skills', 'rules', 'connectors', 'experts') AND column_name = 'origin')
 		AND (SELECT count(*) = 2 FROM information_schema.columns WHERE table_schema = current_schema()
 			AND table_name IN ('models', 'connectors') AND column_name = 'proxy_id')
+		AND (SELECT count(*) = 2 FROM information_schema.columns WHERE table_schema = current_schema()
+			AND table_name = 'experts' AND column_name IN ('dsh_plugins', 'canvas_tools') AND is_nullable='YES')
 		AND (SELECT count(*) = 4 FROM information_schema.columns WHERE table_schema = current_schema()
 			AND table_name = 'session_turns' AND column_name IN ('input_text', 'input_text_truncated', 'title', 'title_source'))`).Scan(&valid)
 	if err != nil || !valid {

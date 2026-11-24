@@ -1,0 +1,1 @@
+import{__commonJS as e}from"./chunk-UKD4RNVD.js";import{framework as m}from"../chat-framework.mjs";var t=e({"framework:react"(o,r){r.exports=m.react}});import{framework as a}from"../chat-framework.mjs";var f=e({"framework:react/jsx-runtime"(o,r){r.exports=a.jsx}});export{f as require_jsx_runtime,t as require_react};

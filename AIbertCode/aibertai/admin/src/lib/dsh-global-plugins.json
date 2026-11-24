@@ -1,0 +1,695 @@
+{
+  "version": "0.2.2-rc.4",
+  "source": "3f321d32bfe382212a8ed8785c1d47a5a300aa23",
+  "patch": "9739f29e682dfb9eb1789f4c9ece7bb2a7c7f98ec77d2ae01f9bc6326db6a15d",
+  "plugins": [
+    {
+      "id": "include",
+      "state": "default",
+      "description": "Include files in cordis configurations"
+    },
+    {
+      "id": "plugin-manager",
+      "state": "conditional",
+      "zh": "插件管理服务",
+      "detail": "管理当前运行配置中的插件与插件包，支持安装、移除和启停。",
+      "en": "plugin-manager",
+      "description": "Current-profile plugin and bundle management shared by dsh CLI, Web and agent tools",
+      "sessionTools": [
+        "tool-plugin-manager"
+      ]
+    },
+    {
+      "id": "timer",
+      "state": "default",
+      "zh": "计时服务",
+      "detail": "为其他插件提供延时和周期执行能力。",
+      "en": "timer",
+      "description": "Timer service for cordis"
+    },
+    {
+      "id": "hmr",
+      "state": "hostDisabled",
+      "zh": "插件热重载",
+      "detail": "在应用运行期间重新加载插件代码和配置。",
+      "en": "hmr",
+      "description": "Coordinated module and profile configuration hot reload"
+    },
+    {
+      "id": "llm",
+      "state": "default",
+      "zh": "模型调用服务",
+      "detail": "为不同模型提供统一的调用接口。",
+      "en": "llm",
+      "description": "Provider-neutral LLM service interface for the DeepSeek Harness"
+    },
+    {
+      "id": "deepseek-llm-api-extensions",
+      "state": "default",
+      "zh": "DeepSeek API 扩展",
+      "detail": "允许其他插件向 DeepSeek 模型请求添加扩展字段。",
+      "en": "deepseek-llm-api-extensions",
+      "description": "Additive request-field registry for the official DeepSeek LLM API adapter"
+    },
+    {
+      "id": "session",
+      "state": "default",
+      "zh": "会话记录",
+      "detail": "记录会话中的消息、工具调用和运行事件。",
+      "en": "session",
+      "description": "Event-sourced session store for the DeepSeek Harness"
+    },
+    {
+      "id": "session-log-deepseek",
+      "state": "default",
+      "zh": "DeepSeek 会话日志上传",
+      "detail": "启用后，随官方模型 API 请求向 DeepSeek 上传会话日志。",
+      "en": "session-log-deepseek",
+      "description": "Incremental lossless session-log request extension for the official DeepSeek LLM API"
+    },
+    {
+      "id": "typert",
+      "state": "default",
+      "zh": "Typert 类型注册表",
+      "detail": "为插件提供运行时类型信息和远程调用定义。",
+      "en": "typert-registry",
+      "description": "Runtime registry for generated package reflection and Zod schemas"
+    },
+    {
+      "id": "typert-loader",
+      "state": "default",
+      "zh": "Typert 类型加载",
+      "detail": "加载插件生成的类型信息，供运行时查询和调用。",
+      "en": "typert-loader",
+      "description": "Loader integration for generated Typert package contributions"
+    },
+    {
+      "id": "typert-gateway",
+      "state": "default",
+      "zh": "远程调用网关",
+      "detail": "接收客户端的接口调用，并分发给对应的服务。",
+      "en": "api-gateway",
+      "description": "Typert Remote Host dispatcher and Client API endpoint"
+    },
+    {
+      "id": "remote-access",
+      "state": "default",
+      "zh": "远程访问控制",
+      "detail": "为非所有者连接提供方法级远程访问控制和各连接的权限快照。",
+      "en": "Remote access control",
+      "description": "Control which methods non-owner connections can access and retain permission snapshots for each connection."
+    },
+    {
+      "id": "session-title",
+      "state": "default",
+      "zh": "会话标题服务",
+      "detail": "保存和读取会话标题，并管理标题生成方式。",
+      "en": "session-title",
+      "description": "Log-backed session title service and provider registry for the DeepSeek Harness"
+    },
+    {
+      "id": "session-title-llm",
+      "state": "disabled",
+      "zh": "首条消息生成标题",
+      "detail": "根据会话中的首条消息，使用模型生成标题。",
+      "en": "session-title-first-prompt-llm",
+      "description": "First-message LLM provider plugin for DeepSeek Harness session titles"
+    },
+    {
+      "id": "user-questions",
+      "state": "default",
+      "zh": "用户提问服务",
+      "detail": "让运行中的 AI 向用户提问并等待回答。",
+      "en": "user-questions",
+      "description": "Abstract user-questions seam (ctx.userQuestions) for asking the human during agent runs"
+    },
+    {
+      "id": "agent",
+      "state": "default",
+      "zh": "智能体管理",
+      "detail": "管理智能体实例及其运行上下文和事件。",
+      "en": "agent",
+      "description": "Agent interface, registry, initiator scope, and event vocabulary for the DeepSeek Harness"
+    },
+    {
+      "id": "plugin-package-inventory-deepseek",
+      "state": "default",
+      "zh": "DeepSeek 插件清单上报",
+      "detail": "随官方模型 API 请求发送当前活跃插件包的清单。",
+      "en": "plugin-package-inventory-deepseek",
+      "description": "Active Loader-backed plugin package inventory for official DeepSeek LLM API requests"
+    },
+    {
+      "id": "agent-default-model",
+      "state": "default",
+      "zh": "默认模型",
+      "detail": "为新建智能体提供默认模型选择。",
+      "en": "agent-default-model",
+      "description": "Default model selection shared by Agent entry points"
+    },
+    {
+      "id": "jobs",
+      "state": "default",
+      "zh": "本地后台任务",
+      "detail": "管理当前进程中的后台任务及其运行状态。",
+      "en": "jobs-local",
+      "description": "Process-local implementation of the DeepSeek Harness background job registry seam"
+    },
+    {
+      "id": "llm-retry",
+      "state": "default",
+      "zh": "模型请求重试",
+      "detail": "按模型提供方的策略重试失败的请求。",
+      "en": "llm-retry",
+      "description": "Provider-routed LLM request retry policy for the DeepSeek Harness"
+    },
+    {
+      "id": "config-editor",
+      "state": "conditional",
+      "zh": "插件配置编辑",
+      "detail": "保存插件配置，并将变更应用到当前运行配置。",
+      "en": "config-editor",
+      "description": "Persist plugin configuration through profile patches and Loader reconciliation"
+    },
+    {
+      "id": "settings",
+      "state": "conditional",
+      "zh": "设置服务",
+      "detail": "为其他插件提供统一的用户设置接口。",
+      "en": "settings",
+      "description": "Abstract user-settings seam (ctx.settings) for the DeepSeek Harness"
+    },
+    {
+      "id": "authorization",
+      "state": "default",
+      "zh": "授权流程服务",
+      "detail": "组织需要用户参与的登录和凭据授权流程。",
+      "en": "authorization",
+      "description": "Authorization seam (ctx.authorization): plugin-owned flows that obtain a credential through a conversation with the human"
+    },
+    {
+      "id": "deepseek-account",
+      "state": "default",
+      "zh": "DeepSeek 账号",
+      "detail": "通过浏览器完成 DeepSeek 账号登录授权。",
+      "en": "DeepSeek account",
+      "description": "Sign in to DeepSeek and manage account credentials and notifications"
+    },
+    {
+      "id": "credentials",
+      "state": "default",
+      "zh": "本地凭据存储",
+      "detail": "保存 API 密钥等凭据，并按优先级读取环境变量和本地凭据文件。",
+      "en": "credentials-local",
+      "description": "File-backed credentials provider ($DSH_HOME/.env under the live process environment) for the DeepSeek Harness"
+    },
+    {
+      "id": "llm-pi-ai",
+      "state": "default",
+      "zh": "pi-ai 模型适配",
+      "detail": "通过 pi-ai 为 DeepSeek Harness 提供 DeepSeek 模型适配，作为 dsh-llm-deepseek 的设计验证实现。",
+      "en": "llm-pi-ai",
+      "description": "pi-ai-backed DeepSeek adapter for the DeepSeek Harness LLM seam (design-verification twin of dsh-llm-deepseek)"
+    },
+    {
+      "id": "session-persistence-jsonl",
+      "state": "default",
+      "zh": "会话日志持久保存",
+      "detail": "将会话日志保存为本地 JSONL 文件，供后续恢复和读取。",
+      "en": "session-persistence-jsonl",
+      "description": "JSONL durable session persistence backend for the DeepSeek Harness"
+    },
+    {
+      "id": "attachment-local",
+      "state": "default",
+      "zh": "本地附件存储",
+      "detail": "保存会话中的图片等附件，并按内容标识读取。",
+      "en": "attachment-local",
+      "description": "Private content-addressed DSH_HOME attachment storage"
+    },
+    {
+      "id": "session-query-sqlite",
+      "state": "default",
+      "zh": "会话查询与搜索",
+      "detail": "查询会话记录，并在配置启用时提供 SQLite 全文搜索。",
+      "en": "session-query-sqlite",
+      "description": "Concrete ctx.sessionQuery backend with SQLite FTS5 search"
+    },
+    {
+      "id": "working-directory",
+      "state": "default",
+      "zh": "会话工作目录",
+      "detail": "管理会话工作目录，保存目录变更并向模型提供上下文。",
+      "en": "Session working directories",
+      "description": "Manage session working directories, save directory changes, and provide the model with working-directory context."
+    },
+    {
+      "id": "session-projection",
+      "state": "default",
+      "zh": "会话状态汇总",
+      "detail": "从会话日志生成标题、状态等信息，供其他功能读取。",
+      "en": "session-projection",
+      "description": "Session-projection seam: the merge-extensible projection type table, the provider contract, and the ctx.sessionProjections registry serving whole current values of log-derived per-session state"
+    },
+    {
+      "id": "storage",
+      "state": "default",
+      "zh": "数据存储服务",
+      "detail": "统一管理插件使用的存储后端和数据访问方式。",
+      "en": "storage",
+      "description": "Storage hub (ctx.storage): named backend registry plus mounted data-form facilities for the DeepSeek Harness"
+    },
+    {
+      "id": "storage-json",
+      "state": "default",
+      "zh": "JSON 文件存储",
+      "detail": "将键值数据保存为本地 JSON 文件。",
+      "en": "storage-json",
+      "description": "JSON file KV storage backend for the DeepSeek Harness storage hub"
+    },
+    {
+      "id": "storage-domain",
+      "state": "default",
+      "zh": "结构化数据存储",
+      "detail": "按数据结构校验和保存键值数据，并通知其他插件发生了变更。",
+      "en": "storage-domain",
+      "description": "Domain data form (ctx.storage.domain): schema-validated, event-emitting KV domains over storage backends for the DeepSeek Harness"
+    },
+    {
+      "id": "session-projection-cache",
+      "state": "default",
+      "zh": "会话状态缓存",
+      "detail": "缓存从会话日志生成的状态，供会话列表等功能快速读取。",
+      "en": "session-projection-cache",
+      "description": "Persisted projection cache (ctx.sessionProjectionCache): durable per-session checkpoint records on the session_projcache storage domain (per-record layout), throttled write-behind, and the cached listing read"
+    },
+    {
+      "id": "otel",
+      "state": "default",
+      "zh": "OpenTelemetry 上报服务",
+      "detail": "为产品事件和会话日志提供独立的数据上报通道。",
+      "en": "otel",
+      "description": "Cordis service for independent ordinary-event and byte-bounded Session-log OTLP channels"
+    },
+    {
+      "id": "session-telemetry-otel",
+      "state": "hostDisabled",
+      "zh": "反馈会话日志上传",
+      "detail": "按反馈授权策略，通过 OpenTelemetry 上传相关会话日志。",
+      "en": "session-telemetry-otel",
+      "description": "Feedback-authorized Session logs over byte-bounded OpenTelemetry HTTP requests"
+    },
+    {
+      "id": "subprocess",
+      "state": "default",
+      "zh": "本地子进程",
+      "detail": "为其他插件提供本地进程的启动和管理能力。",
+      "en": "subprocess-local",
+      "description": "Local-subprocess implementation of the DeepSeek Harness subprocess seam"
+    },
+    {
+      "id": "sandbox",
+      "state": "default",
+      "zh": "本地进程沙箱",
+      "detail": "按操作系统提供进程隔离，限制命令的访问范围。",
+      "en": "sandbox-local",
+      "description": "Local process-sandbox backends for the DeepSeek Harness sandbox seam: bwrap, the npm-distributed landlock-run launcher, macOS Seatbelt, or the Windows ACL restricted-token runner — functionally probed, fail-closed"
+    },
+    {
+      "id": "sandbox-policy",
+      "state": "default",
+      "zh": "沙箱权限策略",
+      "detail": "根据当前会话的权限模式和工作区，确定每次操作的限制。",
+      "en": "sandbox-policy",
+      "description": "Per-call sandbox policy resolver and current model context: deployment fallbacks plus each session's mode and workspace root, shared by every enforcing capability family"
+    },
+    {
+      "id": "bash-sandbox",
+      "state": "conditional",
+      "zh": "Bash 沙箱执行",
+      "detail": "在当前沙箱权限范围内执行 Bash 命令。",
+      "en": "bash-sandbox",
+      "description": "Sandbox-consuming implementation of the DeepSeek Harness bash executor seam (confines every command via ctx.sandbox, reports denial/enforcement result facts)"
+    },
+    {
+      "id": "pwsh-sandbox",
+      "state": "conditional",
+      "zh": "PowerShell 沙箱执行",
+      "detail": "在当前沙箱权限范围内执行 PowerShell 命令。",
+      "en": "pwsh-sandbox",
+      "description": "Sandbox-consuming implementation of the DeepSeek Harness PowerShell executor seam (confines every command via ctx.sandbox, reports denial/enforcement result facts)"
+    },
+    {
+      "id": "approval",
+      "state": "default",
+      "zh": "用户审批服务",
+      "detail": "向用户请求操作授权，并返回本次审批结果。",
+      "en": "user-approval",
+      "description": "User-approval seam (ctx.approval) for the DeepSeek Harness: one-shot permission decisions dispatched to composed answerers over the approval/request waterfall, fail-closed by default"
+    },
+    {
+      "id": "permission",
+      "state": "default",
+      "zh": "权限模式服务",
+      "detail": "管理用户选择的权限模式，统一对应的沙箱和审批策略。",
+      "en": "permission-presets",
+      "description": "User-facing permission presets (ctx.permissionPresets) for the DeepSeek Harness: one product-level Permissions select bundling the sandbox-mode and approval-policy knobs, written through to their own session events"
+    },
+    {
+      "id": "shell-env",
+      "state": "default",
+      "zh": "命令环境变量",
+      "detail": "为命令执行工具统一提供 DSH 环境变量。",
+      "en": "shell-env",
+      "description": "Tool-independent managed DSH_* shell environment registry"
+    },
+    {
+      "id": "fs-observation-policy",
+      "state": "disabled",
+      "zh": "文件编辑保护",
+      "detail": "要求 AI 编辑前先读取文件，并在文件发生变化时重新确认内容。",
+      "en": "fs-observation-policy",
+      "description": "File-context policy plugin for the DeepSeek Harness — observed-state, read-before-edit, and version-guarded write/edit added over the ctx.fs provider seam through the fs/* event gate (no service API)"
+    },
+    {
+      "id": "skill",
+      "state": "default",
+      "zh": "技能注册服务",
+      "detail": "汇总不同来源的技能，供 AI 查询和使用。",
+      "en": "skill",
+      "description": "Agent skill provider registry for the DeepSeek Harness"
+    },
+    {
+      "id": "commands",
+      "state": "default",
+      "zh": "用户命令服务",
+      "detail": "注册和管理插件提供的用户命令。",
+      "en": "commands",
+      "description": "Plugin-owned human command registry for DeepSeek Harness UIs"
+    },
+    {
+      "id": "command-feedback",
+      "state": "default",
+      "zh": "会话反馈命令",
+      "detail": "通过 /feedback 等入口记录用户对会话的评价。",
+      "en": "command-feedback",
+      "description": "Log-only session feedback: the record event, the sessionFeedback Host Remote, and the human-facing slash command"
+    },
+    {
+      "id": "goal",
+      "state": "default",
+      "zh": "会话目标服务",
+      "detail": "记录会话目标，并管理目标的状态和生命周期。",
+      "en": "goal",
+      "description": "Event-sourced same-session goal state and lifecycle service for the DeepSeek Harness"
+    },
+    {
+      "id": "goal-round-driver",
+      "state": "default",
+      "zh": "目标自动续行",
+      "detail": "在条件和额度允许时，让 AI 继续推进当前会话的目标。",
+      "en": "goal-round-driver",
+      "description": "Race-fenced same-session goal-round driver"
+    },
+    {
+      "id": "token-meter",
+      "state": "default",
+      "zh": "Token 计量",
+      "detail": "估算模型上下文的 Token 用量，供压缩等功能判断预算。",
+      "en": "token-meter",
+      "description": "Replay-aware token measurement service (ctx.tokenMeter) for the DeepSeek Harness"
+    },
+    {
+      "id": "subagent",
+      "state": "default",
+      "zh": "子智能体服务",
+      "detail": "管理子智能体后端，为任务委派提供统一接口。",
+      "en": "subagent",
+      "description": "Abstract subagent seam (ctx.subagents): named-provider registry for delegating to child agents"
+    },
+    {
+      "id": "agent-team",
+      "state": "default",
+      "zh": "团队协作",
+      "detail": "管理子代理树的共享任务看板。",
+      "en": "Team collaboration",
+      "description": "Manage the shared task board for a subagent tree."
+    },
+    {
+      "id": "subagent-spawn-in-process",
+      "state": "default",
+      "zh": "新建子智能体后端",
+      "detail": "在当前进程中新建子智能体，执行独立任务。",
+      "en": "subagent-spawn-in-process",
+      "description": "In-process spawn subagent backend: runs a fresh child agent on ctx.agents"
+    },
+    {
+      "id": "subagent-fork-in-process",
+      "state": "default",
+      "zh": "继承上下文子智能体后端",
+      "detail": "使用父会话的一段历史创建子智能体。",
+      "en": "subagent-fork-in-process",
+      "description": "In-process fork subagent backend: runs a child agent seeded with a prefix of the parent's log"
+    },
+    {
+      "id": "ptc-runtime",
+      "state": "default",
+      "zh": "Node PTC 运行时",
+      "detail": "在沙箱中的 Node 进程里执行用于调用工具的代码。",
+      "en": "ptc-runtime-node",
+      "description": "Node PTC execution with async function, REPL and VM Script evaluators and optional retained state"
+    },
+    {
+      "id": "timeout-policy",
+      "state": "default",
+      "zh": "工具调用超时控制",
+      "detail": "按各工具的时限发出取消信号，并返回超时结果。",
+      "en": "tool-call-timeout-policy",
+      "description": "Tool-call timeout policy: a tools/execute wrapper that arms a per-tool deadline on exec.signal and returns TOOL_TIMEOUT when it wins"
+    },
+    {
+      "id": "spill-local",
+      "state": "default",
+      "zh": "本地长结果存储",
+      "detail": "将过长的工具结果保存到会话专用的本地文件。",
+      "en": "spill-local",
+      "description": "Local-filesystem implementation of the DeepSeek Harness spill storage seam (private session-scoped files)"
+    },
+    {
+      "id": "spill-policy",
+      "state": "default",
+      "zh": "工具结果长度控制",
+      "detail": "限制直接放入上下文的工具结果长度，并保留完整结果的读取路径。",
+      "en": "spill-policy",
+      "description": "Token-budgeted tool-result retention with recoverable text and image paths"
+    },
+    {
+      "id": "session-checkpoint-policy",
+      "state": "default",
+      "zh": "会话检查点",
+      "detail": "在模型请求和可能产生外部影响的工具操作前保存会话记录。",
+      "en": "session-checkpoint-policy",
+      "description": "Semantic session durability checkpoints before model requests and tool side effects"
+    },
+    {
+      "id": "image-offload",
+      "state": "default",
+      "zh": "历史图片卸载",
+      "detail": "将超出模型图片预算的历史图片替换为附件引用，再重试请求。",
+      "en": "compaction-image-offload",
+      "description": "Durable image offload for image-capable routes: replace over-budget request images with placeholders and retry"
+    },
+    {
+      "id": "repeat-tool-reminder",
+      "state": "default",
+      "zh": "重复工具调用提醒",
+      "detail": "在 AI 重复执行相同工具调用时，提示它调整做法。",
+      "en": "repeat-tool-reminder",
+      "description": "Repeat-tool-call guard plugin: advisory reminders when an agent loops on identical tool calls"
+    },
+    {
+      "id": "web",
+      "state": "default",
+      "zh": "网页访问服务",
+      "detail": "统一管理网页搜索和内容获取的服务提供方。",
+      "en": "web",
+      "description": "Abstract web access capability seam (ctx.web) for the DeepSeek Harness — search/fetch provider registry, registration-order-independent selection, request/result vocabulary, and the WebError taxonomy"
+    },
+    {
+      "id": "web-search-deepseek",
+      "state": "default",
+      "zh": "DeepSeek 网页搜索",
+      "detail": "通过 DeepSeek 提供网页搜索结果。",
+      "en": "web-search-deepseek",
+      "description": "DeepSeek-backed search provider (native web_search via the Anthropic-compatible API) for the DeepSeek Harness web capability seam (ctx.web)"
+    },
+    {
+      "id": "web-deepseek-api",
+      "state": "default",
+      "zh": "DeepSeek 网页搜索与抓取 API",
+      "detail": "通过 DeepSeek Search API 搜索网页、Fetch API 抓取网页正文。",
+      "en": "web-deepseek-api",
+      "description": "DeepSeek Search and Fetch API providers for the DeepSeek Harness web capability seam (ctx.web)"
+    },
+    {
+      "id": "web-fetch-http",
+      "state": "default",
+      "zh": "公开网页获取",
+      "detail": "读取无需登录的 HTTP 或 HTTPS 网页内容。",
+      "en": "web-fetch-http",
+      "description": "Anonymous HTTP(S) fetch provider for the DeepSeek Harness web capability seam (ctx.web)"
+    },
+    {
+      "id": "mcp-resources",
+      "state": "default",
+      "zh": "MCP 资源访问",
+      "detail": "让 AI 发现并读取已接入 MCP 服务提供的资源。",
+      "en": "mcp-resources",
+      "description": "Scoped MCP resource discovery and reading through shared model tools"
+    },
+    {
+      "id": "tools",
+      "state": "default",
+      "zh": "工具注册与执行",
+      "detail": "管理可用工具及其调用执行流程。",
+      "en": "tools",
+      "description": "Tool registry and execution pipeline for the DeepSeek Harness"
+    },
+    {
+      "id": "tool-executor-native",
+      "state": "default",
+      "zh": "原生工具执行",
+      "detail": "直接执行模型发起的工具调用。",
+      "en": "Native tool execution",
+      "description": "Executes model tool calls directly."
+    },
+    {
+      "id": "system-prompt",
+      "state": "default",
+      "zh": "系统提示词组装",
+      "detail": "汇总各插件提供的系统提示词内容。",
+      "en": "system-prompt",
+      "description": "System prompt assembly registry for the DeepSeek Harness"
+    },
+    {
+      "id": "agent-loop",
+      "state": "default",
+      "zh": "智能体运行循环",
+      "detail": "协调模型请求、工具调用和后续步骤，推进智能体任务。",
+      "en": "agent-loop",
+      "description": "The concrete agent loop plugin for the DeepSeek Harness"
+    },
+    {
+      "id": "fs-sandbox",
+      "state": "default",
+      "zh": "文件沙箱访问",
+      "detail": "按当前权限模式限制文件写入和编辑范围。",
+      "en": "fs-sandbox",
+      "description": "Sandbox-enforcing implementation of the DeepSeek Harness filesystem seam: fences write/edit by the per-call sandbox mode (read-only denies mutation, workspace-write contains it to the workspace + temp roots) while reads pass through"
+    },
+    {
+      "id": "llm-deepseek",
+      "state": "default",
+      "zh": "DeepSeek API 密钥接入",
+      "detail": "使用 API 密钥连接 DeepSeek 模型服务。",
+      "en": "llm-deepseek-api-key",
+      "description": "DeepSeek api-key provider authentication and discovery"
+    },
+    {
+      "id": "llm-deepseek-account",
+      "state": "default",
+      "zh": "DeepSeek 账号模型接入",
+      "detail": "使用已登录的 DeepSeek 账号连接模型服务。",
+      "en": "llm-deepseek-account",
+      "description": "DeepSeek account provider authentication and discovery"
+    },
+    {
+      "id": "sdk-app-startup",
+      "state": "default",
+      "zh": "SDK 运行配置",
+      "detail": "在 dsh-base 上提供标准输入输出 JSON-RPC 与进程生命周期管理。",
+      "en": "SDK profile",
+      "description": "Provide JSON-RPC over standard input and output and manage the process lifecycle over dsh-base."
+    },
+    {
+      "id": "sdk-jsonrpc-server",
+      "state": "default",
+      "zh": "SDK 服务",
+      "detail": "通过标准输入输出 JSON-RPC 为独立进程中的 SDK 客户端提供服务。",
+      "en": "SDK server",
+      "description": "Serve SDK clients in separate processes through JSON-RPC over standard input and output."
+    },
+    {
+      "id": "office-kit",
+      "state": "default",
+      "zh": "Office 套件",
+      "detail": "为预览和 Office 工具渲染、转换 Word、Excel 和 PowerPoint 文档，并重算工作簿。",
+      "en": "Office kit",
+      "description": "Renders, converts, and recalculates Word, Excel, and PowerPoint documents for previews and the Office tools."
+    },
+    {
+      "id": "workspace-dependencies",
+      "state": "conditional",
+      "zh": "工作区依赖",
+      "detail": "提供内置 Python、Node.js 和 pnpm 的绝对路径。",
+      "en": "Workspace dependencies",
+      "description": "Provide absolute paths to the bundled Python, Node.js, and pnpm runtimes."
+    },
+    {
+      "id": "skill-office",
+      "state": "default",
+      "zh": "Office 技能",
+      "detail": "提供 Word、PowerPoint、Excel 的内置工作流和 LibreOffice Kit 操作。",
+      "en": "Office skills",
+      "description": "Provide built-in Word, PowerPoint, and Excel workflows and LibreOffice Kit operations."
+    },
+    {
+      "id": "connection",
+      "state": "default",
+      "zh": "客户端连接",
+      "detail": "建立已认证的客户端通信，并管理连接生命周期。",
+      "en": "connection",
+      "description": "Authenticated RPC transport and generation lifecycle"
+    },
+    {
+      "id": "file-upload",
+      "state": "default",
+      "zh": "文件上传",
+      "detail": "将浏览器中的文件上传到当前会话，供消息和工具使用。",
+      "en": "file-upload",
+      "description": "Agent-scoped browser file upload, streaming intake, and staged receipt service"
+    },
+    {
+      "id": "workspace",
+      "state": "default",
+      "zh": "工作区管理",
+      "detail": "保存工作区信息，并管理工作区与会话的关联。",
+      "en": "workspace",
+      "description": "Workspace entity registry (ctx.workspaceRegistry): durable workspace records with validated session attachment over the domain data form for the DeepSeek Harness"
+    },
+    {
+      "id": "schedule",
+      "state": "hostDisabled",
+      "zh": "任务调度",
+      "detail": "保存自动化任务，到点后在原会话中执行，并为智能体提供管理任务的工具。",
+      "en": "Task scheduling",
+      "description": "Stores automation tasks, runs each in its original session when it is due, and gives the agent tools to manage them."
+    },
+    {
+      "id": "file-reference-local",
+      "state": "default",
+      "zh": "本地文件引用",
+      "detail": "提供本地文件的搜索和引用能力。",
+      "en": "file-reference-local",
+      "description": "Local-filesystem ctx.fileReferences provider with bounded fuzzy indexes"
+    },
+    {
+      "id": "deliverable-file-references",
+      "state": "default",
+      "zh": "交付文件引用",
+      "detail": "为不同运行端提供文件链接与交付内容的共享模型指引。",
+      "en": "Deliverable file references",
+      "description": "Provide shared model guidance for file links and deliverables across application environments."
+    }
+  ]
+}

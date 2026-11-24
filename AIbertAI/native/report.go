@@ -92,7 +92,16 @@ func (c *client) reportTurn(ctx context.Context, auth authorization, machine, se
 		"usage": map[string]*int64{"input_tokens": usage.Input, "output_tokens": usage.Output},
 	}
 	if len(tools) != 0 {
-		turn["tools"] = tools
+		// Canvas and knowledge are desktop capabilities. Keep their local categories
+		// for receipt verification, and report them as built-ins to the backend.
+		facts := make([]reportedTool, len(tools))
+		for i, tool := range tools {
+			if tool.Category == "canvas" || tool.Category == "knowledge" {
+				tool.Category = "builtin"
+			}
+			facts[i] = tool
+		}
+		turn["tools"] = facts
 	}
 	if permissions != nil {
 		turn["permissions"] = permissions

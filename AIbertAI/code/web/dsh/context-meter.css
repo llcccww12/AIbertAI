@@ -1,0 +1,13 @@
+.dsh-meter-trigger { display: inline-flex; align-items: center; gap: .35rem; font-variant-numeric: tabular-nums; }
+.dsh-meter-trigger::before { content: ""; width: .8rem; height: .8rem; border-radius: 50%; background: conic-gradient(currentColor var(--dsh-filled), var(--border) 0); mask-image: radial-gradient(circle, transparent 42%, black 48%); }
+.dsh-meter-panel { width: min(19rem, calc(100vw - 2rem)); font-variant-numeric: tabular-nums; }
+.dsh-meter-heading, .dsh-meter-row { display: flex; align-items: center; justify-content: space-between; gap: .6rem; }
+.dsh-meter-heading > span, .dsh-meter-row dd { color: var(--foreground); font-size: .8125rem; margin: 0; }
+.dsh-meter-bar { display: flex; height: .4rem; margin-top: .7rem; border-radius: 1rem; background: var(--muted); overflow: hidden; }
+.dsh-meter-segment, .dsh-meter-row dt::before { background: var(--dsh-tint, var(--primary)); }
+[data-context-category="systemTokens"] { --dsh-tint: #aab1bb; }
+[data-context-category="toolsTokens"] { --dsh-tint: #a58aff; }
+[data-context-category="messageTokens"] { --dsh-tint: #518fff; }
+.dsh-meter-rows { display: grid; gap: .4rem; margin: .75rem 0 0; }
+.dsh-meter-row dt { display: flex; align-items: center; gap: .5rem; }
+.dsh-meter-row dt::before { content: ""; width: .48rem; height: .48rem; border-radius: 2px; }

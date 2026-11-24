@@ -1,12 +1,43 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+	"testing/iotest"
 )
+
+func TestResponsesToolStreamKeepsCompletedCallAfterReadTimeout(t *testing.T) {
+	completed := eventStream(`{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":10,"output_tokens":2},"output":[{"type":"function_call","call_id":"call_fixture","name":"canvas_create_html","arguments":"{}","status":"completed"}]}}`)
+	for _, tc := range []struct {
+		name, events string
+		wantErr      error
+	}{
+		{"completion received", completed, nil},
+		{"completion missing", eventStream(`{"type":"response.output_text.delta","delta":"Working"}`), context.DeadlineExceeded},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stream := io.MultiReader(strings.NewReader(tc.events), iotest.ErrReader(context.DeadlineExceeded))
+			usage, message, finish, err := readResponsesToolStream(stream, func(string) error { return nil })
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err=%v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr != nil {
+				if safeDesktopTurnFailure(err) != "backend_request_timeout" || len(message.ToolCalls) != 0 {
+					t.Fatalf("incomplete output was accepted or timeout was hidden: %v", message)
+				}
+				return
+			}
+			if finish != "tool_calls" || len(message.ToolCalls) != 1 || message.ToolCalls[0].ID != "call_fixture" || usage.Output == nil || *usage.Output != 2 {
+				t.Fatalf("lost completed tool call or usage: %s, %v, %v", finish, message, usage)
+			}
+		})
+	}
+}
 
 func TestStreamedToolTurnForBothModelProtocols(t *testing.T) {
 	type protocol struct {

@@ -27,14 +27,26 @@ type attachmentText struct {
 	Truncated bool   `json:"truncated"`
 }
 
+type dshAttachmentExtractionKey struct{}
+
+const dshAttachmentTextLimit = 8 << 20
+
+func attachmentExtractionHeaders(ctx context.Context) (http.Header, int64) {
+	if enabled, _ := ctx.Value(dshAttachmentExtractionKey{}).(bool); enabled {
+		return http.Header{"X-AIBertAI-DSH-Text": []string{"1"}}, 8 * dshAttachmentTextLimit
+	}
+	return nil, 8 * maxAttachmentText
+}
+
 func (c *client) extractVisualAttachment(ctx context.Context, auth authorization, data []byte) (attachmentText, error) {
 	var result attachmentText
-	resp, err := c.request(ctx, http.MethodPost, "/api/v1/attachments/extract", auth.Access, "", "", "application/octet-stream", bytes.NewReader(data))
+	headers, limit := attachmentExtractionHeaders(ctx)
+	resp, err := c.requestWithHeaders(ctx, http.MethodPost, "/api/v1/attachments/extract", auth.Access, "", "", "application/octet-stream", bytes.NewReader(data), headers)
 	if err != nil {
 		return result, err
 	}
 	defer resp.Body.Close()
-	err = json.NewDecoder(io.LimitReader(resp.Body, 8*maxAttachmentText)).Decode(&result)
+	err = json.NewDecoder(io.LimitReader(resp.Body, limit)).Decode(&result)
 	return result, err
 }
 
@@ -51,16 +63,21 @@ func limitAttachmentText(text string, limit int) attachmentText {
 type officeAttachment struct {
 	entries   map[string]*zip.File
 	remaining int64
+	textLimit int
 	text      strings.Builder
 	truncated bool
 }
 
 func extractOfficeAttachment(extension string, data []byte) (attachmentText, error) {
+	return extractOfficeAttachmentWithLimit(extension, data, maxAttachmentText)
+}
+
+func extractOfficeAttachmentWithLimit(extension string, data []byte, textLimit int) (attachmentText, error) {
 	archive, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return attachmentText{}, err
 	}
-	doc := officeAttachment{entries: make(map[string]*zip.File, len(archive.File)), remaining: 8 << 20}
+	doc := officeAttachment{entries: make(map[string]*zip.File, len(archive.File)), remaining: 8 << 20, textLimit: textLimit}
 	for _, entry := range archive.File {
 		if doc.entries[entry.Name] != nil {
 			return attachmentText{}, errors.New("duplicate office archive entry")
@@ -85,7 +102,7 @@ func (d *officeAttachment) append(text string) {
 	if d.truncated || text == "" {
 		return
 	}
-	part := limitAttachmentText(text, maxAttachmentText-d.text.Len())
+	part := limitAttachmentText(text, d.textLimit-d.text.Len())
 	d.text.WriteString(part.Text)
 	d.truncated = part.Truncated
 }

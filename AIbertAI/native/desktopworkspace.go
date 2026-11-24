@@ -24,21 +24,129 @@ type employeeProject struct {
 	Expanded  bool      `json:"expanded"`
 	Sort      string    `json:"sort,omitempty"`
 	CreatedAt time.Time `json:"createdAt,omitzero"`
+	// Default marks the project seeded for the shared default workspace.
+	Default bool `json:"isDefault,omitempty"`
 }
 
 type workspaceState struct {
 	Directories    map[string]string `json:"directories"`
 	Projects       []employeeProject `json:"projects"`
 	LegacyImported bool              `json:"legacyImported,omitempty"`
+	// DefaultProjectSeeded records that 默认工作区 was added once, so a
+	// project the employee removed is not added back.
+	DefaultProjectSeeded bool `json:"defaultProjectSeeded,omitempty"`
 }
 
 type desktopWorkspaces struct {
 	root   *os.Root
 	base   string
 	legacy string
+	// shared is DSH's first-use default workspace: one visible folder that
+	// every new conversation without a project opens (Documents/<app>/
+	// default-workspace). Empty keeps the per-session folders under base.
+	shared string
 	mu     sync.Mutex
 	writes sync.Mutex
 	state  workspaceState
+}
+
+// dshDefaultWorkspaceDirectory mirrors DSH's defaultWorkspaceDirectory
+// (Documents/deepseek-harness/default-workspace) under the AIbert name.
+// AIBERTAI_DEFAULT_WORKSPACE overrides it with a fully qualified directory.
+func dshDefaultWorkspaceDirectory() string {
+	if override := os.Getenv("AIBERTAI_DEFAULT_WORKSPACE"); override != "" {
+		if filepath.IsAbs(override) && filepath.Clean(override) == override {
+			return override
+		}
+		return ""
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || !filepath.IsAbs(home) {
+		return ""
+	}
+	return filepath.Join(home, "Documents", "AIbertAI", "default-workspace")
+}
+
+// sharedDefault creates the shared default workspace on first use and grants
+// it like a folder the employee selected, so every later open goes through
+// the same symlink-checked approvedRoot path. Existing files are kept.
+func (w *desktopWorkspaces) sharedDefault() (string, error) {
+	if w.shared == "" {
+		return "", errProjectFolder
+	}
+	if err := os.MkdirAll(w.shared, 0o755); err != nil {
+		return "", errProjectFolder
+	}
+	resolved, err := filepath.EvalSymlinks(w.shared)
+	if err != nil {
+		return "", errProjectFolder
+	}
+	if info, err := os.Stat(resolved); err != nil || !info.IsDir() {
+		return "", errProjectFolder
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if granted := w.state.Directories[w.shared]; granted == resolved {
+		return w.shared, nil
+	} else if granted != "" {
+		// Like approvedRoot: a replaced symlink is never re-granted silently.
+		return "", errProjectFolder
+	}
+	directories := make(map[string]string, len(w.state.Directories)+1)
+	for path, target := range w.state.Directories {
+		directories[path] = target
+	}
+	directories[w.shared] = resolved
+	if err := w.persist(workspaceState{Directories: directories, Projects: w.state.Projects, LegacyImported: w.state.LegacyImported, DefaultProjectSeeded: w.state.DefaultProjectSeeded}); err != nil {
+		return "", err
+	}
+	return w.shared, nil
+}
+
+// defaultProjectName is the title of the project seeded for the shared
+// default workspace, DSH's 默认工作区.
+const defaultProjectName = "默认工作区"
+
+// seedDefaultProject lists the shared default workspace as a project once, as
+// DSH lists its first-use workspace, and returns the project now standing for
+// that folder ("" once the employee removed it).
+func (w *desktopWorkspaces) seedDefaultProject() (string, error) {
+	if !w.state.DefaultProjectSeeded {
+		if _, err := w.sharedDefault(); err != nil {
+			return "", err
+		}
+		w.mu.Lock()
+		state := w.state
+		if !slices.ContainsFunc(state.Projects, func(row employeeProject) bool { return row.CWD == w.shared }) {
+			id, err := newUUID()
+			if err != nil {
+				w.mu.Unlock()
+				return "", err
+			}
+			state.Projects = append([]employeeProject{{ID: id, Name: defaultProjectName, CWD: w.shared, Expanded: true,
+				CreatedAt: time.Now().UTC(), Default: true}}, state.Projects...)
+		}
+		state.DefaultProjectSeeded = true
+		err := w.persist(state)
+		w.mu.Unlock()
+		if err != nil {
+			return "", err
+		}
+	}
+	return w.defaultProjectID(), nil
+}
+
+// defaultProjectID is the project whose folder is the shared default
+// workspace, if the employee still keeps one.
+func (w *desktopWorkspaces) defaultProjectID() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, row := range w.state.Projects {
+		if w.shared != "" && row.CWD == w.shared {
+			return row.ID
+		}
+	}
+	return ""
 }
 
 func openDesktopWorkspaces(root *os.Root, base, verificationDirectory string) (*desktopWorkspaces, error) {
@@ -113,7 +221,7 @@ func (w *desktopWorkspaces) importLegacyProjects(profile string) error {
 		decoder.Decode(new(any)) != io.EOF || list == nil {
 		return errors.New("legacy_projects_unavailable")
 	}
-	state := workspaceState{Directories: make(map[string]string), Projects: slices.Clone(w.state.Projects), LegacyImported: true}
+	state := workspaceState{Directories: make(map[string]string), Projects: slices.Clone(w.state.Projects), LegacyImported: true, DefaultProjectSeeded: w.state.DefaultProjectSeeded}
 	for path, target := range w.state.Directories {
 		state.Directories[path] = target
 	}
@@ -159,7 +267,7 @@ func (w *desktopWorkspaces) authorizeDirectory(raw json.RawMessage) (any, error)
 		directories[path] = target
 	}
 	directories[p.CWD] = resolved
-	err = w.persist(workspaceState{Directories: directories, Projects: w.state.Projects, LegacyImported: w.state.LegacyImported})
+	err = w.persist(workspaceState{Directories: directories, Projects: w.state.Projects, LegacyImported: w.state.LegacyImported, DefaultProjectSeeded: w.state.DefaultProjectSeeded})
 	return map[string]string{"cwd": p.CWD}, err
 }
 
@@ -329,7 +437,7 @@ func (w *desktopWorkspaces) projects(method string, raw json.RawMessage) (any, e
 		}
 		items = slices.Insert(items, at, row)
 	}
-	err := w.persist(workspaceState{Directories: w.state.Directories, Projects: items, LegacyImported: w.state.LegacyImported})
+	err := w.persist(workspaceState{Directories: w.state.Directories, Projects: items, LegacyImported: w.state.LegacyImported, DefaultProjectSeeded: w.state.DefaultProjectSeeded})
 	if method == "_monkeyai/projects/create" || method == "_monkeyai/projects/update" {
 		return row, err
 	}

@@ -106,6 +106,10 @@ export function AppSidebar({
           url: CONSOLE_ROUTES.tools,
         },
         {
+          title: t("dshGlobal.title"),
+          url: CONSOLE_ROUTES.dshGlobalPlugins,
+        },
+        {
           title: t("pages.rules.title"),
           url: CONSOLE_ROUTES.rules,
         },

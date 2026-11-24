@@ -9175,6 +9175,53 @@ function checkCanvasRevision(revision) {
   const context = canvasCommandContext.getStore();
   if (context?.expectedRevision !== void 0 && context.expectedRevision !== revision) throw RequestError.invalidParams({ reason: "canvas_revision_conflict", revision });
 }
+function checkCanvasDigest(store, input) {
+  const context = canvasCommandContext.getStore();
+  if (context?.expectedCanvasDigest === void 0) return;
+  const root = store.root(input.workspace, input.canvasId);
+  const canvasPath = require$$1$1.join(root, "canvas.json");
+  if (context.expectedContextDigest !== void 0) {
+    const contextPath = require$$1$1.join(root, "design-context.json"), contextStat = node_fs.lstatSync(contextPath);
+    if (contextStat.isSymbolicLink() || !contextStat.isFile() || require$$2.createHash("sha256").update(node_fs.readFileSync(contextPath)).digest("hex") !== context.expectedContextDigest) throw new Error("canvas_context_changed");
+  }
+  const stat = node_fs.lstatSync(canvasPath);
+  if (stat.isSymbolicLink() || !stat.isFile() || node_fs.existsSync(require$$1$1.join(root, "history", "pending.json")) ||
+      require$$2.createHash("sha256").update(node_fs.readFileSync(canvasPath)).digest("hex") !== context.expectedCanvasDigest) {
+    throw RequestError.invalidParams({ reason: "canvas_revision_conflict" });
+  }
+}
+function checkCanvasArtifacts(store, input) {
+  const context = canvasCommandContext.getStore();
+  if (context?.expectedArtifactsDigest === void 0) return;
+  const root = store.root(input.workspace, input.canvasId);
+  const document = store.get(input, true);
+  const entries = [];
+  const artifacts = require$$1$1.join(root, "artifacts");
+  for (const node of document.nodes.filter((item) => item.type === "html")) {
+    if (entries.length >= 512) throw new Error("canvas_artifact_changed");
+    const base = require$$1$1.join(artifacts, node.id);
+    for (const directory of [artifacts, base]) {
+      const stat = node_fs.lstatSync(directory);
+      if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error("canvas_artifact_changed");
+    }
+    let total = 0, indexFound = false;
+    const visit = (directory, prefix) => {
+      for (const name of node_fs.readdirSync(directory)) {
+        const file = require$$1$1.join(directory, name), relative = prefix ? prefix + "/" + name : name;
+        const stat = node_fs.lstatSync(file);
+        if (stat.isSymbolicLink()) throw new Error("canvas_artifact_changed");
+        if (stat.isDirectory()) { visit(file, relative); continue; }
+        if (!stat.isFile() || stat.size > 8 * 1024 * 1024 || entries.length >= 4096 || (total += stat.size) > 128 * 1024 * 1024) throw new Error("canvas_artifact_changed");
+        if (relative === "index.html") indexFound = true;
+        entries.push(`${node.id}/${relative}:${require$$2.createHash("sha256").update(node_fs.readFileSync(file)).digest("hex")}`);
+      }
+    };
+    visit(base, "");
+    if (!indexFound) entries.push(`${node.id}/index.html:missing`);
+  }
+  entries.sort();
+  if (require$$2.createHash("sha256").update(entries.map((entry) => entry + "\0").join("")).digest("hex") !== context.expectedArtifactsDigest) throw new Error("canvas_artifact_changed");
+}
 function committedCanvasRevision(revision) {
   const context = canvasCommandContext.getStore();
   if (context) context.committedRevision = revision;
@@ -18326,7 +18373,8 @@ class CanvasStore {
     if (stat.size > MAX_HTML_ARTIFACT_BYTES) fail$2("canvas_html_too_large");
     return entry;
   }
-  apply(input, value, now = Date.now()) {
+  apply(input, value, now = Date.now(), beforeJournal) {
+    checkCanvasDigest(this, input);
     const current = this.get(input);
     const operation = parseCanvasOperation(value);
     checkCanvasRevision(current.revision ?? 0);
@@ -18338,6 +18386,7 @@ class CanvasStore {
     const before = node_fs.readFileSync(canvasPath, "utf8");
     const after = serialize(next);
     const pending = { schemaVersion: 1, beforeDigest: digest$1(before), afterDigest: digest$1(after), operation, document: next };
+    beforeJournal?.();
     atomicWrite(pendingPath, serialize(pending));
     atomicWrite(canvasPath, after);
     node_fs.rmSync(pendingPath, { force: true });
@@ -20269,6 +20318,11 @@ async function prepareDesignTemplate(cwd, selection, resources, resourceSource =
   const archive = Buffer.from(downloaded.bytes);
   if (archive.length > MAX_DOWNLOAD) throw new Error("模板下载超过大小限制");
   if (downloaded.etag && /^[a-f0-9]{64}$/i.test(downloaded.etag) && downloaded.etag.toLowerCase() !== digest(archive)) throw new Error("模板资源包摘要不一致");
+  // Public cache assets are content-addressed. Some cached HTML templates
+  // contain a local font stylesheet link added after the original manifest.
+  const cachedZip = resourceSource === "public-cache" &&
+    /\/api\/v1\/design-resources\/public-cache\/assets\/([a-f0-9]{64})\.zip$/.exec(detail.downloadUrl ?? "");
+  if (cachedZip && cachedZip[1] !== digest(archive)) throw new Error("模板资源包摘要不一致");
   const entries = readZip(archive, { maxFiles: 5e3, maxBytes: MAX_CONTENTS });
   if (!entries.length) throw new Error("模板资源包为空");
   for (const entry of entries) safePath(entry.name);
@@ -20277,12 +20331,19 @@ async function prepareDesignTemplate(cwd, selection, resources, resourceSource =
   const wrapped = entries.every((entry) => entry.name.startsWith(wrapper));
   const files2 = entries.map((entry) => ({ ...entry, name: safePath(wrapped ? entry.name.slice(wrapper.length) : entry.name) }));
   const folded = /* @__PURE__ */ new Set();
+  const hasLocalFonts = files2.some((file) => file.name === "__catalog_fonts/fonts.css");
   for (const file of files2) {
     const key2 = file.name.normalize("NFC").toLowerCase();
     if (folded.has(key2)) throw new Error("模板资源包含重复文件路径");
     folded.add(key2);
     const expected = declared.get(file.name);
-    if (expected && (normalizeDigest(expected.sha256) !== digest(file.data) || expected.size !== file.data.length)) throw new Error("模板文件摘要不一致");
+    if (expected && (normalizeDigest(expected.sha256) !== digest(file.data) || expected.size !== file.data.length)) {
+      const fontPath = "../".repeat(file.name.split("/").length - 1) + "__catalog_fonts/fonts.css";
+      const fontLink = Buffer.from(`<link rel="stylesheet" href="${fontPath}">\n`);
+      const at = cachedZip && /\.html?$/i.test(file.name) && hasLocalFonts ? file.data.indexOf(fontLink) : -1;
+      const original = at < 0 ? null : Buffer.concat([file.data.subarray(0, at), file.data.subarray(at + fontLink.length)]);
+      if (!original || original.length !== expected.size || digest(original) !== normalizeDigest(expected.sha256)) throw new Error("模板文件摘要不一致");
+    }
   }
   let parent = cwd;
   for (const part of [".ohmyagent", "design", "templates"]) {
@@ -20351,7 +20412,7 @@ async function persistDesignStyleDecision(cwd, design, decision, styleRef, resou
     atomicWrite(contextPath, JSON.stringify(context, null, 2) + "\n");
   }
   const taskPath = require$$1$1.join(dir, "DESIGN_TASK.md");
-  const reference = styleRef && resource ? visualStyleInstruction(dir, styleRef, resource) : "- Visual style reference: none.";
+  const reference = styleRef && resource ? visualStyleInstruction(design.localDesignPath, styleRef, resource) : "- Visual style reference: none.";
   atomicWrite(taskPath, node_fs.readFileSync(taskPath, "utf8").replace(/^- Visual style reference:.*$/m, reference));
 }
 async function persistDesignSystemSelection(cwd, design, designSystemRef, resources, source2 = "respub") {
@@ -20376,14 +20437,23 @@ async function persistDesignSystemSelection(cwd, design, designSystemRef, resour
 function visualStyleInstruction(localDesignPath, ref, resource) {
   return `- Visual style reference: \`${ref.id}\` at \`${ref.version}\`. Read \`${localDesignPath}/${resource.path}/STYLE.md\` before designing and turn it into concrete project rules in \`DESIGN.md\`. This is a binding local visual constraint, not a template reference.`;
 }
+function visualStylePath(ref, resource) {
+  if (ref && resource?.id === ref.id && typeof resource.path === "string" && /^resources\/styles\/[a-z0-9-]+_[a-f0-9]{24}$/.test(resource.path)) {
+    return `${resource.path}/STYLE.md`;
+  }
+}
 function withImageVisualStyle(context, prompt) {
   if (!context.payload.localDesignPath) return prompt;
   const root = require$$1$1.resolve(context.cwd, context.payload.localDesignPath);
   const saved = JSON.parse(node_fs.readFileSync(require$$1$1.join(root, "design-context.json"), "utf8"));
+  const templateDirection = typeof saved.imageTemplateDirection === "string" ? saved.imageTemplateDirection.trim() : "";
+  if (templateDirection && !prompt.includes(templateDirection)) {
+    prompt += `\n\nSelected template visual reference:\n${templateDirection}\nApply its visual style to the requested subject and preserve the requested text.`;
+  }
   if (!saved.styleRef) return prompt;
-  const resource = saved.styleResources;
-  if (!resource || resource.id !== saved.styleRef.id || typeof resource.path !== "string" || !/^resources\/styles\/[a-z0-9-]+_[a-f0-9]{24}$/.test(resource.path)) throw new Error("invalid_image_style_resource");
-  const style = node_fs.readFileSync(require$$1$1.join(root, resource.path, "STYLE.md"), "utf8");
+  const path = visualStylePath(saved.styleRef, saved.styleResources);
+  if (!path) throw new Error("invalid_image_style_resource");
+  const style = node_fs.readFileSync(require$$1$1.join(root, path), "utf8");
   const name = style.match(/^# Selected Visual Style: (.+)$/m)?.[1];
   const direction = style.match(/^- Direction: ([\s\S]*?)\n\n## Usage contract/m)?.[1].trim();
   if (!name || direction === void 0) throw new Error("invalid_image_style_description");
@@ -20423,14 +20493,23 @@ function designSelection(value) {
 const PROVIDER_UNAVAILABLE = { status: "unavailable", message: "OhMyDesign Host API is not available in this client build. Local design files remain usable, but catalog, snapshot, checkpoint, and release operations are disabled." };
 function designState(context) {
   const { payload } = context;
-  let revision = 0;
-  let styleDecision = payload.styleDecision, styleRef = payload.styleRef, designSystemRef = payload.designSystemRef;
+  let revision = 0, templateStyle = false;
+  let styleDecision = payload.styleDecision, styleRef = payload.styleRef, designSystemRef = payload.designSystemRef, stylePath;
   if (payload.localDesignPath) {
     try {
       const saved = JSON.parse(node_fs.readFileSync(require$$1$1.join(context.cwd, payload.localDesignPath, "design-context.json"), "utf8"));
+      const ref = payload.templateRef;
+      const source = saved.templateResources?.path;
+      templateStyle = (payload.designType === "prototype" || payload.designType === "slide_deck") &&
+        !!ref && saved.templateRef?.id === ref.id && saved.templateRef?.digest === ref.digest &&
+        saved.templateRef?.version === ref.version && typeof source === "string" &&
+        /^\.ohmyagent\/design\/templates\/[a-f0-9]{16}-[A-Za-z0-9]+\/source$/.test(source) &&
+        node_fs.lstatSync(require$$1$1.join(context.cwd, source), { throwIfNoEntry: false })?.isDirectory() === true;
       if (Number.isSafeInteger(saved.revision) && Number(saved.revision) >= 0) revision = Number(saved.revision);
       if (saved.styleDecision === "selected" || saved.styleDecision === "skipped") styleDecision = saved.styleDecision;
       if (Object.hasOwn(saved, "styleRef")) styleRef = isRecord$1(saved.styleRef) ? saved.styleRef : null;
+      const path = visualStylePath(styleRef, saved.styleResources);
+      if (path) stylePath = `${payload.localDesignPath}/${path}`;
       if (Object.hasOwn(saved, "designSystemRef")) designSystemRef = isRecord$1(saved.designSystemRef) ? saved.designSystemRef : null;
     } catch {
     }
@@ -20440,8 +20519,10 @@ function designState(context) {
     ...payload.designType ? { designType: payload.designType, designTypeSource: "user" } : {},
     ...payload.initialArtifactType ? { initialArtifactType: payload.initialArtifactType } : {},
     templateRef: payload.templateRef ?? null,
+    ...templateStyle ? { templateStyle } : {},
     designSystemRef: designSystemRef ?? null,
     ...styleRef === void 0 ? {} : { styleRef },
+    ...stylePath ? { stylePath } : {},
     mediaModelId: payload.mediaModelId ?? null,
     ...styleDecision ? { styleDecision } : {},
     phase: "BRIEFING",
@@ -20452,7 +20533,7 @@ function designState(context) {
     provider: PROVIDER_UNAVAILABLE
   };
 }
-async function initializeDesignTask(cwd, sessionId, selection, canvasStore = new CanvasStore(), template, resources, source2 = "respub", resourceTarget) {
+async function initializeDesignTask(cwd, sessionId, selection, canvasStore = new CanvasStore(), template, resources, source2 = "respub", resourceTarget, imageTemplateDirection) {
   const canvasId = require$$2.randomUUID();
   const localDesignPath = `.aibertai/design/${canvasId}`;
   const target = require$$1$1.resolve(cwd, ".aibertai", "design", canvasId);
@@ -20489,6 +20570,7 @@ async function initializeDesignTask(cwd, sessionId, selection, canvasStore = new
     ...state.initialArtifactType ? { initialArtifactType: state.initialArtifactType } : {},
     templateRef: state.templateRef,
     ...template ? { templateResources: template } : {},
+    ...imageTemplateDirection ? { imageTemplateDirection } : {},
     designSystemRef: state.designSystemRef,
     designSystemResources,
     styleRef: state.styleRef ?? null,
@@ -20508,7 +20590,7 @@ async function initializeDesignTask(cwd, sessionId, selection, canvasStore = new
 - Select methods from the actual artifact and editing requirements, not a blanket poster-plus-HTML recipe. First inspect available skill names and descriptions; generic image-design or the ability to generate images does not itself cover the required design specialty. Only in the fallback image route, for a new layered task without a clearly matching method, use SkillSearch with the real artifact type and needs. Load a matching available=true result with Skill, using its exact name. If no suitable method is found or a material gap remains, search the web for skill / SKILL.md sources and read their original bodies; stop expanding the search once a suitable method is found. Product research is not skill research. The creation and revision steps permit public non-workflow method skills without changing the active workflow, its step, permissions or review gates. Do not call them before those steps or repeat already automatically loaded step skills. HTML is conditional on editable text; reference methods are conditional on actual supplied references. Flat output needs no external skill search or adaptation. Read the original skill body and necessary references, then adopt the whole method or borrow useful parts using real tools and schemas. Missing skills, unreadable sources or incompatible tools do not block production or become task errors; continue with native capabilities and record actual sources, adopted methods and delivery-relevant limitations. Do not claim an unperformed lookup found nothing. Do not create or modify skill files, scan the filesystem to bypass availability, execute external scripts, install dependencies, upload private files or change global configuration. Ask only when a mandated skill or a substitution materially changes delivery, editability, style or cost. Reuse confirmed choices for local edits and recovery. Subject confirmation, permissions, cancellation and full preview/review remain mandatory.
 - Resource location anchor: original workspace ${JSON.stringify(require$$1$1.resolve(cwd))}; task directory ${JSON.stringify(target)}. These locations do not change when you enter a worktree. Re-read ${JSON.stringify(require$$1$1.join(target, "design-context.json"))} for current selections. Style and design-system paths in that manifest are relative to this task directory; template paths are relative to the original workspace. Never rebase these references onto the new working directory. Reuse the original resources as references; do not copy or regenerate the package just to switch worktrees.
 - Template reference: ${state.templateRef ? `\`${state.templateRef.id}\` at \`${state.templateRef.version}\`` : "none; this does not prevent the logo workflow from searching the catalog when the user has not specified a direction; do not require a manual template selection"}.
-${state.styleRef && styleResources ? visualStyleInstruction(target, state.styleRef, styleResources) : "- Visual style reference: none."}
+${state.styleRef && styleResources ? visualStyleInstruction(localDesignPath, state.styleRef, styleResources) : "- Visual style reference: none."}
 ${state.designSystemRef && designSystemResources ? designSystemInstruction(target, state.designSystemRef, designSystemResources) : "- Design System reference: none."}
 - For a web prototype, first gather the essential requirements (purpose, audience, core pages and interactions). Ask only questions whose answers would materially affect the result. If no style was selected in task creation, call \`design_await_style_choice\` and wait for it to return in the same turn before creating HTML or generating images. The Host rejects both the first HTML node and the first fill of a user-created empty HTML container until the user selects or skips. For every distinct requested page without an existing selected container, call \`canvas_create_html\` before you start implementing that page, then write and commit that page in its own returned artifact. If the current user message references a selected HTML canvas node and asks to place, generate, or edit the prototype in that container, call \`canvas_get_selection\`; when that selected container is empty, the call waits for the style decision before returning. Then write the page directly into that node's returned \`artifact_path\`, and commit the same node ID whether the HTML container is empty or already contains content; do not copy it, call \`canvas_create_html\`, or create an adjacent node. One canvas HTML node represents exactly one page: never implement multiple pages or client-side routes inside one artifact, and never postpone creating a page node until after its code is written. The Host lays prototype pages out horizontally. Implement all navigation between prototype pages in the delivered page code using normal anchors, forms, or JavaScript navigation. Link to the target page with a real relative artifact path computed from the current \`artifact_path\` to the target \`artifact_path/index.html\` (sibling artifacts are typically \`../TARGET_NODE_ID/index.html\`). Navigation must work as a standalone website in a normal browser; never depend on canvas selection, preview-only attributes, host click interception, or chat state. Honor any visual direction already present in the user request. A design system is optional and never blocks creation; when selected, read and apply its complete local package. Never suggest a template unless explicitly requested.
 - Browser panel visibility is controlled exclusively by the user in the client. Agents have no visibility parameter or panel-control tool. Search and page reading cannot expand or collapse the panel, even when asked to open a website. When the user closes the browser, continue all remaining research in the background without reopening it or asking to reopen it. If the user wants to see the page, tell them they can manually open the browser panel.
@@ -20572,7 +20654,7 @@ class DesignCanvasService {
   async styleChoice(sessionId) {
     const context = await this.sessions.context(sessionId);
     const design = designState(context);
-    return { ...design.designType ? { designType: design.designType } : {}, ...design.designType === "slide_deck" && hasInheritedDeckStyle(context.cwd) ? { inheritedStyle: true } : {}, ...design.styleDecision ? { decision: design.styleDecision } : {}, ...design.styleRef ? { styleRef: design.styleRef } : {} };
+    return { ...design.designType ? { designType: design.designType } : {}, ...design.designType === "slide_deck" && hasInheritedDeckStyle(context.cwd) ? { inheritedStyle: true } : {}, ...design.styleDecision ? { decision: design.styleDecision } : {}, ...design.templateStyle ? { templateStyle: true } : {}, ...design.styleRef ? { styleRef: design.styleRef } : {}, ...design.stylePath ? { stylePath: design.stylePath } : {} };
   }
   cropImage(...args) {
     return this.images.cropImage(...args);
@@ -20682,6 +20764,7 @@ class DesignCanvasService {
     const location = await this.location(sessionId);
     if (input.x === void 0 !== (input.y === void 0) || input.x === void 0 && input.sourceNodeId === void 0 || [input.x, input.y].some((value) => value !== void 0 && !Number.isFinite(value)) || [input.width, input.height].some((value) => value !== void 0 && (!Number.isFinite(value) || value <= 0))) throw RequestError.invalidParams({ reason: "invalid_canvas_text_position" });
     return this.wrap(() => {
+      checkCanvasDigest(this.canvases, location);
       const document = this.canvases.get(location);
       const source2 = input.sourceNodeId === void 0 ? void 0 : document.nodes.find((node2) => node2.id === input.sourceNodeId);
       if (input.sourceNodeId !== void 0 && source2?.type !== "text") throw RequestError.invalidParams({ reason: "invalid_canvas_text_source" });
@@ -20899,9 +20982,13 @@ class DesignCanvasService {
     const design = designState(await this.sessions.context(sessionId));
     return this.wrap(() => {
       const designType = design.designType;
-      const current = this.migrateEmptyHtmlContainers(location, this.canvases.get(location));
+      checkCanvasDigest(this.canvases, location);
+      checkCanvasArtifacts(this.canvases, location);
+      const snapshot = this.canvases.get(location);
+      checkCanvasRevision(snapshot.revision ?? 0);
+      const current = this.migrateEmptyHtmlContainers(location, snapshot);
       const inheritedDeckStyle = (designType === "slide_deck" || input.slideIndex !== void 0) && input.styleSource === "inherited" && hasInheritedDeckStyle(location.workspace);
-      if (!input.userInitiated && (designType === "prototype" || designType === "slide_deck") && !design?.styleDecision && !design?.styleRef && !inheritedDeckStyle && !current.nodes.some((node2) => node2.type === "html" && !node2.empty)) throw new CanvasError(designType === "slide_deck" ? "slide_style_choice_required" : "prototype_style_choice_required");
+      if (!input.userInitiated && (designType === "prototype" || designType === "slide_deck") && !design?.styleDecision && !design?.styleRef && !design?.templateStyle && !inheritedDeckStyle && !current.nodes.some((node2) => node2.type === "html" && !node2.empty)) throw new CanvasError(designType === "slide_deck" ? "slide_style_choice_required" : "prototype_style_choice_required");
       const requestedSlideIndex = input.slideIndex;
       if (requestedSlideIndex !== void 0 && (!Number.isSafeInteger(requestedSlideIndex) || requestedSlideIndex < 1)) throw new Error("invalid_canvas_slide_index");
       const usedSlideIndexes = new Set(current.nodes.flatMap((node2) => node2.type === "html" && node2.slideIndex !== void 0 ? [node2.slideIndex] : []));
@@ -21067,7 +21154,11 @@ class DesignCanvasService {
   async preparePptx(sessionId) {
     const location = await this.location(sessionId);
     return this.wrap(() => {
-      const slides = this.canvases.get(location).nodes.filter((node) => node.type === "html" && node.slideIndex !== void 0 && !node.hidden).sort((a, b) => a.slideIndex - b.slideIndex);
+      checkCanvasDigest(this.canvases, location);
+      checkCanvasArtifacts(this.canvases, location);
+      const current = this.canvases.get(location);
+      checkCanvasRevision(current.revision ?? 0);
+      const slides = current.nodes.filter((node) => node.type === "html" && node.slideIndex !== void 0 && !node.hidden).sort((a, b) => a.slideIndex - b.slideIndex);
       if (!slides.length) throw new CanvasError("not_a_slide_deck");
       if (slides.some((node, index) => node.slideIndex !== index + 1)) throw new CanvasError("invalid_pptx_slide_order");
       if (slides.some((node) => node.draft)) throw new CanvasError("pptx_slide_not_committed");
@@ -21093,11 +21184,15 @@ class DesignCanvasService {
     const location = await this.location(sessionId);
     const design = designState(await this.sessions.context(sessionId));
     return this.wrap(() => {
-      const document = this.migrateEmptyHtmlContainers(location, this.canvases.get(location));
+      checkCanvasDigest(this.canvases, location);
+      checkCanvasArtifacts(this.canvases, location);
+      const snapshot = this.canvases.get(location);
+      checkCanvasRevision(snapshot.revision ?? 0);
+      const document = this.migrateEmptyHtmlContainers(location, snapshot);
       const node = document.nodes.find((candidate) => candidate.id === nodeId);
       if (!node) throw new CanvasError("canvas_node_not_found");
       if (node.type !== "html") throw new CanvasError("canvas_node_type_mismatch");
-      if (node.empty && (design.designType === void 0 || design.designType === "prototype" || design.designType === "slide_deck") && !design.styleDecision && !design.styleRef && !(design.designType === "slide_deck" && hasInheritedDeckStyle(location.workspace))) {
+      if (node.empty && (design.designType === void 0 || design.designType === "prototype" || design.designType === "slide_deck") && !design.styleDecision && !design.styleRef && !design.templateStyle && !(design.designType === "slide_deck" && hasInheritedDeckStyle(location.workspace))) {
         throw new CanvasError(design.designType === "slide_deck" ? "slide_style_choice_required" : "prototype_style_choice_required");
       }
       const entry = this.canvases.commitHtmlArtifact(location, nodeId);
@@ -21129,6 +21224,7 @@ class DesignCanvasService {
         return [];
       }
     });
+    if (operations2.length && canvasCommandContext.getStore()?.expectedCanvasDigest !== void 0) throw new Error("canvas_guard_requires_migration");
     return operations2.length ? this.canvases.apply(location, { type: "node.batch", operations: operations2 }) : document;
   }
   wrap(run) {
@@ -22999,7 +23095,7 @@ const CANVAS_TOOLS = [
     }, required: ["root_id", "action"], additionalProperties: false }
   },
   { name: "canvas_get_selection", description: "读取用户当前选择的节点标识和节点内容；选中收纳组时同时返回组内成员，groupId 表示所属组，分组并未合并正文；精修任务必须先调用。选中的 HTML 节点会额外返回可直接写入的 artifact_path；用户要求往该容器放置或修改网页内容时，无论容器是否为空都复用此节点并提交，不要复制或再创建 HTML 节点。首次填充空网页或演示文稿容器时，本工具会先等待用户选择或跳过设计风格。图片上有画笔、图形或文字时，额外返回 marked_source：这是用户看见的那张图，标注已经画在上面；source 仍是没有标注的原图，不要把标注写回原图。", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
-  { name: "design_await_style_choice", description: "等待用户选择或跳过设计风格；选择完成后在同一轮继续。", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
+  { name: "design_await_style_choice", description: "等待用户选择或跳过设计风格；选择完成后读取返回的工作区相对路径 stylePath，并在同一轮继续。", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
   { name: "canvas_create_html", description: CREATE_HTML_DESCRIPTION + CREATE_SLIDE_DESCRIPTION, inputSchema: { type: "object", properties: { title: { type: "string" }, x: { type: "number" }, y: { type: "number" }, width: { type: "number", exclusiveMinimum: 0 }, height: { type: "number", exclusiveMinimum: 0 }, pass_through: { type: "boolean" }, slide_index: { type: "integer", minimum: 1, description: "演示文稿页序，从 1 开始且唯一。传入后画布按页码横向排页，该画布即可按此页序导出 PPTX；普通网页原型与海报请省略。" }, style_source: { type: "string", enum: ["inherited"], description: "仅用于 edit-existing-deck，表示页面继承源 PPTX 的已验证 DESIGN.md。" } }, additionalProperties: false } },
   { name: "canvas_create_text", description: "创建可编辑的备忘、剧本或分镜文本节点。已有选中文本时用 canvas_update_node 原位修改，不新建副本。content 使用 Markdown；新建分镜等下游文稿时传 source_node_id，自动沿用来源文本的尺寸和字号并记录正文快照，避免固定小卡片在缩放后不可读；传 text_role=storyboard 可在同一次创建中原子保存本镜正文、角色与来源，按镜增量写回，不先写整份工作稿。传 source_node_id 时应省略 x/y，由 Host 在来源右侧按固定三列网格排列；placement_node_id 可指定当前视觉设定等触发文稿，来源关联仍由 source_node_id 决定。", inputSchema: { type: "object", properties: { title: { type: "string" }, content: { type: "string", maxLength: 2e4 }, text_role: { type: "string", enum: [...textRoles], description: "本次创建的文稿角色，默认 note。分镜传 storyboard，与正文和来源一起原子保存。" }, source_node_id: { type: "string", description: "来源文本节点 ID。未显式指定的宽高及文字样式继承来源，并记录 sourceNodeId/sourceContent。" }, placement_node_id: placementNodeSchema, x: { type: "number" }, y: { type: "number" }, width: { type: "number", exclusiveMinimum: 0 }, height: { type: "number", exclusiveMinimum: 0 } }, anyOf: [{ required: ["source_node_id"] }, { required: ["x", "y"] }], additionalProperties: false } },
   { name: "canvas_add_artifact_asset", description: "把工作区内已有图片安全复制到指定 HTML Artifact，并返回可直接写入 HTML/CSS 的相对路径。", inputSchema: { type: "object", properties: { node_id: { type: "string" }, source_path: { type: "string" } }, required: ["node_id", "source_path"], additionalProperties: false } },
@@ -23173,7 +23269,7 @@ class CanvasTools {
     if (signal.aborted) throw new Error("style_choice_wait_cancelled");
     const current = await this.service.styleChoice(sessionId);
     if (signal.aborted) throw new Error("style_choice_wait_cancelled");
-    if (current.decision || current.styleRef) return current;
+    if (current.decision || current.styleRef || current.templateStyle) return current;
     await new Promise((resolve2, reject) => {
       const remove = () => {
         const waiters2 = this.styleChoiceWaiters.get(sessionId);
@@ -23194,7 +23290,7 @@ class CanvasTools {
       waiters.add(done);
       signal.addEventListener("abort", aborted2, { once: true });
       void this.service.styleChoice(sessionId).then((latest) => {
-        if (latest.decision || latest.styleRef) done();
+        if (latest.decision || latest.styleRef || latest.templateStyle) done();
       }).catch((error) => {
         remove();
         signal.removeEventListener("abort", aborted2);
@@ -23283,6 +23379,8 @@ class CanvasTools {
     if (name === "design_catalog_detail") {
       if (typeof args.id !== "string" || !args.id.trim() || args.id.length > 200) throw new Error("invalid_design_catalog_id");
       if (/^catalog-[a-f0-9]{12}$/i.test(args.id.trim())) throw new Error("invalid_design_catalog_template_id: expected templateRef.id, received a resource version");
+      const style = styles.find((item) => item.id === args.id.trim());
+      if (style) return { style: styleItem(style) };
       return { template: await loadDesignCatalogDetail(requireCatalog(this.catalog), args.id) };
     }
     if (name === "canvas_get_document") {
@@ -24971,7 +25069,7 @@ class MediaService {
       }
       await this.ensureImageProcessing();
       const dimensions = await imageDimensions(image.data);
-      return { source_path: checkpoint.sourcePath, mime_type: checkpoint.mimeType, bytes: checkpoint.bytes, model, provider_model: providerModel, ...dimensions, ..."revisedPrompt" in image && image.revisedPrompt ? { revised_prompt: image.revisedPrompt } : {}, ...task2 ? { task_id: task2.id } : {} };
+      return { source_path: checkpoint.sourcePath, ...(canvasCommandContext.getStore()?.expectedRevision !== void 0 ? { source_sha256: checkpoint.sha256 } : {}), mime_type: checkpoint.mimeType, bytes: checkpoint.bytes, model, provider_model: providerModel, ...dimensions, ..."revisedPrompt" in image && image.revisedPrompt ? { revised_prompt: image.revisedPrompt } : {}, ...task2 ? { task_id: task2.id } : {} };
     } catch (error) {
       const failure = imageCapabilityFailure(error);
       if (failure) throw new ImageCapabilityError({ ...failure, ...submitted === void 0 ? {} : { submitted }, ...task2 ? { submitted: true, task_id: task2.id } : {}, ...checkpoint ? { source_path: checkpoint.sourcePath } : {} }, error);
@@ -52672,6 +52770,8 @@ function requestPrivateDesignRender({ signal, ...input }) {
     }
   });
 }
+const guardedCanvasToolNames = ["canvas_get_document", "canvas_get_selection", "canvas_create_text", "canvas_create_html", "canvas_commit_html", "canvas_prepare_pptx", "media_generate_image", "canvas_create_image"];
+const guardedImage = require("./private-guarded-image.cjs");
 function createPrivateCatalog(origin) {
   const backend = new URL(origin);
   if (origin !== backend.origin || backend.username || backend.password ||
@@ -52716,7 +52816,18 @@ function createPrivateCatalog(origin) {
     media: workspace.media,
     session: sessionHeader,
     log,
-    imagePrompt: async (sessionId, prompt) => withImageVisualStyle(await workspace.sessions.context(sessionId), prompt),
+    imagePrompt: async (sessionId, prompt) => {
+      const session = await workspace.sessions.context(sessionId);
+      const guard = canvasCommandContext.getStore();
+      if (guard?.expectedRevision !== void 0) {
+        const location = { workspace: session.cwd, canvasId: session.payload.canvasId };
+        checkCanvasDigest(workspace.canvas.canvases, location);
+        checkCanvasArtifacts(workspace.canvas.canvases, location);
+        const document = workspace.canvas.canvases.get(location, true);
+        checkCanvasRevision(document.revision ?? 0);
+      }
+      return withImageVisualStyle(session, prompt);
+    },
     canvasTarget: async (sessionId, nodeId, kind, work) => {
       const { document } = await workspace.canvas.get(sessionId);
       assertMediaTarget(document, nodeId, kind);
@@ -52739,14 +52850,20 @@ function createPrivateCatalog(origin) {
     ensureDirectory(require$$1$1.join(designDir, "design", "sessions"));
     const existing = existingDesignWorkspace(cwd, sessionId, {});
     if (existing) return existing;
-    const selected = designSelection(selection);
-    if (!selected) throw new Error("invalid_design_type");
-    let template;
+    const selected = selection;
+    let template, imageTemplateDirection;
     if (selected.templateRef) {
-      const target = await resourceTarget(selected.templateRef);
-      template = await prepareDesignTemplate(cwd, selected, target.client, target.source);
+      const ref = selected.templateRef;
+      const target = await resourceTarget(ref);
+      if (selected.designType === "image") {
+        const detail = await target.client.detail(target.source, "template", ref.id, ref.digest);
+        if (detail.ref.version !== ref.version) throw new Error("design_resource_version_changed");
+        imageTemplateDirection = (detail.examplePrompt || detail.description || "").trim().slice(0, 4000);
+      } else {
+        template = await prepareDesignTemplate(cwd, selected, target.client, target.source);
+      }
     }
-    const state = await initializeDesignTask(cwd, sessionId, selected, void 0, template, void 0, void 0, resourceTarget);
+    const state = await initializeDesignTask(cwd, sessionId, selected, void 0, template, void 0, void 0, resourceTarget, imageTemplateDirection);
     rememberDesignWorkspace(cwd, sessionId, state);
     return state;
   };
@@ -52764,23 +52881,50 @@ function createPrivateCatalog(origin) {
         }
         return { url: trustedUrl(args.url, cache + "/assets"), expiresAt: "" };
       case "design_session_open": {
+        const selection = designSelection(args.selection);
+        if (!selection) throw new Error("invalid_design_type");
         const key = args.cwd + "\0" + args.sessionId;
         if (!creating.has(key)) {
-          creating.set(key, openCanvas(args).finally(() => creating.delete(key)));
+          creating.set(key, openCanvas({ ...args, selection }).finally(() => creating.delete(key)));
         }
-        return creating.get(key);
+        const state = await creating.get(key);
+        const requested = selection.templateRef;
+        const current = state.templateRef;
+        if (requested && (selection.designType !== state.designType ||
+            requested.id !== current?.id || requested.version !== current.version ||
+            requested.digest !== current.digest)) {
+          throw new Error("design_template_selection_conflict");
+        }
+        return state;
       }
+      case "design_guard_capabilities":
+        return { version: 4, tools: guardedCanvasToolNames };
       case "design_tool_catalog": {
         const saved = existingDesignWorkspace(args.cwd, args.sessionId, args.design ?? {});
-        return saved ? [...canvasToolsForDesignType(saved.designType), ...imageTools] : imageTools;
+        if (!saved) return imageTools;
+        const media = saved.designType === "slide_deck" && saved.templateRef
+          ? imageTools.filter(({ name }) => name !== "media_generate_image")
+          : imageTools;
+        return [...canvasToolsForDesignType(saved.designType), ...media];
       }
       case "design_model_tool": {
         const { cwd, design, sessionId, name, args: input } = args;
+        const guarded = args.expectedRevision !== void 0;
+        if (guarded && (!guardedCanvasToolNames.includes(name) || !Number.isSafeInteger(args.expectedRevision) || args.expectedRevision < 0 || typeof args.expectedCanvasDigest !== "string" || !/^[a-f0-9]{64}$/.test(args.expectedCanvasDigest) || (name !== "canvas_create_text" && (typeof args.expectedArtifactsDigest !== "string" || !/^[a-f0-9]{64}$/.test(args.expectedArtifactsDigest) || typeof args.expectedContextDigest !== "string" || !/^[a-f0-9]{64}$/.test(args.expectedContextDigest))))) throw new Error("canvas_guard_unsupported");
         const saved = existingDesignWorkspace(cwd, sessionId, design ?? {});
         if (imageTools.some((definition) => definition.name === name)) {
+          if (guarded && (!saved || name !== "media_generate_image" ||
+              typeof input.prompt !== "string" || !input.prompt.trim() ||
+              Object.keys(input).some((key) => key !== "prompt" && key !== "parameters"))) {
+            throw new Error("canvas_guard_unsupported");
+          }
           if (!saved && input.anchor_node_id != null) throw new Error("invalid_canvas_anchor");
           workspace.sessions.created(sessionId, cwd, saved ?? {});
-          const result = await canvasCommandContext.run({ operationId: args.operationId, sessionId },
+          const result = await canvasCommandContext.run({
+            operationId: args.operationId, sessionId,
+            ...(guarded ? { expectedRevision: args.expectedRevision, expectedCanvasDigest: args.expectedCanvasDigest,
+              expectedArtifactsDigest: args.expectedArtifactsDigest, expectedContextDigest: args.expectedContextDigest } : {})
+          },
             () => callImageTool(name, input, {
               headers: { [CAPABILITY_SESSION_HEADER.toLowerCase()]: sessionId },
               signal: args.signal
@@ -52804,23 +52948,105 @@ function createPrivateCatalog(origin) {
             artifact_path: `${saved.localDesignPath}/${node.entry}`
           } : {})
         });
+        if (guarded && name === "canvas_create_image") {
+          const location = await workspace.canvas.location(sessionId);
+          const store = workspace.canvas.canvases;
+          return canvasCommandContext.run({
+            operationId: args.operationId, sessionId, expectedRevision: args.expectedRevision,
+            expectedCanvasDigest: args.expectedCanvasDigest, expectedArtifactsDigest: args.expectedArtifactsDigest,
+            expectedContextDigest: args.expectedContextDigest
+          }, async () => {
+            const image = guardedImage.readGeneratedImage(location.workspace, input, args.expectedSourceDigest, DESIGN_IMPORT_BYTES_MAX);
+            const sharp = await imageProcessing.require();
+            const meta = await sharp(image.bytes, { limitInputPixels: MAX_PIXELS$3 }).metadata();
+            if (!meta.width || !meta.height || meta.format !== image.extension.slice(1).replace(/^jpg$/, "jpeg") ||
+                meta.width * meta.height > MAX_PIXELS$3) throw new Error("invalid_canvas_image_source");
+            const rotated = (meta.orientation ?? 1) >= 5;
+            const w = rotated ? meta.height : meta.width, h = rotated ? meta.width : meta.height;
+            const scale = Math.min(1, 1800 / w, 1350 / h);
+            checkCanvasDigest(store, location);
+            checkCanvasArtifacts(store, location);
+            const current = store.get(location, true);
+            checkCanvasRevision(current.revision ?? 0);
+            const root = store.root(location.workspace, location.canvasId);
+            return guardedImage.withCanvasImageAsset(root, image, (source, verifyAsset) => {
+              const node = { id: require$$2.randomUUID(), type: "image", source, title: input.title?.trim() || "图片",
+                x: 0, y: 0, width: Math.max(1, Math.round(w * scale)), height: Math.max(1, Math.round(h * scale)), zIndex: current.nodes.length };
+              avoidContainerOverlap(current, node);
+              const next = store.apply(location, { type: "node.create", node }, void 0, () => {
+                checkCanvasArtifacts(store, location);
+                checkCanvasDigest(store, location);
+                verifyAsset();
+              });
+              return { revision: next.revision, node: summary(node) };
+            });
+          });
+        }
+        if (guarded && (name === "canvas_get_selection" || name === "canvas_get_document")) {
+          const location = await workspace.canvas.location(sessionId);
+          return canvasCommandContext.run({ operationId: args.operationId, sessionId, expectedRevision: args.expectedRevision, expectedCanvasDigest: args.expectedCanvasDigest, expectedArtifactsDigest: args.expectedArtifactsDigest, expectedContextDigest: args.expectedContextDigest }, () => {
+            checkCanvasDigest(workspace.canvas.canvases, location);
+            checkCanvasArtifacts(workspace.canvas.canvases, location);
+            const document = workspace.canvas.canvases.get(location, true);
+            checkCanvasRevision(document.revision ?? 0);
+            const root = workspace.canvas.canvases.root(location.workspace, location.canvasId);
+            if (document.nodes.some((node) => {
+              if (node.type !== "html" || node.empty !== void 0) return false;
+              const entry = require$$1$1.join(root, node.entry);
+              return node_fs.existsSync(entry) && node_fs.readFileSync(entry, "utf8").includes("<!-- monkeyai-empty-container -->");
+            })) throw new Error("canvas_guard_requires_migration");
+            if (name === "canvas_get_selection") {
+              if (!Array.isArray(input.node_ids) || input.node_ids.some((id) => typeof id !== "string")) throw new Error("invalid_canvas_selection");
+              const ids = new Set(input.node_ids);
+              if ([...ids].some((id) => !document.nodes.some((node) => node.id === id))) throw new Error("canvas_node_not_found");
+              const nodes = document.nodes.filter((node) => ids.has(node.id) || node.groupId && ids.has(node.groupId));
+              for (const node of nodes) {
+                if (node.type !== "image" || !node.markups?.length) continue;
+                const source = require$$1$1.join(root, node.source);
+                for (const folder of [require$$1$1.join(root, "assets"), require$$1$1.join(root, "assets", "images")]) {
+                  const item = node_fs.lstatSync(folder, { throwIfNoEntry: false });
+                  if (!item || item.isSymbolicLink() || !item.isDirectory()) throw new Error("canvas_guard_selection_unsupported");
+                }
+                const stat = node_fs.lstatSync(source, { throwIfNoEntry: false });
+                if (!stat || stat.isSymbolicLink() || !stat.isFile()) throw new Error("canvas_guard_selection_unsupported");
+                const stamp = require$$2.createHash("sha256").update(JSON.stringify({ mtimeMs: stat.mtimeMs, size: stat.size, markups: node.markups, crop: node.crop ?? null, mask: node.mask ?? null, rotation: node.rotation ?? 0, flipX: node.flipX ?? false, flipY: node.flipY ?? false })).digest("hex").slice(0, 16);
+                const folder = require$$1$1.join(root, "markup-views"), folderStat = node_fs.lstatSync(folder, { throwIfNoEntry: false });
+                if (!folderStat || folderStat.isSymbolicLink() || !folderStat.isDirectory()) throw new Error("canvas_guard_selection_unsupported");
+                const cached = node_fs.lstatSync(require$$1$1.join(folder, `${node.id}-${stamp}.png`), { throwIfNoEntry: false });
+                if (!cached || cached.isSymbolicLink() || !cached.isFile()) throw new Error("canvas_guard_selection_unsupported");
+              }
+              return { nodes: nodes.slice(0, 20).map(summary), totalNodes: nodes.length };
+            }
+            const result = { id: document.id, revision: document.revision ?? 0, nodes: document.nodes.slice(0, 25).map(summary), totalNodes: document.nodes.length };
+            if (saved.designType === "slide_deck") {
+              const slides = document.nodes.filter((node) => node.type === "html" && node.slideIndex !== void 0 && !node.hidden);
+              result.slideCount = slides.length;
+              result.draftSlideCount = slides.filter((node) => node.draft).length;
+            }
+            return { revision: result.revision, document: result };
+          });
+        }
         if (name === "canvas_get_selection") {
           const selection = await workspace.canvas.getSelection(sessionId, { readRuntimeInput: false, nodeIds: input.node_ids });
           return { nodes: selection.nodes.slice(0, 20).map(summary), totalNodes: selection.nodes.length };
         }
         if (name === "canvas_prepare_pptx") {
-          const { manifestPath, slideCount } = await workspace.canvas.preparePptxExport(sessionId);
+          const { manifestPath, slideCount } = await canvasCommandContext.run(
+            { operationId: args.operationId, sessionId, ...(guarded ? { expectedRevision: args.expectedRevision, expectedCanvasDigest: args.expectedCanvasDigest, expectedArtifactsDigest: args.expectedArtifactsDigest, expectedContextDigest: args.expectedContextDigest } : {}) },
+            () => workspace.canvas.preparePptxExport(sessionId)
+          );
           return { manifest_path: manifestPath, slide_count: slideCount };
         }
         let params = input;
         if (name === "canvas_create_text" && input.x === void 0 && input.y === void 0 && !input.source_node_id && !input.placement_node_id) {
-          const current = await workspace.canvas.get(sessionId);
+          const current = await workspace.canvas.get(sessionId, guarded);
           const bottom = current.document.nodes.reduce((y, node) => Math.max(y, node.y + node.height), 0);
           params = { ...input, x: 32, y: bottom + 32 };
         }
-        const context = { signal: AbortSignal.timeout(110e3), progress: () => {} };
+        const timeout = AbortSignal.timeout(110e3);
+        const context = { signal: args.signal ? AbortSignal.any([args.signal, timeout]) : timeout, progress: () => {} };
         const { document, node, ...result } = await canvasCommandContext.run(
-          { operationId: args.operationId, sessionId },
+          { operationId: args.operationId, sessionId, ...(guarded ? { expectedRevision: args.expectedRevision, expectedCanvasDigest: args.expectedCanvasDigest, expectedArtifactsDigest: args.expectedArtifactsDigest, expectedContextDigest: args.expectedContextDigest } : {}) },
           () => workspace.canvasTools.call(sessionId, name, params, context)
         );
         if (node) result.node = summary(node);
@@ -52829,6 +53055,11 @@ function createPrivateCatalog(origin) {
           result.revision = revision;
           if (name === "canvas_get_document" || name === "canvas_update_node" || name === "canvas_delete_node") {
             result.document = { id, revision, nodes: nodes.slice(0, 25).map(summary), totalNodes: nodes.length };
+            if (name === "canvas_get_document" && saved.designType === "slide_deck") {
+              const slides = nodes.filter((node2) => node2.type === "html" && node2.slideIndex !== void 0 && !node2.hidden);
+              result.document.slideCount = slides.length;
+              result.document.draftSlideCount = slides.filter((node2) => node2.draft).length;
+            }
           }
         }
         if (name === "canvas_create_html" && result.node) result.artifact_path = result.node.artifact_path;

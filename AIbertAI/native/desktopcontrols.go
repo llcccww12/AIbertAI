@@ -104,24 +104,38 @@ func (h *relaySessionHost) updateDesktopSessionPresentation(method string, raw j
 	return map[string]any{"title": title, "titleSource": source, "pinned": row.Pinned, "archivedAt": row.ArchivedAt, "readAt": row.ReadAt}, nil
 }
 
+// DSH's three permission presets. A conversation's level is chosen before its
+// first message: DSH pins the preset into the session when the SDK first opens
+// it, and the SDK cannot switch it afterwards.
+const (
+	modeReadOnly       = "read-only"
+	modeWorkspaceWrite = "workspace-write"
+	modeFullAccess     = "full-access"
+)
+
 func validACPMode(mode string) bool {
-	return mode == "auto" || mode == "bypassPermissions"
+	return mode == modeReadOnly || mode == modeWorkspaceWrite || mode == modeFullAccess
 }
 
+// Records from before the three levels read as the level they behaved as:
+// 完全信任 auto-approved every request, 按需确认 let write/edit change the
+// workspace after a confirmation.
 func (row acpSession) permissionMode() string {
-	if row.Mode == "bypassPermissions" {
+	switch row.Mode {
+	case modeReadOnly, modeFullAccess:
 		return row.Mode
+	case "bypassPermissions":
+		return modeFullAccess
 	}
-	return "auto"
+	return modeWorkspaceWrite
 }
 
-func (h *relaySessionHost) setACPPermissionMode(r *http.Request, raw json.RawMessage, waitingID string) (map[string]any, error) {
+func (h *relaySessionHost) setACPPermissionMode(r *http.Request, raw json.RawMessage) (map[string]any, error) {
 	if h.local == nil || h.live == nil || h.acpScope(r, "session:control") != nil {
 		return nil, errRelayAccess
 	}
 	var p struct{ SessionID, ModeID string }
-	if json.Unmarshal(raw, &p) != nil || !validUUID(p.SessionID) || !validACPMode(p.ModeID) ||
-		waitingID != "" && waitingID != p.SessionID {
+	if json.Unmarshal(raw, &p) != nil || !validUUID(p.SessionID) || !validACPMode(p.ModeID) {
 		return nil, errors.New("invalid_session_mode")
 	}
 	l := h.live
@@ -131,11 +145,17 @@ func (h *relaySessionHost) setACPPermissionMode(r *http.Request, raw json.RawMes
 	if !ok {
 		return nil, errors.New("session_not_found")
 	}
+	if len(row.Turns) > 0 {
+		if row.permissionMode() == p.ModeID {
+			return map[string]any{"modeId": p.ModeID}, nil
+		}
+		return nil, errors.New("session_mode_locked")
+	}
 	row.Mode = p.ModeID
 	if err := l.save(row); err != nil {
 		return nil, errors.New("session_write_failed")
 	}
-	return map[string]any{"modeId": row.Mode, "resolvedPermission": waitingID != "" && row.Mode == "bypassPermissions"}, nil
+	return map[string]any{"modeId": row.Mode}, nil
 }
 
 type desktopMediaModels struct{ Image, Video string }
