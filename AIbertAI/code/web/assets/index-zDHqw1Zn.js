@@ -114351,7 +114351,7 @@ const qwt = {
       enableCanvas: "启用设计画布",
       enablingCanvas: "正在启用…",
       canvasDescription:
-        "此任务尚未启用画布。启用后进入创作模式，可在画布上生成图片、视频、网页、演示文稿和 Logo，并保留当前对话。",
+        "此任务尚未启用画布。启用后可在画布上生成图片、视频、网页、演示文稿和 Logo，并保留当前对话。",
       canvasWait: "请先等待当前任务结束并处理待回答的问题。",
     },
     colorPicker: {
@@ -117450,7 +117450,7 @@ Start with the conclusion, then explain the reasoning.`,
       enableCanvas: "Enable design canvas",
       enablingCanvas: "Enabling…",
       canvasDescription:
-        "This task has no canvas yet. Enabling it turns on creative mode, where images, videos, web pages, slides and logos are made on the canvas, and keeps this conversation.",
+        "This task has no canvas yet. Enable it to make images, videos, web pages, slides and logos on the canvas; this conversation is kept.",
       canvasWait:
         "Wait for the current task to finish and answer any pending questions first.",
     },
@@ -152870,10 +152870,9 @@ function D7t({ session: e }) {
     ),
     u = a,
     d =
-      c?.name ??
-      (u === "monkeyai-design"
-        ? t("home.designExpert")
-        : u || t(i.dshJobsAvailable ? "home.standardMode" : "home.generalExpert")),
+      u === "monkeyai-design"
+        ? t(i.dshJobsAvailable ? "home.standardMode" : "home.generalExpert")
+        : (c?.name ?? (u || t(i.dshJobsAvailable ? "home.standardMode" : "home.generalExpert"))),
     f = l.jsx(A4, {
       id: u,
       plain: !0,
@@ -159571,7 +159570,8 @@ function f_e({ experts: e, value: t, onSelect: n, ...r }) {
     },
     d = (v) => ASe({ ...v, selected: v.id === t }, v),
     f = e.find((v) => v.id === "monkeyai-design"),
-    h = [u, ...(f ? [{ ...f, name: s("home.designExpert") }] : [])].map(d),
+    // The canvas opens from the design categories; it is not a picker entry.
+    h = [u].map(d),
     { ordered: p } = Zw(e.filter((v) => v.id !== "monkeyai-design").map(d), x6),
     m = h.filter((v) => Ym(v, i)),
     g = p.filter((v) => Ym(v, i)),
@@ -160742,7 +160742,7 @@ function b_e({
     m = sL(
       (h ? f.expert : void 0) ?? d?.expertSummaries.find((C) => C.id === p),
     ),
-    g = p === "monkeyai-design" ? a("home.designExpert") : (m?.name ?? (p || a("home.generalExpert"))),
+    g = p === "monkeyai-design" ? a(standardMode ? "home.standardMode" : "home.generalExpert") : (m?.name ?? (p || a("home.generalExpert"))),
     b = `composer-expert-avatar${p === "monkeyai-design" ? " composer-expert-avatar-design" : ""}`,
     v = l.jsx(z0, {
       kind: "expert",
@@ -160756,7 +160756,7 @@ function b_e({
     const experts = d?.expertSummaries ?? [];
     return l.jsx(y.Suspense, { fallback: null, children: l.jsx(EmployeePreset, {
       experts: p && !experts.some(expert => expert.id === p) ? [...experts, {id: p, name: g, description: m?.description}] : experts,
-      expertId: p, busy: r || !d, designName: a("home.designExpert"), language: i18n.language, onSelect: i,
+      expertId: p, busy: r || !d, language: i18n.language, onSelect: i,
     }) });
   }
   if (i) {
@@ -165844,6 +165844,9 @@ function ljt({
     };
   if (!r && _.length === 0) {
     const R = n?.error ? IT(n.error) : null;
+    // Without a configured design-resource server there are no cases to show;
+    // the categories still open a canvas, so the section stays out of the way.
+    if (R?.reason === "unconfigured") return null;
     return l.jsxs("section", {
       className: "design-examples",
       "data-design-type": e.designType,
