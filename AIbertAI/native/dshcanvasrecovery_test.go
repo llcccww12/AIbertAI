@@ -175,3 +175,54 @@ func TestDSHHostToolReasonIsModelFacing(t *testing.T) {
 		}
 	}
 }
+
+// A design-service refusal before generation (no image model) is a normal tool
+// failure: the claim settles as not applied and the session stays usable, but
+// only while the canvas still matches its pre-dispatch digest.
+func TestDSHCanvasReleaseRejectedSettlesNotApplied(t *testing.T) {
+	const (
+		session   = "aaaaaaaa-1111-4111-8111-111111111111"
+		operation = "bbbbbbbb-2222-4222-8222-222222222222"
+		call      = "cccccccc-3333-4333-8333-333333333333"
+		canvasID  = "dddddddd-4444-4444-8444-444444444444"
+	)
+	if !dshCanvasDefiniteRejection(errors.New("design_media_model_unavailable")) || dshCanvasDefiniteRejection(errors.New("design_tool_unavailable")) {
+		t.Fatal("only a known pre-execution refusal is definite")
+	}
+	for _, tc := range []struct {
+		name, canvas string
+		released     bool
+	}{
+		{"unchanged", `{"revision":7,"nodes":[]}`, true},
+		{"changed", `{"revision":8,"nodes":[{"id":"a"}]}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, err := os.OpenRoot(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer root.Close()
+			before := fmt.Sprintf("%x", sha256.Sum256([]byte(`{"revision":7,"nodes":[]}`)))
+			writeRecoveryTestFile(t, root, ".aibertai/design/sessions/"+session+".json",
+				`{"canvasId":"`+canvasID+`","localDesignPath":".aibertai/design/`+canvasID+`"}`)
+			writeRecoveryTestFile(t, root, ".aibertai/design/"+canvasID+"/design-context.json",
+				`{"designSessionId":"`+session+`","canvasId":"`+canvasID+`"}`)
+			writeRecoveryTestFile(t, root, ".aibertai/design/"+canvasID+"/canvas.json", tc.canvas)
+			if err = dshConnectorDispatch(root, session, operation, call); err != nil {
+				t.Fatal(err)
+			}
+			effect := &dshSideEffect{root: root, session: session, operation: operation, call: call}
+			if err = dshCanvasMarkClaim(effect, before); err != nil {
+				t.Fatal(err)
+			}
+			err = dshCanvasReleaseRejected(effect, acpSession{ID: session})
+			if (err == nil) != tc.released {
+				t.Fatalf("release = %v, want released %v", err, tc.released)
+			}
+			settled := dshConnectorAssertSettled(root, session) == nil
+			if settled != tc.released {
+				t.Fatalf("settled = %v, want %v", settled, tc.released)
+			}
+		})
+	}
+}

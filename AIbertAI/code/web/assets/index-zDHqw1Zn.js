@@ -273027,7 +273027,7 @@ function wnn({ url: e }) {
   });
 }
 function knn({ scope: e, path: t, fileRef: n }) {
-  const { t: r } = Xe(),
+  const { t: r, i18n } = Xe(),
     [s, i] = y.useState(null),
     [o, a] = y.useState(0);
   return (
@@ -273078,10 +273078,9 @@ function knn({ scope: e, path: t, fileRef: n }) {
         })
       : s?.url
         ? l.jsx(wnn, { url: s.url })
-        : l.jsx("div", {
-            className: "file-panel-empty",
-            role: "status",
-            children: l.jsx(Kn, { className: "size-4" }),
+        : l.jsx(y.Suspense, {
+            fallback: null,
+            children: l.jsx(DshOfficeLoading, { language: i18n.language }),
           })
   );
 }
@@ -273788,6 +273787,7 @@ const DshFilePanel = y.lazy(loadDshFilePanel),
   DshFileTabs = y.lazy(() => loadDshFilePanel().then((m) => ({ default: m.EmployeeFileTabs }))),
   DshFilePreview = y.lazy(() => loadDshFilePanel().then((m) => ({ default: m.EmployeePreview }))),
   DshFileSheet = y.lazy(() => loadDshFilePanel().then((m) => ({ default: m.EmployeeSpreadsheet }))),
+  DshOfficeLoading = y.lazy(() => loadDshFilePanel().then((m) => ({ default: m.EmployeeOfficeLoading }))),
   DshFileImage = y.lazy(() => loadDshFilePanel().then((m) => ({ default: m.EmployeeImage }))),
   DshFileHtml = y.lazy(() => loadDshFilePanel().then((m) => ({ default: m.EmployeeHtml }))),
   DshFilePageAction = y.lazy(() => loadDshFilePanel().then(m => ({ default: m.EmployeePageAction }))),
@@ -274052,7 +274052,8 @@ function Inn({ scope: e, cwd: t, files: n, view: r, active: s }) {
     o = r.files?.origin ?? r.directoryOrigin,
     a = o?.sessionId ?? e.sessionId;
   t = o?.cwd ?? t;
-  const c = r.fileScope ?? "all",
+  // Like DSH, the file panel always shows the whole workspace tree.
+  const c = "all",
     [u, d] = y.useState(""),
     [f, h] = y.useState(() => new Set()),
     [p, m] = y.useState(!1),
@@ -274196,10 +274197,7 @@ function Inn({ scope: e, cwd: t, files: n, view: r, active: s }) {
   const W =
       r.files?.source !== "workspace"
         ? (r.files ?? void 0)
-        : (c === "session"
-            ? T.session.find((L) => L.path === _)
-            : M.get(_ ?? "")
-          )?.file,
+        : (M.get(_ ?? "") ?? T.session.find((L) => L.path === _))?.file,
     V = c === "all" && !!C,
     K = V
       ? A.search.query !== C || (!A.search.data && !A.search.error)

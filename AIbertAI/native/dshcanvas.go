@@ -340,6 +340,12 @@ func (h *relaySessionHost) dshCanvasBridge(ctx context.Context, ws *websocket.Co
 		}
 		if err != nil {
 			if effect != nil {
+				// A definite rejection before execution is an ordinary tool
+				// failure: settle the claim as not applied and let the model
+				// decide, as DSH does with any failed tool.
+				if dshCanvasDefiniteRejection(err) && dshCanvasReleaseRejected(effect, session) == nil {
+					return nil, err
+				}
 				return nil, errors.Join(errors.New("dsh_canvas_outcome_unknown"), errors.New("dsh_connector_outcome_unknown"), err)
 			}
 			return nil, err

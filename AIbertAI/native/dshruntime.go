@@ -271,6 +271,10 @@ func dshHostToolReason(err error) string {
 		return "connector_outcome_unknown: this connector call was interrupted and its outcome is unknown; the remote side may have completed it. Verify the remote state or ask the user before repeating it."
 	case strings.Contains(err.Error(), "tool_approval_unavailable"), strings.Contains(err.Error(), "tool_permission_cancelled"):
 		return "tool_denied: the approval channel was unavailable or the call was cancelled. The tool did not run; choose another approach or ask the user."
+	case strings.Contains(err.Error(), "design_media_model_unavailable"):
+		return "image_model_unavailable: no image generation model is configured or available for this conversation, so nothing was generated. Do not retry image tools in this turn. Tell the user an administrator needs to enable an image model (or that they can pick one in the canvas), and offer an alternative such as an SVG/CSS illustration or a clearly labeled placeholder."
+	case strings.Contains(err.Error(), "design_media_cancelled"):
+		return "image_generation_cancelled: the image generation was cancelled and produced no image. Do not retry unless the user asks."
 	case strings.Contains(err.Error(), "dsh_canvas_atomic_guard_unavailable"), strings.Contains(err.Error(), "dsh_canvas_changed"), strings.Contains(err.Error(), "dsh_canvas_session_changed"):
 		return "canvas_conflict: the canvas changed underneath this call, so it was not applied. Re-read the canvas and retry."
 	}
@@ -1722,7 +1726,7 @@ func runDSHSessionWithProfile(ctx context.Context, cfg *dshRuntimeConfig, sessio
 				return err
 			}
 			for _, claim := range claims {
-				if claim.State == "reconciled" || claim.CallID != call {
+				if claim.State == "reconciled" || claim.State == "user_reviewed" || claim.CallID != call {
 					continue
 				}
 				if claim.Kind == "workspace" && event.Event.Type == "tool/result" {

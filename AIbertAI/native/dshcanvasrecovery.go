@@ -205,19 +205,46 @@ func dshSettleStaleCanvasWrite(root *os.Root, session acpSession) (bool, error) 
 	if err != nil {
 		return false, err
 	}
-	sum := sha256.Sum256([]byte(strings.Join([]string{session.ID, claim.OperationID, claim.CallID, decision, *claim.CanvasBefore}, "\x00")))
-	claim.Review = &dshUserSideEffectReview{Decision: decision, Fingerprint: fmt.Sprintf("%x", sum), ReviewedAt: time.Now().UTC()}
-	claim.State = "user_reviewed"
-	if err = writeConnectorClaim(root, claim); err != nil {
-		return false, err
-	}
-	if err = root.Remove("dsh-connector-dispatch/" + session.ID + "/.pending"); err != nil {
-		return false, err
-	}
-	if err = syncConnectorDir(root, "dsh-connector-dispatch/"+session.ID); err != nil {
+	if err = dshCanvasSettleClaim(root, session.ID, claim, decision); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+func dshCanvasSettleClaim(root *os.Root, sessionID string, claim dshConnectorClaim, decision string) error {
+	sum := sha256.Sum256([]byte(strings.Join([]string{sessionID, claim.OperationID, claim.CallID, decision, *claim.CanvasBefore}, "\x00")))
+	claim.Review = &dshUserSideEffectReview{Decision: decision, Fingerprint: fmt.Sprintf("%x", sum), ReviewedAt: time.Now().UTC()}
+	claim.State = "user_reviewed"
+	if err := writeConnectorClaim(root, claim); err != nil {
+		return err
+	}
+	if err := root.Remove("dsh-connector-dispatch/" + sessionID + "/.pending"); err != nil {
+		return err
+	}
+	return syncConnectorDir(root, "dsh-connector-dispatch/"+sessionID)
+}
+
+// dshCanvasDefiniteRejection reports a design-service refusal that is known to
+// happen before anything is generated or written.
+func dshCanvasDefiniteRejection(err error) bool {
+	return err != nil && err.Error() == "design_media_model_unavailable"
+}
+
+// dshCanvasReleaseRejected settles the claim of a rejected guarded write as not
+// applied, but only when the canvas still matches the digest taken before dispatch.
+func dshCanvasReleaseRejected(effect *dshSideEffect, session acpSession) error {
+	fail := errors.New("dsh_canvas_reconciliation_required")
+	if effect == nil {
+		return fail
+	}
+	claim, err := connectorPending(effect.root, effect.session, effect.operation, effect.call)
+	if err != nil || claim.State != "dispatch_claimed" || claim.Kind != "canvas" || claim.CanvasBefore == nil {
+		return fail
+	}
+	if decision, err := dshCanvasSettlementDecision(effect.root, session, claim); err != nil || decision != "observed_not_applied" {
+		return fail
+	}
+	return dshCanvasSettleClaim(effect.root, effect.session, claim, "observed_not_applied")
 }
 
 func dshPendingCanvasWrite(turn acpTurn) bool {

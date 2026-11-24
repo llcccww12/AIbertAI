@@ -10,7 +10,7 @@ const { promisify } = require("node:util");
 const run = promisify(execFile);
 const LIMIT = 128 * 1024 * 1024;
 const POLICY = "default-src 'none'; script-src 'self'; worker-src 'self'; connect-src 'self'; style-src 'unsafe-inline'; img-src data: blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
-const VIEW = '<!doctype html><meta charset="utf-8"><title>Office 预览</title><style>body{margin:16px;background:#e8eaed;font:15px system-ui;color:#202124}canvas{display:block;max-width:100%;height:auto;margin:12px auto;box-shadow:0 1px 4px #0003}</style><main>正在加载文档…</main><script type="module" src="/vendor/viewer.mjs"></script>';
+const VIEW = '<!doctype html><meta charset="utf-8"><title>Office 预览</title><style>body{margin:16px;background:#e8eaed;font:15px system-ui;color:#202124}canvas{display:block;max-width:100%;height:auto;margin:12px auto;box-shadow:0 1px 4px #0003}.loading{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;min-height:calc(100vh - 32px);color:#5f6368;font-size:13px}.loading i{width:22px;height:22px;border-radius:50%;border:3px solid #4d6bfe33;border-top-color:#4d6bfe;animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}</style><main><div class="loading" role="status"><i></i>文档渲染中...</div></main><script type="module" src="/vendor/viewer.mjs"></script>';
 const OFFICE_FONTS = `<?xml version="1.0"?>
 <fontconfig>
   <dir>/System/Library/Fonts</dir>
