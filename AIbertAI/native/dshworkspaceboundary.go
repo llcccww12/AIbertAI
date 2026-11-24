@@ -153,7 +153,27 @@ func dshAuditWorkspacePrefixForGoal(ctx context.Context, session, operation, cal
 		if !ok || after > ceiling {
 			return nil, fail
 		}
-		raw, err := fetch(ctx, map[string]any{"sessionId": session, "afterSeq": after, "throughSeq": ceiling})
+		forward := map[string]any{"sessionId": session, "afterSeq": after, "throughSeq": ceiling}
+		// Oversized events (>512 KiB) arrive as fragments. Pass them through
+		// against the real ceiling and report the virtual one the caller checks.
+		if seq, fragment := params["fragmentSeq"]; fragment {
+			if after >= ceiling {
+				return nil, fail
+			}
+			forward["fragmentSeq"], forward["offset"] = seq, params["offset"]
+			raw, err := fetch(ctx, forward)
+			if err != nil {
+				return nil, err
+			}
+			var part map[string]json.RawMessage
+			var through int64
+			if json.Unmarshal(raw, &part) != nil || json.Unmarshal(part["throughSeq"], &through) != nil || through != ceiling {
+				return nil, fail
+			}
+			part["throughSeq"], _ = json.Marshal(ceiling + 1)
+			return json.Marshal(part)
+		}
+		raw, err := fetch(ctx, forward)
 		if err != nil {
 			return nil, err
 		}
@@ -161,6 +181,7 @@ func dshAuditWorkspacePrefixForGoal(ctx context.Context, session, operation, cal
 			SessionID string            `json:"sessionId"`
 			Through   int64             `json:"throughSeq"`
 			Events    []json.RawMessage `json:"events"`
+			Large     json.RawMessage   `json:"largeEvent,omitempty"`
 		}
 		if json.Unmarshal(raw, &page) != nil || page.SessionID != session || page.Through != ceiling {
 			return nil, fail

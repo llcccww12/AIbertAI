@@ -71,6 +71,76 @@ func dshWorkspaceTarget(root *os.Root, relative string) (dshTargetState, error) 
 	}
 	return state, nil
 }
+
+// Reports whether relative names a file whose parent folders are partly
+// missing, while every existing ancestor is a real directory (no symlinks).
+func dshMissingWriteParent(root *os.Root, relative string) bool {
+	if _, err := workspaceRelative(relative); err != nil || relative == "." {
+		return false
+	}
+	current := "."
+	for _, part := range strings.Split(filepath.Dir(filepath.FromSlash(relative)), string(filepath.Separator)) {
+		if part == "." {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := root.Lstat(current)
+		if errors.Is(err, os.ErrNotExist) {
+			return true
+		}
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return false
+		}
+	}
+	return false
+}
+
+// Counts added and removed lines like a diff summary: lines kept in order
+// (longest common subsequence) are unchanged. Very large files fall back to a
+// multiset comparison so the count stays cheap.
+func workspaceLineChanges(before, after string) (added, deleted int) {
+	split := func(text string) []string {
+		if text == "" {
+			return nil
+		}
+		return strings.Split(strings.TrimSuffix(text, "\n"), "\n")
+	}
+	a, b := split(before), split(after)
+	for len(a) > 0 && len(b) > 0 && a[0] == b[0] {
+		a, b = a[1:], b[1:]
+	}
+	for len(a) > 0 && len(b) > 0 && a[len(a)-1] == b[len(b)-1] {
+		a, b = a[:len(a)-1], b[:len(b)-1]
+	}
+	if len(a) == 0 || len(b) == 0 || len(a)*len(b) > 4_000_000 {
+		left := make(map[string]int, len(a))
+		for _, line := range a {
+			left[line]++
+		}
+		common := 0
+		for _, line := range b {
+			if left[line] > 0 {
+				left[line]--
+				common++
+			}
+		}
+		return len(b) - common, len(a) - common
+	}
+	row := make([]int, len(b)+1)
+	for i := range a {
+		diagonal := 0
+		for j := range b {
+			above := row[j+1]
+			if a[i] == b[j] {
+				row[j+1] = diagonal + 1
+			} else if row[j] > row[j+1] {
+				row[j+1] = row[j]
+			}
+			diagonal = above
+		}
+	}
+	return len(b) - row[len(b)], len(a) - row[len(b)]
+}
 func sameDSHTarget(a, b dshTargetState) bool {
 	return os.SameFile(a.Root, b.Root) && os.SameFile(a.Parent, b.Parent) && (a.File == nil && b.File == nil || a.File != nil && b.File != nil && sameWorkspaceVersion(a.File, b.File))
 }
@@ -160,6 +230,12 @@ func (h *relaySessionHost) dshWorkspaceBridge(ctx context.Context, ws *websocket
 			return nil, err
 		}
 		before, err := dshWorkspaceTarget(root, relative)
+		// Like DSH's write, a new file may sit in folders that do not exist yet.
+		// They are created only after the permission check, under the write lock.
+		createParents := false
+		if err != nil && req.Name == "write" && dshMissingWriteParent(root, relative) {
+			before, err, createParents = dshTargetState{}, nil, true
+		}
 		root.Close()
 		if err != nil {
 			return nil, err
@@ -237,8 +313,16 @@ func (h *relaySessionHost) dshWorkspaceBridge(ctx context.Context, ws *websocket
 			return nil, err
 		}
 		defer root.Close()
+		if createParents {
+			if !dshMissingWriteParent(root, relative) {
+				return nil, errors.New("workspace_file_changed")
+			}
+			if err := root.MkdirAll(filepath.Dir(filepath.FromSlash(relative)), 0o755); err != nil {
+				return nil, errWorkspacePath
+			}
+		}
 		after, err := dshWorkspaceTarget(root, relative)
-		if err != nil || !sameDSHTarget(before, after) {
+		if err != nil || !createParents && !sameDSHTarget(before, after) || createParents && after.File != nil {
 			return nil, errors.New("workspace_file_changed")
 		}
 		var previous *string
@@ -339,6 +423,11 @@ func (h *relaySessionHost) dshWorkspaceBridge(ctx context.Context, ws *websocket
 		if before.File == nil {
 			run.FileOperation = "created"
 		}
+		old := ""
+		if previous != nil {
+			old = *previous
+		}
+		run.FileAdded, run.FileDeleted = workspaceLineChanges(old, content)
 		if err = effect.completeWorkspace(value); err != nil {
 			return nil, err
 		}

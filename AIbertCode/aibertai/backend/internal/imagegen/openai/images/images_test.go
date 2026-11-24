@@ -104,4 +104,22 @@ func TestCustomModelAndRejectedResponse(t *testing.T) {
 	if err != nil || result.Status != "failed" {
 		t.Fatalf("明确的上游拒绝应可退款: %+v, %v", result, err)
 	}
+	unavailable := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":{"code":"model_not_found","message":"无可用渠道","type":"new_api_error"}}`))
+	}))
+	defer unavailable.Close()
+	p = New(unavailable.Client())
+	result, err = p.Generate(context.Background(), proxy.Target{BaseURL: unavailable.URL + "/v1", UpstreamModel: "gpt-image-2"},
+		imagegen.ProviderRequest{Prompt: "猫", Quality: "1K", AspectRatio: "1:1", Count: 1})
+	if err != nil || result.Status != "failed" || result.ErrorCode != "upstream_rejected" {
+		t.Fatalf("网关无可用渠道应按明确失败处理: %+v, %v", result, err)
+	}
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusBadGateway) }))
+	defer gateway.Close()
+	p = New(gateway.Client())
+	if _, err = p.Generate(context.Background(), proxy.Target{BaseURL: gateway.URL + "/v1", UpstreamModel: "gpt-image-2"},
+		imagegen.ProviderRequest{Prompt: "猫", Quality: "1K", AspectRatio: "1:1", Count: 1}); err == nil {
+		t.Fatal("无法确认结果的 5xx 仍应进入待核查")
+	}
 }

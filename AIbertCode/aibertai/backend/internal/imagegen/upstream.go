@@ -68,7 +68,9 @@ func CallBody(ctx context.Context, client *http.Client, target proxy.Target, end
 		}
 	}()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, response.StatusCode, nil
+		// 只保留少量错误正文，供适配器识别网关的明确拒绝。
+		content, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
+		return content, response.StatusCode, nil
 	}
 	content, err := io.ReadAll(io.LimitReader(response.Body, maxUpstreamResponse+1))
 	if err != nil {
