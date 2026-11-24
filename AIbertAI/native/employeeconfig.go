@@ -75,6 +75,11 @@ func (h *relaySessionHost) employeeConfig(ctx context.Context) (any, error) {
 		experts = []json.RawMessage{}
 		syncStatus["experts"] = map[string]any{"state": "error", "error": expertErr.Error()}
 	}
+	rules, ruleErr := l.client.desktopCatalog(ctx, auth, "rules")
+	if ruleErr != nil {
+		rules = []json.RawMessage{}
+		syncStatus["rules"] = map[string]any{"state": "error", "error": ruleErr.Error()}
+	}
 	skills, skillErr := l.client.desktopSkillCatalog(ctx, auth)
 	if skillErr != nil {
 		syncStatus["skills"] = map[string]any{"state": "error", "error": skillErr.Error()}
@@ -119,7 +124,7 @@ func (h *relaySessionHost) employeeConfig(ctx context.Context) (any, error) {
 		"expertSummaries": expertSummaries, "expertIssues": map[string]any{}, "expertMissingSkills": map[string]any{},
 		"resourceRules": empty, "resourceSkills": empty, "resourceSyncStatus": syncStatus,
 		"resourcePreferences": preferences,
-		"server":              map[string]any{"connectors": connectors, "experts": experts, "rules": empty, "skills": skills},
+		"server":              map[string]any{"connectors": connectors, "experts": experts, "rules": rules, "skills": skills},
 		"workspace":           map[string]any{"additional_directories": empty, "last_workspace": l.cwd},
 		"capabilities":        map[string]any{}, "display": settings.display(),
 		"goals": map[string]any{"default_token_budget": settings.goalBudget(), "execution_supported": false},

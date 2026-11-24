@@ -46,6 +46,8 @@ func TestPrivateDesktopResources(t *testing.T) {
 			}
 			w.Header().Set("ETag", `"5"`)
 			body = `{"id":"` + other + `","name":"Updated expert"}`
+		case "GET /api/v1/rules":
+			body = `{"rules":[{"id":"` + other + `","name":"My rule","content":"Be brief"}],"total_count":1}`
 		case "GET /api/v1/connectors":
 			body = `{"connectors":[],"total_count":0}`
 		case "GET /api/v1/connectors/" + other + "/credentials":
@@ -82,6 +84,10 @@ func TestPrivateDesktopResources(t *testing.T) {
 	raw, err := json.Marshal(cfg)
 	if err != nil || !strings.Contains(string(raw), `"source":"mine"`) || !strings.Contains(string(raw), "Private expert") {
 		t.Fatalf("catalog not refreshed: %s (%v)", raw, err)
+	}
+	rules := cfg.(map[string]any)["server"].(map[string]any)["rules"].([]json.RawMessage)
+	if len(rules) != 1 || !strings.Contains(string(rules[0]), "My rule") {
+		t.Fatalf("personal rules missing from catalog: %s", rules)
 	}
 	skills := cfg.(map[string]any)["server"].(map[string]any)["skills"].([]map[string]any)
 	if len(skills) != 1 || skills[0]["id"] != other || skills[0]["resourceId"] != other ||
@@ -152,5 +158,30 @@ func TestNativeDraftModelProvider(t *testing.T) {
 		if err != nil || string(actual) != tc.want {
 			t.Fatalf("got %s, want %s (%v)", actual, tc.want, err)
 		}
+	}
+}
+
+func TestDSHRulesFollowSettings(t *testing.T) {
+	const required, enabled, off = "d1bd985c-9f71-4b85-937a-c41b1b104d38", "d2bd985c-9f71-4b85-937a-c41b1b104d38", "d3bd985c-9f71-4b85-937a-c41b1b104d38"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/rules" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"rules":[{"id":"` + required + `","content":"Required rule","required":true},` +
+			`{"id":"` + enabled + `","content":" Enabled rule "},{"id":"` + off + `","content":"Off rule"}],"total_count":3}`))
+	}))
+	defer server.Close()
+	live := &acpLive{client: &client{server: server.URL, http: server.Client()}, auth: authorization{Access: "account"},
+		connectorPrefs: connectorPreferences{Enabled: map[string]bool{"rule/server/" + enabled: true, "rule/server/" + off: false}}}
+	ctx, err := (&relaySessionHost{live: live}).bindDSHRules(t.Context())
+	if got, _ := ctx.Value(dshRuleInstructionsKey{}).(string); err != nil || got != "Required rule\n\nEnabled rule" {
+		t.Fatalf("rules = %q (%v)", got, err)
+	}
+	missing := httptest.NewServer(http.NotFoundHandler())
+	defer missing.Close()
+	live.client = &client{server: missing.URL, http: missing.Client()}
+	if ctx, err := (&relaySessionHost{live: live}).bindDSHRules(t.Context()); err != nil || ctx.Value(dshRuleInstructionsKey{}) != nil {
+		t.Fatalf("backend without rules must not block turns: %v", err)
 	}
 }

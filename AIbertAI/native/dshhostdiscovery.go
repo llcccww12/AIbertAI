@@ -194,6 +194,7 @@ func (h *relaySessionHost) dshRemoteTurnConnectorTools(ctx context.Context, ws *
 				return nil, err
 			}
 			tool := catalog.tools[item.Name]
+			turn.useResource("connector", tool.ConnectorID)
 			tools = append(tools, dshHostTool{Name: item.Name, Description: item.Description, InputSchema: schema, Title: tool.ConnectorName + " / " + tool.Name, Kind: "other", Category: "connector", ResourceID: tool.ConnectorID})
 		}
 		if len(tools) > 0 {

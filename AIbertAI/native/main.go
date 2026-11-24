@@ -77,7 +77,7 @@ func verify(ctx context.Context, reader io.Reader, emit func(string, string) err
 		return err
 	}
 	started := time.Now().UTC()
-	if err := c.registerSession(ctx, auth, machine, session, modelID, started); err != nil {
+	if err := c.registerSession(ctx, auth, machine, session, modelID, "", started); err != nil {
 		return err
 	}
 	usage, finish, modelErr := c.chat(ctx, model.Protocol, key.Value, session, modelID, prompt, model.StreamMode != "off", func(chunk string) error { return emit("delta", chunk) })

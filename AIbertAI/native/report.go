@@ -3,12 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -44,6 +46,8 @@ type turnReportFacts struct {
 	ContextWindow *int64
 	Files         *reportedFiles
 	Compactions   int
+	Resources     []turnResource
+	SkillEvents   []map[string]any
 }
 
 // The backend rejects a turn with more tool facts than this.
@@ -83,15 +87,21 @@ func turnReportInput(prompt string) reportedInput {
 	return input
 }
 
-func (c *client) registerSession(ctx context.Context, auth authorization, machine, session, selected string, started time.Time) error {
+// registerSession sends the first prompt's title only when the organization
+// collects conversation text, the same rule as the reported prompt.
+func (c *client) registerSession(ctx context.Context, auth authorization, machine, session, selected, title string, started time.Time) error {
 	if selected == "" {
 		selected = modelID
 	}
-	return c.json(ctx, "PUT", "/api/v1/sessions/"+session, auth.Access, machine, map[string]any{
+	body := map[string]any{
 		"state_seq": 1, "session_type": "conversation", "started_at": started, "model_id": selected,
 		"client": map[string]string{"type": "desktop", "machine_id": machine, "version": version,
 			"engine_version": version, "runtime_version": version},
-	}, nil)
+	}
+	if title != "" {
+		body["title"], body["title_source"] = title, "prompt"
+	}
+	return c.json(ctx, "PUT", "/api/v1/sessions/"+session, auth.Access, machine, body, nil)
 }
 
 func (c *client) report(ctx context.Context, auth authorization, machine, session string, started, ended time.Time, stop string, usage modelUsage, tools ...reportedTool) error {
@@ -152,7 +162,7 @@ func (c *client) reportTurn(ctx context.Context, auth authorization, machine, se
 	if selected == "" {
 		selected = modelID
 	}
-	snapshot := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("[]")))
+	snapshot, items := resourceSnapshot(facts.Resources)
 	turn := map[string]any{
 		"turn_index": index, "input_seq": index, "started_at": started, "ended_at": ended,
 		"stop_reason": stop, "model_id": selected, "resources_snapshot_id": snapshot,
@@ -183,9 +193,12 @@ func (c *client) reportTurn(ctx context.Context, auth authorization, machine, se
 	if facts.Compactions > 0 {
 		turn["compactions"] = facts.Compactions
 	}
+	if len(facts.SkillEvents) != 0 {
+		turn["skill_events"] = facts.SkillEvents
+	}
 	payload, err := json.Marshal(map[string]any{
 		"facts_version": 1, "turns": []any{turn},
-		"snapshots": []any{map[string]any{"snapshot_id": snapshot, "items": []any{}}},
+		"snapshots": []any{map[string]any{"snapshot_id": snapshot, "items": items}},
 	})
 	if err != nil {
 		return err
@@ -221,4 +234,58 @@ func (c *client) reportTurn(ctx context.Context, auth authorization, machine, se
 		after = index
 	}
 	return errors.New("session_report_not_acknowledged")
+}
+
+// reportDevice updates the client inventory the admin console shows, including
+// its last-active time. The identity handshake alone leaves those fields empty.
+func (c *client) reportDevice(ctx context.Context, auth authorization, device relayDevice) error {
+	platform := runtime.GOOS
+	if platform == "darwin" {
+		platform = "macos"
+	}
+	return c.json(ctx, http.MethodPut, "/api/v1/endpoints/"+device.machine, auth.Access, "", map[string]any{
+		"device_name": device.name, "platform": platform, "os_version": osVersion(), "arch": runtime.GOARCH,
+		"client_version": version, "protocol_version": 1, "client_type": "desktop", "client_name": "AIbertAI",
+		"runtime_version": version, "engine_version": version,
+	}, nil)
+}
+
+func osVersion() string {
+	if runtime.GOOS == "darwin" {
+		if out, err := exec.Command("sw_vers", "-productVersion").Output(); err == nil {
+			if v := strings.TrimSpace(string(out)); v != "" && len(v) <= 64 {
+				return v
+			}
+		}
+	}
+	return runtime.GOOS
+}
+
+// touchDevice re-reports the device at most every five minutes while it is used.
+func (l *acpLive) touchDevice(ctx context.Context) {
+	l.mu.Lock()
+	report := l.deviceReport
+	due := report != nil && time.Since(l.deviceReportedAt) >= 5*time.Minute
+	if due {
+		l.deviceReportedAt = time.Now()
+	}
+	l.mu.Unlock()
+	if !due {
+		return
+	}
+	auth, err := l.authorization(ctx)
+	if err == nil {
+		err = report(ctx, auth)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "device report failed: %v\n", err)
+	}
+}
+
+// reportTitle is the first prompt's title when conversation text may be reported.
+func (t acpTurn) reportTitle() string {
+	if !t.ReportText {
+		return ""
+	}
+	return promptTitle(t.Prompt)
 }

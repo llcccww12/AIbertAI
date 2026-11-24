@@ -154164,6 +154164,26 @@ function SidebarQuotaBar({ info: e, className: t }) {
     }),
   });
 }
+// 侧栏收起时额度显示为圆环：弧长 = 本周期剩余比例。
+function SidebarQuotaRing({ info: e }) {
+  return l.jsxs("svg", {
+    className: "sidebar-quota-ring",
+    "data-status": e.status,
+    viewBox: "0 0 36 36",
+    "aria-hidden": "true",
+    children: [
+      l.jsx("circle", { className: "sidebar-quota-ring-track", cx: 18, cy: 18, r: 15 }),
+      l.jsx("circle", {
+        className: "sidebar-quota-ring-fill",
+        cx: 18,
+        cy: 18,
+        r: 15,
+        pathLength: 100,
+        strokeDasharray: `${e.percent} 100`,
+      }),
+    ],
+  });
+}
 function SidebarQuota() {
   const { t: e } = Xe(),
     t = Jt((o) => o.ready),
@@ -154205,6 +154225,7 @@ function SidebarQuota() {
               l.jsx(SidebarQuotaBar, { info: r }),
               r.reset &&
                 l.jsx("span", { className: "sidebar-quota-reset", children: r.reset }),
+              l.jsx(SidebarQuotaRing, { info: r }),
             ],
           }),
         }),
@@ -154299,7 +154320,6 @@ function Z7t() {
             N === "switched" && t("/", { replace: !0 });
           }));
     };
-  const quotaInfo = useSidebarQuota();
   return (
     y.useEffect(() => {
       s.error && rn.error(s.error);
@@ -154310,8 +154330,6 @@ function Z7t() {
       l.jsxs(aw, {
         className: "sidebar-user",
         "data-menu-open": f || void 0,
-        "data-quota-status": quotaInfo?.status,
-        style: quotaInfo ? { "--sidebar-quota": quotaInfo.percent } : void 0,
         children: [
           l.jsxs(Cs, {
             open: f,
@@ -154336,11 +154354,6 @@ function Z7t() {
                         className: "sidebar-user-avatar",
                         "aria-hidden": "true",
                       }),
-                      quotaInfo &&
-                        l.jsx("span", {
-                          className: "sidebar-user-quota-ring",
-                          "aria-hidden": "true",
-                        }),
                       l.jsx(vZ, {
                         status: c,
                         className: "absolute top-0 right-0 ring-2 ring-sidebar",
