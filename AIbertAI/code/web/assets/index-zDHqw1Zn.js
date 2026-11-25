@@ -31317,6 +31317,7 @@ const DKe = [
   "_monkeyai/kb/documents/list",
   "_monkeyai/kb/documents/get",
   "_monkeyai/kb/documents/save",
+  "_monkeyai/kb/documents/upload",
   "_monkeyai/kb/documents/delete",
   "_monkeyai/environments/list",
   "_monkeyai/environments/get",
@@ -112965,6 +112966,15 @@ const qwt = {
     title: "标题",
     content: "正文",
     import: "导入文本文件",
+    uploadFiles: "上传文件",
+    uploadFolder: "上传文件夹",
+    uploading: "正在上传 {{done}}/{{total}}",
+    uploadDone: "已上传 {{count}} 个文件，学习完成后即可检索",
+    uploadFailed: "{{count}} 个文件未上传：{{names}}",
+    uploadHint: "支持 Word、Excel、PPT、PDF、图片和文本文件，单个文件最多 10 MB。",
+    uploadUnsupported: "不支持这种文件格式。支持 Word、Excel、PPT、PDF、图片和文本文件。",
+    uploadTooLarge: "文件超过 10 MB。",
+    uploadEmpty: "文件里没有可读取的文字。",
     fileHint: "支持 UTF-8 编码的 Markdown 和 TXT，单篇最多 1 MiB。",
     fileInvalid: "请选择 1 MiB 以内、内容非空的 UTF-8 Markdown 或 TXT 文件。",
     contentLimit: "正文最多 1 MiB。",
@@ -113139,6 +113149,15 @@ const qwt = {
     title: "Title",
     content: "Content",
     import: "Import text file",
+    uploadFiles: "Upload files",
+    uploadFolder: "Upload folder",
+    uploading: "Uploading {{done}}/{{total}}",
+    uploadDone: "Uploaded {{count}} files. They can be searched once learned.",
+    uploadFailed: "{{count}} files were not uploaded: {{names}}",
+    uploadHint: "Word, Excel, PowerPoint, PDF, images and text files, up to 10 MB each.",
+    uploadUnsupported: "This file type is not supported. Use Word, Excel, PowerPoint, PDF, images or text files.",
+    uploadTooLarge: "The file is larger than 10 MB.",
+    uploadEmpty: "The file has no readable text.",
     fileHint: "UTF-8 Markdown and TXT, up to 1 MiB per document.",
     fileInvalid: "Choose a non-empty UTF-8 Markdown or TXT file up to 1 MiB.",
     contentLimit: "Content is limited to 1 MiB.",
@@ -146437,6 +146456,8 @@ function S_t(e, t) {
       s(wi.knowledgeDocumentsGet.name, { id: i, documentId: o }),
     saveDocument: (i, o, a) =>
       s(wi.knowledgeDocumentsSave.name, { id: i, input: o, documentId: a }),
+    uploadDocument: (i, o, a, c) =>
+      s("_monkeyai/kb/documents/upload", { id: i, parentId: o, fileName: a, data: c }),
     moveDocument: (i, o, a) =>
       s(wi.knowledgeDocumentsMove.name, { id: i, documentId: o, input: a }),
     batchDocuments: (i, o) =>
@@ -146726,6 +146747,9 @@ function Nk(e, t) {
       document_revision_conflict: "versionConflict",
       kb_permissions_conflict: "permissionsConflict",
       precondition_required: "versionRequired",
+      kb_upload_format_unsupported: "uploadUnsupported",
+      kb_upload_too_large: "uploadTooLarge",
+      kb_upload_empty: "uploadEmpty",
     };
   return r[n] ? t("settings.knowledgeBases." + r[n]) : ni(e, t);
 }
@@ -279134,6 +279158,67 @@ function xrn({
   function X() {
     P(new Set(YIe(A, C, v).slice(0, G9)));
   }
+  // 上传本地文件或整个文件夹：文件夹按相对路径在当前位置重建，文件交给运行时提取正文。
+  const uploadFilesInput = y.useRef(null),
+    uploadFolderInput = y.useRef(null),
+    [uploadProgress, setUploadProgress] = y.useState(null);
+  async function uploadKnowledge(list) {
+    const files = [...(list ?? [])].filter(
+      (Oe) => !(Oe.webkitRelativePath || Oe.name).split("/").some((he) => he.startsWith(".")),
+    );
+    if (!files.length || !Ce || te.current) return;
+    ((te.current = !0), Q(!0));
+    const folders = new Map(),
+      failed = [];
+    let firstError;
+    setUploadProgress({ done: 0, total: files.length });
+    try {
+      for (const [index, file] of files.entries()) {
+        try {
+          if (file.size > 10 * 1024 * 1024) throw new Error("kb_upload_too_large");
+          let parent = I,
+            key = "";
+          for (const part of (file.webkitRelativePath || file.name).split("/").slice(0, -1)) {
+            key += "/" + part;
+            if (!folders.has(key))
+              folders.set(
+                key,
+                (
+                  await e.saveDocument(t.id, {
+                    title: part.slice(0, 200),
+                    node_type: "folder",
+                    source_type: "text",
+                    content: "",
+                    parent_id: parent ?? null,
+                  })
+                ).id,
+              );
+            parent = folders.get(key);
+          }
+          const bytes = new Uint8Array(await file.arrayBuffer());
+          let binary = "";
+          for (let Oe = 0; Oe < bytes.length; Oe += 32768)
+            binary += String.fromCharCode(...bytes.subarray(Oe, Oe + 32768));
+          await e.uploadDocument(t.id, parent ?? null, file.name, btoa(binary));
+        } catch (Oe) {
+          (failed.push(file.name), (firstError ??= Oe));
+        }
+        re.current && setUploadProgress({ done: index + 1, total: files.length });
+      }
+    } finally {
+      ((te.current = !1), re.current && (Q(!1), setUploadProgress(null), p.refresh()), r?.());
+    }
+    const uploaded = files.length - failed.length;
+    uploaded && rn.success(a("settings.knowledgeBases.uploadDone", { count: uploaded }));
+    failed.length &&
+      rn.error(
+        a("settings.knowledgeBases.uploadFailed", {
+          count: failed.length,
+          names: failed.slice(0, 5).join("、") + (failed.length > 5 ? "…" : ""),
+        }),
+        { description: Nk(firstError, a) },
+      );
+  }
   const ve = R?.kind === "document" ? (R.node?.id ?? R.parentId) : _,
     We = ve ? Nu(m, ve) : [],
     je = l.jsxs("nav", {
@@ -279524,6 +279609,50 @@ function xrn({
                                     "settings.knowledgeBases.createDocument",
                                   ),
                                   onClick: () => Ve(),
+                                }),
+                                l.jsxs(Te, {
+                                  size: "sm",
+                                  variant: "ghost",
+                                  disabled: !Ce,
+                                  title: a("settings.knowledgeBases.uploadHint"),
+                                  onClick: () => uploadFilesInput.current?.click(),
+                                  children: [
+                                    l.jsx(ke, { icon: kK, size: 16 }),
+                                    uploadProgress
+                                      ? a("settings.knowledgeBases.uploading", uploadProgress)
+                                      : a("settings.knowledgeBases.uploadFiles"),
+                                  ],
+                                }),
+                                l.jsxs(Te, {
+                                  size: "sm",
+                                  variant: "ghost",
+                                  disabled: !Ce,
+                                  title: a("settings.knowledgeBases.uploadHint"),
+                                  onClick: () => uploadFolderInput.current?.click(),
+                                  children: [
+                                    l.jsx(ke, { icon: Ywe, size: 16 }),
+                                    a("settings.knowledgeBases.uploadFolder"),
+                                  ],
+                                }),
+                                l.jsx("input", {
+                                  ref: uploadFilesInput,
+                                  type: "file",
+                                  multiple: !0,
+                                  hidden: !0,
+                                  onChange: (Oe) => {
+                                    const he = Oe.target.files;
+                                    (void uploadKnowledge(he), (Oe.target.value = ""));
+                                  },
+                                }),
+                                l.jsx("input", {
+                                  ref: uploadFolderInput,
+                                  type: "file",
+                                  webkitdirectory: "",
+                                  hidden: !0,
+                                  onChange: (Oe) => {
+                                    const he = Oe.target.files;
+                                    (void uploadKnowledge(he), (Oe.target.value = ""));
+                                  },
                                 }),
                               ],
                             })
@@ -280324,17 +280453,22 @@ function Rrn(e = document) {
 Rrn();
 const JIe = () => document.getElementById("root");
 // 启动动画：index.html 里的静态遮罩，在本机运行时连上（或未登录、出错、超时）后淡出。
-const bootSplashStartedAt = performance.now();
+// 知识库窗口不用本机运行时，页面载入即可使用，不再播放启动动画。
+const bootSplashSecondary = location.pathname.startsWith("/knowledge-bases/");
 let bootSplashDone = !1;
 function hideBootSplash() {
   if (bootSplashDone) return;
   bootSplashDone = !0;
   const el = document.getElementById("boot-splash");
   if (!el) return;
-  setTimeout(() => {
+  if (bootSplashSecondary) return el.remove();
+  // 最短展示时间从窗口真正显示时算起（见 boot-splash.js）。
+  const fade = () => setTimeout(() => {
     el.classList.add("boot-splash-done");
     setTimeout(() => el.remove(), 400);
-  }, Math.max(0, (matchMedia("(prefers-reduced-motion: reduce)").matches ? 600 : 1900) - (performance.now() - bootSplashStartedAt)));
+  }, Math.max(0, (matchMedia("(prefers-reduced-motion: reduce)").matches ? 600 : 1900) - (performance.now() - window.__bootSplashShownAt)));
+  if (window.__bootSplashShownAt !== void 0) fade();
+  else window.addEventListener("aibertai:boot-splash-shown", fade, { once: !0 });
 }
 function watchBootSplash() {
   const text = document.querySelector("#boot-splash .boot-splash-text");
@@ -280352,7 +280486,7 @@ function watchBootSplash() {
   };
   const check = () => {
     const session = Jt.getState();
-    if (!ir.getState().account || session.ready) return finish();
+    if (bootSplashSecondary || !ir.getState().account || session.ready) return finish();
     // 连接失败先等运行时自动重连，持续失败再露出界面里的错误与重试入口。
     if (session.connectError) errorTimer ??= setTimeout(finish, 8e3);
     else (clearTimeout(errorTimer), (errorTimer = void 0));

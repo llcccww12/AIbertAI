@@ -1826,6 +1826,7 @@ const ACCOUNT_REQUEST_METHODS = [
   "_monkeyai/kb/documents/list",
   "_monkeyai/kb/documents/get",
   "_monkeyai/kb/documents/save",
+  "_monkeyai/kb/documents/upload",
   "_monkeyai/kb/documents/delete",
   "_monkeyai/environments/list",
   "_monkeyai/environments/get",

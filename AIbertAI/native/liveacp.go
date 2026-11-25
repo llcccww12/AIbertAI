@@ -313,7 +313,8 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 	}
 	defer ws.CloseNow()
 	// Avatar uploads (5 MB as base64) and drafts (256 KB) travel in one frame.
-	ws.SetReadLimit(8 << 20)
+	// Knowledge uploads carry files of up to 10 MiB as base64.
+	ws.SetReadLimit(16 << 20)
 	viewer := h.goals != nil && h.local != nil && r.Header.Get("Origin") == h.local.origin
 	if viewer {
 		defer h.goals.removeViewer(ws)
@@ -864,6 +865,8 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 							fault = errors.New("invalid_request")
 						} else if auth, authErr := h.live.authorization(ctx); authErr != nil {
 							fault = errDesktopCredential
+						} else if in.Method == "_monkeyai/kb/documents/upload" {
+							result, fault = h.uploadKnowledgeFile(ctx, auth, in.Params)
 						} else {
 							result, fault = h.live.client.employeeKnowledge(ctx, auth, input)
 						}
