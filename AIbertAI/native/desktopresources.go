@@ -338,15 +338,29 @@ func (h *relaySessionHost) setDesktopSessionModel(ctx context.Context, method st
 	return map[string]any{"model": row.Model, "thinking": row.Thinking}, nil
 }
 
-// bindDSHRules adds the rules the employee turned on in Settings (and rules an
-// administrator requires) to the turn. The current choice applies to every
-// chat because this runtime has no per-chat rule selection.
-func (h *relaySessionHost) bindDSHRules(ctx context.Context) (context.Context, error) {
+// bindDSHRules adds the rules turned on for this conversation (and rules an
+// administrator requires) to the turn. A rule the conversation has not
+// chosen follows the default from Settings.
+func (h *relaySessionHost) bindDSHRules(ctx context.Context, session acpSession) (context.Context, error) {
 	if h.live == nil || h.live.client == nil {
 		return ctx, nil
 	}
 	h.live.mu.Lock()
 	enabled := maps.Clone(h.live.connectorPrefs.Enabled)
+	chosen := session.ConnectorPreferences
+	if current, ok := h.live.sessions[session.ID]; ok && current.ConnectorPreferences != nil {
+		chosen = current.ConnectorPreferences
+	}
+	if enabled == nil {
+		enabled = map[string]bool{}
+	}
+	if chosen != nil {
+		for key, value := range chosen.Enabled {
+			if strings.HasPrefix(key, "rule/") {
+				enabled[key] = value
+			}
+		}
+	}
 	h.live.mu.Unlock()
 	auth, err := h.live.authorization(ctx)
 	if err != nil {

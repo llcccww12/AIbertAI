@@ -87,6 +87,31 @@ func (h *relaySessionHost) employeeConfig(ctx context.Context) (any, error) {
 		rules = []json.RawMessage{}
 		syncStatus["rules"] = map[string]any{"state": "error", "error": ruleErr.Error()}
 	}
+	// The conversation rule picker reads resourceRules, keyed like the
+	// preferences a turn applies (rule/server/<id>).
+	resourceRules := []any{}
+	for _, raw := range rules {
+		var rule map[string]any
+		if json.Unmarshal(raw, &rule) != nil || rule == nil || rule["enabled"] == false {
+			continue
+		}
+		id, _ := rule["id"].(string)
+		if !validUUID(id) {
+			continue
+		}
+		required, _ := rule["required"].(bool)
+		item := map[string]any{"id": "rule/server/" + id, "referenceId": id, "name": rule["name"], "content": rule["content"],
+			"description": rule["description"], "required": required, "source": "team"}
+		for _, key := range []string{"scope", "origin", "user", "ownership_type", "name_i18n", "description_i18n"} {
+			if value, ok := rule[key]; ok {
+				item[key] = value
+			}
+		}
+		if rule["ownership_type"] == "user" {
+			item["source"] = "personal"
+		}
+		resourceRules = append(resourceRules, item)
+	}
 	skills, skillErr := l.client.desktopSkillCatalog(ctx, auth)
 	if skillErr != nil {
 		syncStatus["skills"] = map[string]any{"state": "error", "error": skillErr.Error()}
@@ -129,7 +154,7 @@ func (h *relaySessionHost) employeeConfig(ctx context.Context) (any, error) {
 			"thinking": thinking, "status": map[string]any{"state": "ok", "gatewayBaseUrl": l.client.server, "error": nil}},
 		"mcp": localMCP, "mcpError": nil, "skills": empty, "skillPackages": empty, "experts": empty,
 		"expertSummaries": expertSummaries, "expertIssues": map[string]any{}, "expertMissingSkills": map[string]any{},
-		"resourceRules": empty, "resourceSkills": empty, "resourceSyncStatus": syncStatus,
+		"resourceRules": resourceRules, "resourceSkills": empty, "resourceSyncStatus": syncStatus,
 		"resourcePreferences": preferences,
 		"server":              map[string]any{"connectors": connectors, "experts": experts, "rules": rules, "skills": skills},
 		"workspace":           map[string]any{"additional_directories": empty, "last_workspace": l.cwd},

@@ -174,14 +174,20 @@ func TestDSHRulesFollowSettings(t *testing.T) {
 	defer server.Close()
 	live := &acpLive{client: &client{server: server.URL, http: server.Client()}, auth: authorization{Access: "account"},
 		connectorPrefs: connectorPreferences{Enabled: map[string]bool{"rule/server/" + enabled: true, "rule/server/" + off: false}}}
-	ctx, err := (&relaySessionHost{live: live}).bindDSHRules(t.Context())
+	ctx, err := (&relaySessionHost{live: live}).bindDSHRules(t.Context(), acpSession{})
 	if got, _ := ctx.Value(dshRuleInstructionsKey{}).(string); err != nil || got != "Required rule\n\nEnabled rule" {
 		t.Fatalf("rules = %q (%v)", got, err)
+	}
+	// A conversation's own choice overrides the default from Settings.
+	chat := acpSession{ID: "chat", ConnectorPreferences: &connectorPreferences{Enabled: map[string]bool{"rule/server/" + enabled: false, "rule/server/" + off: true}}}
+	ctx, err = (&relaySessionHost{live: live}).bindDSHRules(t.Context(), chat)
+	if got, _ := ctx.Value(dshRuleInstructionsKey{}).(string); err != nil || got != "Required rule\n\nOff rule" {
+		t.Fatalf("conversation rules = %q (%v)", got, err)
 	}
 	missing := httptest.NewServer(http.NotFoundHandler())
 	defer missing.Close()
 	live.client = &client{server: missing.URL, http: missing.Client()}
-	if ctx, err := (&relaySessionHost{live: live}).bindDSHRules(t.Context()); err != nil || ctx.Value(dshRuleInstructionsKey{}) != nil {
+	if ctx, err := (&relaySessionHost{live: live}).bindDSHRules(t.Context(), acpSession{}); err != nil || ctx.Value(dshRuleInstructionsKey{}) != nil {
 		t.Fatalf("backend without rules must not block turns: %v", err)
 	}
 }

@@ -168,7 +168,8 @@ func (h *relaySessionHost) sessionConnectorResources(raw json.RawMessage, write 
 		case "resource":
 			name, ok := strings.CutPrefix(change.ID, "mcp/")
 			skill, isSkill := strings.CutPrefix(change.ID, dshSkillPreferencePrefix)
-			if change.Enabled == nil || !(ok && h.validConnectorPreference(name) || isSkill && validUUID(skill)) {
+			rule, isRule := strings.CutPrefix(change.ID, "rule/server/")
+			if change.Enabled == nil || !(ok && h.validConnectorPreference(name) || isSkill && validUUID(skill) || isRule && validUUID(rule)) {
 				return nil, errors.New("invalid_session_resources")
 			}
 			prefs.Enabled[change.ID] = *change.Enabled

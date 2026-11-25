@@ -466,7 +466,7 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 				if background && (len(files) != 0 || len(turn.CanvasNodes) != 0) {
 					err = errors.New("dsh_input_unsupported")
 				} else {
-					turnCtx, err = h.bindDSHRules(turnCtx)
+					turnCtx, err = h.bindDSHRules(turnCtx, session)
 					if err == nil && session.ExpertID != "" && session.ExpertID != designExpertID {
 						var releaseExpert func()
 						turnCtx, releaseExpert, err = h.bindDSHExpert(turnCtx, session)
