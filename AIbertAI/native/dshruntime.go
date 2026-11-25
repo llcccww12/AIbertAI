@@ -37,6 +37,7 @@ type dshRuntimeConfig struct {
 // explicit allowlist; ambient permission-mode variables are not inherited.
 type dshInstalledRuntime struct {
 	StandardSkillsDir string // Bundled with the verified Standard preset.
+	PlatformSkillsDir string // The account's platform skills, for sessions without an expert.
 	Executable        string
 	Entry             string
 	Home              string

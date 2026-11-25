@@ -29,6 +29,7 @@ var dshHostDisabledPlugins string
 // The caller owns listener lifetime and must persist SDK settlement before Ack.
 type dshLocalGateway struct {
 	standardMode                             bool
+	platformSkillsDir                        string
 	agentTeamEnabled                         *bool // New SDK sessions only. Existing sessions restore their journaled team/mode.
 	gateway                                  *dshGateway
 	selected                                 selectedModelConfig
@@ -705,6 +706,9 @@ func (g *dshLocalGateway) Patch(baseURL string, model selectedModelConfig, disab
 		patch = append(patch, map[string]any{"id": "tool-subagent", "config": map[string]any{
 			"provider": "spawn", "toolName": "subagent", "modelDiscovery": true, "modelSelection": true,
 		}})
+	}
+	if g.platformSkillsDir != "" && !slices.Contains(disabledPlugins, "skill-filesystem") {
+		patch = append(patch, map[string]any{"id": "skill-filesystem", "config": map[string]any{"customSkillDirs": []string{g.platformSkillsDir}}})
 	}
 	// Plugin management always requires a fresh user grant, including in a full-access SDK session.
 	patch = append(patch, map[string]any{"id": "tool-plugin-manager", "config": map[string]any{"requireApproval": true, "manageableEntries": dshManagedEntries}})

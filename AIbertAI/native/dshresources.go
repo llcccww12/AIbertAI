@@ -10,11 +10,13 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Set only by the signed packaging build using -X, never from a runtime env var.
@@ -287,7 +289,7 @@ func configureDSHResources(live *acpLive, profile, serverID, machineID, resource
 		return fmt.Errorf("dsh home: %w", err)
 	}
 	gateway := &dshGateway{client: live.client, authorization: live.authorization}
-	config, err := newDSHGatewayRuntime(dshInstalledRuntime{Executable: node, Entry: entry, StandardSkillsDir: filepath.Join(resourceRoot, "app", "packages", "preset", "agent-preset", "skills"), Home: filepath.Join(base, "home"), Env: []string{"PATH=" + os.Getenv("PATH")}}, filepath.Join(base, "gateway"), gateway, func(ctx context.Context, session acpSession) (selectedModelConfig, error) {
+	config, err := newDSHGatewayRuntime(dshInstalledRuntime{Executable: node, Entry: entry, StandardSkillsDir: filepath.Join(resourceRoot, "app", "packages", "preset", "agent-preset", "skills"), Home: filepath.Join(base, "home"), PlatformSkillsDir: filepath.Join(base, "platform-skills"), Env: []string{"PATH=" + os.Getenv("PATH")}}, filepath.Join(base, "gateway"), gateway, func(ctx context.Context, session acpSession) (selectedModelConfig, error) {
 		auth, err := live.authorization(ctx)
 		if err != nil {
 			return selectedModelConfig{}, err
@@ -296,6 +298,22 @@ func configureDSHResources(live *acpLive, profile, serverID, machineID, resource
 	})
 	if err != nil {
 		return err
+	}
+	prepare := config.Prepare
+	config.Prepare = func(ctx context.Context, session acpSession) (*exec.Cmd, string, string, *dshLocalGateway, func(), error) {
+		if session.ExpertID == "" {
+			// Best effort: an unreachable catalog keeps the last synced skills.
+			syncCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			auth, err := live.authorization(syncCtx)
+			if err == nil {
+				err = live.client.syncDSHPlatformSkills(syncCtx, auth, filepath.Join(base, "platform-skills"))
+			}
+			cancel()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "platform skills not synced: %v\n", err)
+			}
+		}
+		return prepare(ctx, session)
 	}
 	config.VerifiedResourceRoot = filepath.Dir(filepath.Dir(node))
 	config.LeasePool = &dshLeasePool{}
