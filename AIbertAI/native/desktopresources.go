@@ -138,6 +138,21 @@ func desktopModelInput(input json.RawMessage) bool {
 }
 
 func (h *relaySessionHost) desktopResource(ctx context.Context, method string, raw json.RawMessage) (any, error) {
+	if method == "_monkeyai/resources/skills/create" {
+		var p struct{ Name, Description, Content string }
+		if json.Unmarshal(raw, &p) != nil {
+			return nil, errors.New("invalid_request")
+		}
+		result, err := h.createPlatformSkill(ctx, "", p.Name, p.Description, p.Content)
+		if err != nil {
+			return nil, err
+		}
+		config, err := h.employeeConfig(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"result": result, "config": config}, nil
+	}
 	var p struct {
 		Kind, ID, ETag, CredentialID, Name string
 		Input                              json.RawMessage

@@ -116,6 +116,17 @@ func TestCustomModelAndRejectedResponse(t *testing.T) {
 	if err != nil || result.Status != "failed" || result.ErrorCode != "upstream_rejected" {
 		t.Fatalf("网关无可用渠道应按明确失败处理: %+v, %v", result, err)
 	}
+	timedOut := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(524)
+		_, _ = w.Write([]byte(`{"error":{"message":"Upstream service is temporarily unavailable, please retry later","type":"upstream_error","param":"","code":"bad_response_status_code"}}`))
+	}))
+	defer timedOut.Close()
+	p = New(timedOut.Client())
+	result, err = p.Generate(context.Background(), proxy.Target{BaseURL: timedOut.URL + "/v1", UpstreamModel: "gpt-image-2"},
+		imagegen.ProviderRequest{Prompt: "猫", Quality: "4K", AspectRatio: "3:4", Count: 1})
+	if err != nil || result.Status != "failed" || result.ErrorCode != "upstream_rejected" {
+		t.Fatalf("网关报告上游错误状态应按明确失败处理: %+v, %v", result, err)
+	}
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusBadGateway) }))
 	defer gateway.Close()
 	p = New(gateway.Client())

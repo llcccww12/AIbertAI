@@ -320,7 +320,7 @@ SELECT id, user_id, session_id, model_id, provider, operation, provider_job_id, 
     error_code, created_at, completed_at, pricing_snapshot
 FROM image_jobs
 WHERE (status = 'reserved' AND created_at < now() - interval '5 minutes')
-   OR (status = 'submitted' AND submitted_at < now() - interval '5 minutes')
+   OR (status = 'submitted' AND submitted_at < now() - interval '11 minutes')
    OR (status IN ('running', 'unknown') AND provider_job_id IS NOT NULL)
 ORDER BY created_at
 LIMIT $1

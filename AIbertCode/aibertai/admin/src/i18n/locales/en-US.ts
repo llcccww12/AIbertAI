@@ -1512,6 +1512,8 @@ export const enUS = {
           "Select a supported video model and wait for its capabilities to load.",
         videoPriceInvalid:
           "Enter nonnegative credits per second for every video resolution, using at most six decimal places.",
+        videoResolutionInvalid:
+          "Keep at least one resolution, including one that every enabled video mode supports.",
         imageOptionsInvalid:
           "The image protocol configuration is unavailable. Select another protocol or retry.",
         imagePriceInvalid:
@@ -1536,6 +1538,7 @@ export const enUS = {
       embeddingDimensionAuto:
         "Vector dimensions are detected automatically when saved.",
       videoCreditsPerSecond: "Credits per second - {{resolution}}",
+      videoResolution: "Available resolutions",
       imageCreditsPerImage: "Credits per image - {{quality}}",
       discoverModels: "Fetch available models",
       discoveryCredentialsRequired: "Enter the Base URL and API key first.",

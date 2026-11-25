@@ -31,12 +31,19 @@ type dshRuntimeConfig struct {
 	Command                func(context.Context, acpSession) (*exec.Cmd, error)
 	Provider               func(context.Context, acpSession) (string, string, error)
 	Prepare                func(context.Context, acpSession) (*exec.Cmd, string, string, *dshLocalGateway, func(), error)
+	// SyncPlatformSkills refreshes the account's skills for DSH; nil when unavailable.
+	SyncPlatformSkills func(context.Context) error
+	// SessionSkills refreshes one conversation's enabled skills from the cache.
+	SessionSkills func(acpSession) error
+	// TeamExperts lists the platform experts offered as subagent presets.
+	TeamExperts func(context.Context) []dshTeamExpert
 }
 
 // dshInstalledRuntime describes a platform-provisioned SDK bundle. Env is an
 // explicit allowlist; ambient permission-mode variables are not inherited.
 type dshInstalledRuntime struct {
 	StandardSkillsDir string // Bundled with the verified Standard preset.
+	PlatformSkillsDir string // The account's platform skills, for sessions without an expert.
 	Executable        string
 	Entry             string
 	Home              string

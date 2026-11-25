@@ -22,3 +22,6 @@ coverage/
 # Only the current platform is maintained in this repository.
 /AIbertCode/*
 !/AIbertCode/aibertai/
+
+# go build output of the native engine
+AIbertAI/native/native

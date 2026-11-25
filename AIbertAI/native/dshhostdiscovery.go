@@ -44,6 +44,10 @@ var errDSHCanvasUnavailable = errors.New("dsh_canvas_unavailable")
 // dshTurnHostTools exposes only account/session-authorized tools. Canvas writes
 // are restricted to those with verified guards and durable receipt handling.
 func (h *relaySessionHost) dshTurnHostTools(ctx context.Context, ws *websocket.Conn, request *http.Request, session acpSession, turn *acpTurn) ([]dshHostToolBridge, string, error) {
+	if h.live != nil && h.live.dsh != nil && h.live.dsh.SessionSkills != nil && session.ExpertID == "" {
+		// Best effort: skill switches changed since the last turn take effect now.
+		_ = h.live.dsh.SessionSkills(session)
+	}
 	selected := h.dshSelectedKnowledge(session)
 	requiresCanvas := session.ExpertID == designExpertID || len(turn.CanvasNodes) > 0
 	if h.live == nil || request == nil {
@@ -158,13 +162,54 @@ func (h *relaySessionHost) dshTurnHostTools(ctx context.Context, ws *websocket.C
 		return nil, "", err
 	}
 	bridges = append(bridges, remote...)
+	if bridge, hint := h.dshPlatformCreateHostTools(ctx, ws, request, session, turn); bridge != nil {
+		bridges = append(bridges, *bridge)
+		if instructions != "" {
+			instructions += "\n\n"
+		}
+		instructions += hint
+	}
+	if session.ExpertID == "" && h.live.dsh != nil && h.live.dsh.TeamExperts != nil {
+		if hint := dshTeamExpertInstructions(h.live.dsh.TeamExperts(ctx)); hint != "" {
+			if instructions != "" {
+				instructions += "\n\n"
+			}
+			instructions += hint
+		}
+	}
 	return bridges, instructions, nil
 }
 
-// dshRemoteTurnConnectorTools never starts imported local MCP processes.
+// dshLocalMCPSelected reports whether discovery would start a local MCP
+// server for this session, using the same selection as dshConnectorDiscovery.
+func (h *relaySessionHost) dshLocalMCPSelected(session acpSession) bool {
+	if h.local == nil {
+		return false
+	}
+	prefs := connectorPreferences{}.normalized()
+	if session.ConnectorPreferences != nil {
+		prefs = session.ConnectorPreferences.normalized()
+	}
+	h.importedResourcesMu.RLock()
+	defer h.importedResourcesMu.RUnlock()
+	if h.importedResources == nil {
+		return false
+	}
+	profile := h.importedResources.Experts[session.ExpertID]
+	for id, entry := range h.importedResources.Local {
+		enabled, set := prefs.Enabled["mcp/"+entry.Name]
+		if enabled || !set && (entry.Enabled == nil || *entry.Enabled) || slices.Contains(profile.LocalTools, id) {
+			return true
+		}
+	}
+	return false
+}
+
+// dshRemoteTurnConnectorTools starts local MCP servers only on this device,
+// each after its own startup approval, as the ACP engine does.
 func (h *relaySessionHost) dshRemoteTurnConnectorTools(ctx context.Context, ws *websocket.Conn, request *http.Request, session acpSession, turn *acpTurn) ([]dshHostToolBridge, error) {
 	var bridges []dshHostToolBridge
-	selected := session.ConnectorPreferences != nil && session.ConnectorPreferences.hasEnabledConnector()
+	selected := session.ConnectorPreferences != nil && session.ConnectorPreferences.hasEnabledConnector() || h.dshLocalMCPSelected(session)
 	if !selected && session.ExpertID != "" && session.ExpertID != designExpertID {
 		expert, ok := ctx.Value(dshExpertManifestKey{}).(desktopExpert)
 		if !ok || expert.ID != session.ExpertID {
@@ -182,18 +227,23 @@ func (h *relaySessionHost) dshRemoteTurnConnectorTools(ctx context.Context, ws *
 		}
 	}
 	if selected {
-		catalog, err := h.dshConnectorDiscovery(ctx, ws, request, session, turn, false)
+		catalog, err := h.dshConnectorDiscovery(ctx, ws, request, session, turn, h.local != nil)
 		if err != nil {
 			return nil, err
 		}
 		tools := make([]dshHostTool, 0, len(catalog.tools))
 		for _, item := range catalog.definitions() {
+			tool := catalog.tools[item.Name]
 			schema, err := dshStrictToolSchema(item.InputSchema)
+			if err != nil && tool.Local {
+				// A third-party local server's unsupported schema drops only that tool.
+				delete(catalog.tools, item.Name)
+				continue
+			}
 			if err != nil {
 				catalog.close()
 				return nil, err
 			}
-			tool := catalog.tools[item.Name]
 			turn.useResource("connector", tool.ConnectorID)
 			tools = append(tools, dshHostTool{Name: item.Name, Description: item.Description, InputSchema: schema, Title: tool.ConnectorName + " / " + tool.Name, Kind: "other", Category: "connector", ResourceID: tool.ConnectorID})
 		}

@@ -103,6 +103,8 @@ func TestDSHPatchedSDKWebSocketReconnect(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// Like the desktop client, accept history pages larger than the 32 KB default.
+		ws.SetReadLimit(8 << 20)
 		if err = wsjson.Write(ctx, ws, map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]int{"protocolVersion": 1}}); err != nil {
 			t.Fatal(err)
 		}

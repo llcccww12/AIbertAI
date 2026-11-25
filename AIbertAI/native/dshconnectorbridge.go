@@ -39,7 +39,7 @@ func dshConnectorDispatch(root *os.Root, session, operation, call string) error 
 	if err != nil {
 		return errors.New("dsh_connector_dispatch_unavailable")
 	}
-	err = errors.Join(parent.Sync(), parent.Close())
+	err = errors.Join(syncDirFile(parent), parent.Close())
 	if err != nil {
 		return errors.New("dsh_connector_dispatch_unavailable")
 	}
@@ -51,7 +51,7 @@ func dshConnectorDispatch(root *os.Root, session, operation, call string) error 
 	if err != nil {
 		return errors.New("dsh_connector_dispatch_unavailable")
 	}
-	err = errors.Join(parent.Sync(), parent.Close())
+	err = errors.Join(syncDirFile(parent), parent.Close())
 	if err != nil {
 		return errors.New("dsh_connector_dispatch_unavailable")
 	}
