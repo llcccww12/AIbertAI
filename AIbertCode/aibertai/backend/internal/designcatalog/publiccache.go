@@ -126,8 +126,14 @@ func readPublicCatalog(w http.ResponseWriter, r *http.Request, dir string) {
 		if search != "" && !strings.Contains(strings.ToLower(strings.Join([]string{id, cmp.Or(item.Name, item.Title), item.Description, item.LocalizedName["zh"]}, " ")), search) {
 			continue
 		}
+		resource := cachedResource(row)
+		// A bundle template whose package was not cached cannot be used, so
+		// do not offer it to clients.
+		if item.TemplateKind == "bundle" && resource["downloadable"] == false {
+			continue
+		}
 		if total >= start && len(items) < size {
-			items = append(items, cachedResource(row))
+			items = append(items, resource)
 		}
 		total++
 	}

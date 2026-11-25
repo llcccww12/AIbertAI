@@ -14693,6 +14693,8 @@ let capabilities = null;
 const readyWaiters$1 = [];
 let reloadWhenReady = null;
 let verifiedOfficeResources = null;
+// 首次登录时运行时在等浏览器授权，就绪等待不按超时处理。
+let sourceAuthorizing = false;
 function runtimeStatus() {
   return status$1;
 }
@@ -14738,6 +14740,7 @@ function onStdoutLine(proc, token, raw, logger, authorizationServer) {
   }
   if (authorizationServer && event?.event === "source_authorize") {
     if (child$2 !== proc || typeof event.url !== "string") return;
+    sourceAuthorizing = true;
     try {
       const target = new URL(event.url);
       if (target.origin !== new URL(authorizationServer).origin || target.pathname !== "/oauth/authorize" || target.username || target.password || target.hash) throw new Error("invalid_runtime_authorization_url");
@@ -14776,6 +14779,7 @@ function onStdoutLine(proc, token, raw, logger, authorizationServer) {
     return;
   }
   status$1 = "ready";
+  sourceAuthorizing = false;
   verifiedOfficeResources = authorizationServer && typeof event.dshResources === "string" && node_path.isAbsolute(event.dshResources) ? event.dshResources : null;
   if (authorizationServer) ready2.sourcePreview = true;
   endpoint$2 = ready2;
@@ -14855,6 +14859,7 @@ async function start$2(account) {
     closeBrowserRuntime();
     child$2 = null;
     reloadWhenReady = null;
+    sourceAuthorizing = false;
     status$1 = "exited";
     endpoint$2 = null;
     clearDeviceRemoteStatus();
@@ -14900,6 +14905,7 @@ function stop() {
   cancelBackoff();
   const proc = child$2;
   child$2 = null;
+  sourceAuthorizing = false;
   status$1 = "stopped";
   endpoint$2 = null;
   activeAccountId = null;
@@ -14974,11 +14980,16 @@ function whenReady() {
         reject(error);
       }
     };
-    const timer2 = setTimeout(() => {
+    const expire = () => {
+      if (sourceAuthorizing && child$2) {
+        timer2 = setTimeout(expire, READY_TIMEOUT_MS$1);
+        return;
+      }
       const index2 = readyWaiters$1.indexOf(waiter);
       if (index2 >= 0) readyWaiters$1.splice(index2, 1);
       reject(new Error(ErrorCode.runtimeNotReady));
-    }, READY_TIMEOUT_MS$1);
+    };
+    let timer2 = setTimeout(expire, READY_TIMEOUT_MS$1);
     readyWaiters$1.push(waiter);
   });
 }

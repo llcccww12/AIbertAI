@@ -20533,7 +20533,7 @@ function designState(context) {
     provider: PROVIDER_UNAVAILABLE
   };
 }
-async function initializeDesignTask(cwd, sessionId, selection, canvasStore = new CanvasStore(), template, resources, source2 = "respub", resourceTarget, imageTemplateDirection) {
+async function initializeDesignTask(cwd, sessionId, selection, canvasStore = new CanvasStore(), template, resources, source2 = "respub", resourceTarget, imageTemplateDirection, imageTemplateExample) {
   const canvasId = require$$2.randomUUID();
   const localDesignPath = `.aibertai/design/${canvasId}`;
   const target = require$$1$1.resolve(cwd, ".aibertai", "design", canvasId);
@@ -20561,6 +20561,9 @@ async function initializeDesignTask(cwd, sessionId, selection, canvasStore = new
   const styleResources = await prepare(state.styleRef, materializeVisualStyle);
   const designSystemResources = await prepare(state.designSystemRef, materializeDesignSystem);
   canvasStore.create(cwd, { id: canvasId, title: "Untitled design" });
+  // 图片模版的示例图随任务落盘，不依赖模型自己调用 design_catalog_detail。
+  const examplePath = imageTemplateExample ? `${localDesignPath}/template-example.${imageTemplateExample.ext}` : "";
+  if (examplePath) atomicWrite(require$$1$1.join(target, `template-example.${imageTemplateExample.ext}`), imageTemplateExample.data);
   atomicWrite(require$$1$1.join(target, "design-context.json"), JSON.stringify({
     schemaVersion: 1,
     designSessionId: state.designSessionId,
@@ -20571,6 +20574,7 @@ async function initializeDesignTask(cwd, sessionId, selection, canvasStore = new
     templateRef: state.templateRef,
     ...template ? { templateResources: template } : {},
     ...imageTemplateDirection ? { imageTemplateDirection } : {},
+    ...examplePath ? { imageTemplateExample: examplePath } : {},
     designSystemRef: state.designSystemRef,
     designSystemResources,
     styleRef: state.styleRef ?? null,
@@ -20590,7 +20594,7 @@ async function initializeDesignTask(cwd, sessionId, selection, canvasStore = new
 - Select methods from the actual artifact and editing requirements, not a blanket poster-plus-HTML recipe. First inspect available skill names and descriptions; generic image-design or the ability to generate images does not itself cover the required design specialty. Only in the fallback image route, for a new layered task without a clearly matching method, use SkillSearch with the real artifact type and needs. Load a matching available=true result with Skill, using its exact name. If no suitable method is found or a material gap remains, search the web for skill / SKILL.md sources and read their original bodies; stop expanding the search once a suitable method is found. Product research is not skill research. The creation and revision steps permit public non-workflow method skills without changing the active workflow, its step, permissions or review gates. Do not call them before those steps or repeat already automatically loaded step skills. HTML is conditional on editable text; reference methods are conditional on actual supplied references. Flat output needs no external skill search or adaptation. Read the original skill body and necessary references, then adopt the whole method or borrow useful parts using real tools and schemas. Missing skills, unreadable sources or incompatible tools do not block production or become task errors; continue with native capabilities and record actual sources, adopted methods and delivery-relevant limitations. Do not claim an unperformed lookup found nothing. Do not create or modify skill files, scan the filesystem to bypass availability, execute external scripts, install dependencies, upload private files or change global configuration. Ask only when a mandated skill or a substitution materially changes delivery, editability, style or cost. Reuse confirmed choices for local edits and recovery. Subject confirmation, permissions, cancellation and full preview/review remain mandatory.
 - Resource location anchor: original workspace ${JSON.stringify(require$$1$1.resolve(cwd))}; task directory ${JSON.stringify(target)}. These locations do not change when you enter a worktree. Re-read ${JSON.stringify(require$$1$1.join(target, "design-context.json"))} for current selections. Style and design-system paths in that manifest are relative to this task directory; template paths are relative to the original workspace. Never rebase these references onto the new working directory. Reuse the original resources as references; do not copy or regenerate the package just to switch worktrees.
 - Template reference: ${state.templateRef ? `\`${state.templateRef.id}\` at \`${state.templateRef.version}\`` : "none; this does not prevent the logo workflow from searching the catalog when the user has not specified a direction; do not require a manual template selection"}.
-${state.templateRef && state.designType !== "prototype" && state.designType !== "slide_deck" ? `- The selected template \`${state.templateRef.id}\` is a prompt template: its server material is the template prompt plus one example image. Before any media generation, call \`design_catalog_detail\` with id \`${state.templateRef.id}\` and Read the returned \`previewSourcePath\`; it is the target look (composition, views, annotation style, palette, rendering style), not the user's subject. If the user attached their own image in this conversation, use it as the subject: call \`media_edit_image\` with that image as \`source_path\` and a prompt that keeps the template prompt and explicitly describes the example's layout and style. If the template prompt refers to an attached image (e.g. "所附图像" / "attached image") and the user attached none, do not search the workspace for unrelated images; ask once with AskUserQuestion whether to attach their own product image or build on the template example, and in the latter case call \`media_edit_image\` with \`previewSourcePath\` as \`source_path\`. If \`previewStatus\` is not \`available\`, say so and continue from the prompt alone.` : ""}
+${state.templateRef && examplePath ? `- The selected template \`${state.templateRef.id}\` is a prompt template; its example image is already saved at \`${examplePath}\` (workspace-relative). Read it before any media generation: it is the target look (composition, views, annotation style, palette, rendering style), not the user's subject. When the template prompt refers to an attached image (e.g. "所附图像" / "attached image"), use the image the user attached in this conversation as \`source_path\` for \`media_edit_image\`; if they attached none, use \`${examplePath}\` as \`source_path\`. Keep the template prompt, fill any placeholder such as "（包装类型）" from the user's request or the example, and explicitly describe the example's layout and style in the prompt. Do not search the workspace for other images and do not ask the user for an attachment.` : state.templateRef && state.designType !== "prototype" && state.designType !== "slide_deck" ? `- The selected template \`${state.templateRef.id}\` is a prompt template: its server material is the template prompt plus one example image. Before any media generation, call \`design_catalog_detail\` with id \`${state.templateRef.id}\` and Read the returned \`previewSourcePath\`; it is the target look (composition, views, annotation style, palette, rendering style), not the user's subject. If the user attached their own image in this conversation, use it as the subject: call \`media_edit_image\` with that image as \`source_path\` and a prompt that keeps the template prompt and explicitly describes the example's layout and style. If the template prompt refers to an attached image (e.g. "所附图像" / "attached image") and the user attached none, do not search the workspace for unrelated images; ask once with AskUserQuestion whether to attach their own product image or build on the template example, and in the latter case call \`media_edit_image\` with \`previewSourcePath\` as \`source_path\`. If \`previewStatus\` is not \`available\`, say so and continue from the prompt alone.` : ""}
 ${state.styleRef && styleResources ? visualStyleInstruction(localDesignPath, state.styleRef, styleResources) : "- Visual style reference: none."}
 ${state.designSystemRef && designSystemResources ? designSystemInstruction(target, state.designSystemRef, designSystemResources) : "- Design System reference: none."}
 - For a web prototype, first gather the essential requirements (purpose, audience, core pages and interactions). Ask only questions whose answers would materially affect the result. If no style was selected in task creation, call \`design_await_style_choice\` and wait for it to return in the same turn before creating HTML or generating images. The Host rejects both the first HTML node and the first fill of a user-created empty HTML container until the user selects or skips. For every distinct requested page without an existing selected container, call \`canvas_create_html\` before you start implementing that page, then write and commit that page in its own returned artifact. If the current user message references a selected HTML canvas node and asks to place, generate, or edit the prototype in that container, call \`canvas_get_selection\`; when that selected container is empty, the call waits for the style decision before returning. Then write the page directly into that node's returned \`artifact_path\`, and commit the same node ID whether the HTML container is empty or already contains content; do not copy it, call \`canvas_create_html\`, or create an adjacent node. One canvas HTML node represents exactly one page: never implement multiple pages or client-side routes inside one artifact, and never postpone creating a page node until after its code is written. The Host lays prototype pages out horizontally. Implement all navigation between prototype pages in the delivered page code using normal anchors, forms, or JavaScript navigation. Link to the target page with a real relative artifact path computed from the current \`artifact_path\` to the target \`artifact_path/index.html\` (sibling artifacts are typically \`../TARGET_NODE_ID/index.html\`). Navigation must work as a standalone website in a normal browser; never depend on canvas selection, preview-only attributes, host click interception, or chat state. Honor any visual direction already present in the user request. A design system is optional and never blocks creation; when selected, read and apply its complete local package. Never suggest a template unless explicitly requested.
@@ -52855,6 +52859,18 @@ function createPrivateCatalog(origin) {
     if (snapshotParameterOf(snapshot) !== ref.version) throw new Error("design_resource_version_changed");
     return { client: resources, source: PUBLIC_DESIGN_CACHE };
   };
+  const loadTemplateExample = async (previewUrl) => {
+    if (!previewUrl) return void 0;
+    try {
+      const response2 = await globalThis.fetch(trustedUrl(previewUrl, cache), { credentials: "omit", redirect: "error", signal: AbortSignal.timeout(15e3) });
+      if (!response2.ok) return void 0;
+      const data = Buffer.from(await response2.arrayBuffer());
+      const ext = data.length <= 5 * 1024 * 1024 ? { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" }[sniffMime(data)] : void 0;
+      return ext ? { data, ext } : void 0;
+    } catch {
+      return void 0;
+    }
+  };
   const openCanvas = async ({ sessionId, cwd, selection }) => {
     const designDir = require$$1$1.join(cwd, ".aibertai");
     ensureDirectory(designDir);
@@ -52863,7 +52879,7 @@ function createPrivateCatalog(origin) {
     const existing = existingDesignWorkspace(cwd, sessionId, {});
     if (existing) return existing;
     const selected = selection;
-    let template, imageTemplateDirection;
+    let template, imageTemplateDirection, imageTemplateExample;
     if (selected.templateRef) {
       const ref = selected.templateRef;
       const target = await resourceTarget(ref);
@@ -52871,11 +52887,12 @@ function createPrivateCatalog(origin) {
         const detail = await target.client.detail(target.source, "template", ref.id, ref.digest);
         if (detail.ref.version !== ref.version) throw new Error("design_resource_version_changed");
         imageTemplateDirection = (detail.examplePrompt || detail.description || "").trim().slice(0, 4000);
+        imageTemplateExample = await loadTemplateExample(detail.previewUrl);
       } else {
         template = await prepareDesignTemplate(cwd, selected, target.client, target.source);
       }
     }
-    const state = await initializeDesignTask(cwd, sessionId, selected, void 0, template, void 0, void 0, resourceTarget, imageTemplateDirection);
+    const state = await initializeDesignTask(cwd, sessionId, selected, void 0, template, void 0, void 0, resourceTarget, imageTemplateDirection, imageTemplateExample);
     rememberDesignWorkspace(cwd, sessionId, state);
     return state;
   };

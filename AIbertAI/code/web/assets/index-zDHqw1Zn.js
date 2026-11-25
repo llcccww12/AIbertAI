@@ -166690,7 +166690,7 @@ ${e("settings.experts.aiPrompt")}`,
                   (Qe ? e("errors.codes.project_folder_missing") : null) ??
                   qe ??
                   _?.models.status?.error ??
-                  (C ? `${e("session.connectError")}: ${C}` : null),
+                  (C ? `${e("session.connectError")}: ${ni(C, e)}` : null),
                 modelControl: l.jsx(E_e, {
                   models: _?.models.all ?? [],
                   media: { kind: A_e(B?.designType), value: me, onChange: be },

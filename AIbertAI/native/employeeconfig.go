@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 )
@@ -34,7 +36,12 @@ func (h *relaySessionHost) employeeConfig(ctx context.Context) (any, error) {
 		return nil, errors.New("model_catalog_unavailable")
 	}
 	m, err := l.client.selectedModelConfig(ctx, auth)
-	if err != nil || (h.local == nil && l.protocol != "" && l.protocol != m.Protocol) {
+	if err != nil {
+		// The code alone gave no clue why a first start failed on Windows.
+		fmt.Fprintf(os.Stderr, "model config unavailable: %v\n", err)
+		return nil, errors.New("model_unavailable")
+	}
+	if h.local == nil && l.protocol != "" && l.protocol != m.Protocol {
 		return nil, errors.New("model_unavailable")
 	}
 	models, err := l.client.desktopCatalog(ctx, auth, "models")
