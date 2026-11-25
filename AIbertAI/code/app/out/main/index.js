@@ -235,6 +235,8 @@ const modernPlatform = {
     let owner = electron.BrowserWindow.fromId(windowId);
     if (!owner || workbenches$2.has(ownerId)) throw new Error("Invalid workbench owner");
     const container = new electron.View(), page = new electron.WebContentsView({ webPreferences: preferences });
+    // 页面自行关闭后 view.webContents 会变成 undefined，清理时用创建时的引用判断。
+    const contents = page.webContents;
     const children = /* @__PURE__ */ new Set();
     let disposed = false;
     container.addChildView(page);
@@ -274,7 +276,7 @@ const modernPlatform = {
         workbenches$2.delete(ownerId);
         for (const child2 of [...children]) child2.dispose();
         if (!owner.isDestroyed()) owner.contentView.removeChildView(container);
-        if (!page.webContents.isDestroyed()) page.webContents.close({ waitForBeforeUnload: false });
+        if (!contents.isDestroyed()) contents.close({ waitForBeforeUnload: false });
       }
     };
     workbenches$2.set(ownerId, workbench);
