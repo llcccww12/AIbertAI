@@ -76,7 +76,7 @@ func newDSHLocalGateway(g *dshGateway, session string, model selectedModelConfig
 		return nil, err
 	}
 	info, err := os.Lstat(journal)
-	if err != nil || !info.IsDir() || info.Mode().Perm()&0077 != 0 {
+	if err != nil || !info.IsDir() || !privateDirMode(info) {
 		return nil, errors.New("invalid_dsh_gateway_journal_directory")
 	}
 	token, err := randomState()
@@ -167,7 +167,7 @@ func syncDSHJournal(path string) error {
 	if err != nil {
 		return err
 	}
-	return errors.Join(d.Sync(), d.Close())
+	return errors.Join(syncDirFile(d), d.Close())
 }
 
 // Ack must only follow a durable, successful assistant settlement for this

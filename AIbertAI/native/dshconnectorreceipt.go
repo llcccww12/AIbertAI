@@ -45,7 +45,7 @@ func syncConnectorDir(root *os.Root, dir string) error {
 	if err != nil {
 		return err
 	}
-	return errors.Join(f.Sync(), f.Close())
+	return errors.Join(syncDirFile(f), f.Close())
 }
 func readConnectorClaim(root *os.Root, name, session string) (dshConnectorClaim, error) {
 	var claim dshConnectorClaim

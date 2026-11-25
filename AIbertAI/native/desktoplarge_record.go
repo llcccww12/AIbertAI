@@ -79,7 +79,7 @@ func syncDesktopDir(root *os.Root, dir string) error {
 		return err
 	}
 	defer f.Close()
-	return f.Sync()
+	return syncDirFile(f)
 }
 
 // Called under the session store lock, only after the replacement commit is durable.

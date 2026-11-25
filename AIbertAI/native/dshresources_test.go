@@ -145,3 +145,53 @@ func TestDSHResourcesRejectEscapingSymlink(t *testing.T) {
 		t.Fatal("accepted escaping symlink")
 	}
 }
+
+func TestDSHResourceStampSkipsRehashUntilFilesChange(t *testing.T) {
+	root := t.TempDir()
+	write := func(name, body string, mtime time.Time) {
+		p := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, mtime, mtime); err != nil {
+			t.Fatal(err)
+		}
+	}
+	at := time.Unix(1700000000, 0)
+	write("bin/node", "bin/node", at)
+	write(dshEntry, dshEntry, at)
+	hash := func(b []byte) string { v := sha256.Sum256(b); return hex.EncodeToString(v[:]) }
+	m := dshManifest{Version: 1, SourceCommit: dshSourceCommit, SourceArchive: dshSourceArchiveSHA256, Patch: dshPatchSHA256, Lockfile: hash([]byte("lock")), NodeVersion: "v25.9.0", Target: "darwin-arm64", Node: "bin/node", Entry: dshEntry, Files: []dshManifestFile{{Path: "bin/node", Type: "file", SHA256: hash([]byte("bin/node"))}, {Path: dshEntry, Type: "file", SHA256: hash([]byte(dshEntry))}}}
+	data, _ := json.Marshal(m)
+	if err := os.WriteFile(filepath.Join(root, "manifest.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	trusted := hash(data)
+	stamp := filepath.Join(t.TempDir(), "dsh-resources-verified")
+	if _, _, err := verifyDSHResourcesWithStamp(root, trusted, m.Target, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if readDSHVerifiedStamp(stamp) == "" {
+		t.Fatal("full verification left no stamp")
+	}
+	// Same size and mtime: the stamp is trusted and the content is not re-read.
+	write("bin/node", "bin/nodX", at)
+	if _, _, err := verifyDSHResourcesWithStamp(root, trusted, m.Target, stamp); err != nil {
+		t.Fatal(err)
+	}
+	// A changed mtime forces a full hash, which catches the modification.
+	write("bin/node", "bin/nodX", at.Add(time.Second))
+	if _, _, err := verifyDSHResourcesWithStamp(root, trusted, m.Target, stamp); err == nil {
+		t.Fatal("accepted modified runtime after mtime change")
+	}
+	write("bin/node", "bin/node", at.Add(2*time.Second))
+	if _, _, err := verifyDSHResourcesWithStamp(root, trusted, m.Target, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := verifyDSHResourcesWithStamp(root, hash([]byte("other")), m.Target, stamp); err == nil {
+		t.Fatal("stamp bypassed the trusted manifest digest")
+	}
+}

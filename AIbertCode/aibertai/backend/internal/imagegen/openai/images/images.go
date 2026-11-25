@@ -177,13 +177,14 @@ func decode(body []byte, status int, err error) (imagegen.ProviderResult, error)
 		return imagegen.ProviderResult{Status: "failed", ErrorCode: "upstream_rejected"}, nil
 	}
 	if status < 200 || status >= 300 {
-		// OpenAI 兼容网关在没有可用渠道时以 503 明确拒绝，请求未被受理，可直接按失败退款。
+		// OpenAI 兼容网关在没有可用渠道时以 503 明确拒绝，请求未被受理，可直接按失败退款；
+		// 网关报告上游返回错误状态（如 4K 超时的 524）时同样未产出图片。
 		var rejection struct {
 			Error struct {
 				Code string `json:"code"`
 			} `json:"error"`
 		}
-		if json.Unmarshal(body, &rejection) == nil && rejection.Error.Code == "model_not_found" {
+		if json.Unmarshal(body, &rejection) == nil && (rejection.Error.Code == "model_not_found" || rejection.Error.Code == "bad_response_status_code") {
 			return imagegen.ProviderResult{Status: "failed", ErrorCode: "upstream_rejected"}, nil
 		}
 		return imagegen.ProviderResult{}, fmt.Errorf("GPT Image 上游状态未知（HTTP %d）", status)

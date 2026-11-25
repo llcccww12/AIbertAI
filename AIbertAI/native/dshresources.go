@@ -10,7 +10,6 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -55,6 +54,36 @@ var dshResourceHashSlots = make(chan struct{}, 8)
 // directory. This verifies package contents; installers must protect the files
 // against modification after verification and before/during execution.
 func verifyDSHResources(root, trustedDigest, target string) (string, string, error) {
+	return verifyDSHResourcesWithStamp(root, trustedDigest, target, "")
+}
+
+// The stamp records the size and mtime fingerprint of the last inventory that
+// was hashed in full. Hashing every file takes seconds on a fast disk and far
+// longer under antivirus scanning, so the engine verifies once at start and
+// later starts only re-hash when a file's size or mtime has changed.
+func readDSHVerifiedStamp(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+func writeDSHVerifiedStamp(path, value string) {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".dsh-verified-*")
+	if err != nil {
+		return
+	}
+	_, err = tmp.WriteString(value)
+	if err = errors.Join(err, tmp.Close()); err == nil {
+		err = os.Rename(tmp.Name(), path)
+	}
+	if err != nil {
+		_ = os.Remove(tmp.Name())
+	}
+}
+
+func verifyDSHResourcesWithStamp(root, trustedDigest, target, stamp string) (string, string, error) {
 	bad := func() (string, string, error) { return "", "", errors.New("dsh_resources_invalid") }
 	if !filepath.IsAbs(root) || !dshDigestPattern.MatchString(trustedDigest) {
 		return bad()
@@ -118,38 +147,12 @@ func verifyDSHResources(root, trustedDigest, target string) (string, string, err
 		}
 		entries[v.Path] = v
 	}
-	// Hash the inventory concurrently, with a fixed bound on open files. The
-	// full resource can contain many small files, so serial reads add a large
-	// delay each time a short-lived SDK process starts.
 	type fileToVerify struct{ path, digest string }
-	files := make(chan fileToVerify, 32)
-	failed := make(chan struct{}, 1)
-	var workers sync.WaitGroup
-	for i := 0; i < 8; i++ {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
-			for item := range files {
-				dshResourceHashSlots <- struct{}{}
-				file, err := os.Open(item.path)
-				if err == nil {
-					h := sha256.New()
-					_, readErr := io.Copy(h, file)
-					err = errors.Join(readErr, file.Close())
-					if err == nil && hex.EncodeToString(h.Sum(nil)) != item.digest {
-						err = errors.New("digest mismatch")
-					}
-				}
-				<-dshResourceHashSlots
-				if err != nil {
-					select {
-					case failed <- struct{}{}:
-					default:
-					}
-				}
-			}
-		}()
-	}
+	var pending []fileToVerify
+	// Size and modification time of every file, so a later start can skip
+	// re-hashing an inventory that this profile already verified in full.
+	fingerprint := sha256.New()
+	fmt.Fprintf(fingerprint, "%s\x00%s\x00", trustedDigest, root)
 	seen := 0
 	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -192,13 +195,59 @@ func verifyDSHResources(root, trustedDigest, target string) (string, string, err
 		if !d.Type().IsRegular() || v.Type != "file" || d.Name() == ".env" || d.Name() == ".npmrc" {
 			return errors.New("invalid resource")
 		}
-		files <- fileToVerify{path: path, digest: v.SHA256}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(fingerprint, "%s\x00%d\x00%d\n", rel, info.Size(), info.ModTime().UnixNano())
+		pending = append(pending, fileToVerify{path: path, digest: v.SHA256})
 		return nil
 	})
-	close(files)
-	workers.Wait()
-	if err != nil || seen != len(entries) || len(failed) != 0 {
+	if err != nil || seen != len(entries) {
 		return bad()
+	}
+	verified := hex.EncodeToString(fingerprint.Sum(nil))
+	if stamp == "" || readDSHVerifiedStamp(stamp) != verified {
+		// Hash the inventory concurrently, with a fixed bound on open files.
+		files := make(chan fileToVerify, 32)
+		failed := make(chan struct{}, 1)
+		var workers sync.WaitGroup
+		for i := 0; i < 8; i++ {
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				for item := range files {
+					dshResourceHashSlots <- struct{}{}
+					file, err := os.Open(item.path)
+					if err == nil {
+						h := sha256.New()
+						_, readErr := io.Copy(h, file)
+						err = errors.Join(readErr, file.Close())
+						if err == nil && hex.EncodeToString(h.Sum(nil)) != item.digest {
+							err = errors.New("digest mismatch")
+						}
+					}
+					<-dshResourceHashSlots
+					if err != nil {
+						select {
+						case failed <- struct{}{}:
+						default:
+						}
+					}
+				}
+			}()
+		}
+		for _, item := range pending {
+			files <- item
+		}
+		close(files)
+		workers.Wait()
+		if len(failed) != 0 {
+			return bad()
+		}
+		if stamp != "" {
+			writeDSHVerifiedStamp(stamp, verified)
+		}
 	}
 	for _, p := range []string{node, dshEntry} {
 		if _, ok := entries[p]; !ok {
@@ -228,7 +277,8 @@ func configureInstalledDSH(live *acpLive, profile, serverID, machineID string) e
 }
 
 func configureDSHResources(live *acpLive, profile, serverID, machineID, resourceRoot, trustedDigest, target string) error {
-	node, entry, err := verifyDSHResources(resourceRoot, trustedDigest, target)
+	stamp := filepath.Join(profile, "dsh-resources-verified")
+	node, entry, err := verifyDSHResourcesWithStamp(resourceRoot, trustedDigest, target, stamp)
 	if err != nil {
 		return fmt.Errorf("dsh resources: %w", err)
 	}
@@ -246,13 +296,6 @@ func configureDSHResources(live *acpLive, profile, serverID, machineID, resource
 	})
 	if err != nil {
 		return err
-	}
-	prepare := config.Prepare
-	config.Prepare = func(ctx context.Context, session acpSession) (*exec.Cmd, string, string, *dshLocalGateway, func(), error) {
-		if _, _, err := verifyDSHResources(resourceRoot, trustedDigest, target); err != nil {
-			return nil, "", "", nil, nil, err
-		}
-		return prepare(ctx, session)
 	}
 	config.VerifiedResourceRoot = filepath.Dir(filepath.Dir(node))
 	config.LeasePool = &dshLeasePool{}
