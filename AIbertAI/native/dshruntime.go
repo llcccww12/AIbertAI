@@ -31,6 +31,8 @@ type dshRuntimeConfig struct {
 	Command                func(context.Context, acpSession) (*exec.Cmd, error)
 	Provider               func(context.Context, acpSession) (string, string, error)
 	Prepare                func(context.Context, acpSession) (*exec.Cmd, string, string, *dshLocalGateway, func(), error)
+	// SyncPlatformSkills refreshes the account's skills for DSH; nil when unavailable.
+	SyncPlatformSkills func(context.Context) error
 }
 
 // dshInstalledRuntime describes a platform-provisioned SDK bundle. Env is an

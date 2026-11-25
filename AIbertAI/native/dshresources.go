@@ -299,17 +299,20 @@ func configureDSHResources(live *acpLive, profile, serverID, machineID, resource
 	if err != nil {
 		return err
 	}
+	config.SyncPlatformSkills = func(ctx context.Context) error {
+		ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		defer cancel()
+		auth, err := live.authorization(ctx)
+		if err != nil {
+			return err
+		}
+		return live.client.syncDSHPlatformSkills(ctx, auth, filepath.Join(base, "platform-skills"))
+	}
 	prepare := config.Prepare
 	config.Prepare = func(ctx context.Context, session acpSession) (*exec.Cmd, string, string, *dshLocalGateway, func(), error) {
 		if session.ExpertID == "" {
 			// Best effort: an unreachable catalog keeps the last synced skills.
-			syncCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-			auth, err := live.authorization(syncCtx)
-			if err == nil {
-				err = live.client.syncDSHPlatformSkills(syncCtx, auth, filepath.Join(base, "platform-skills"))
-			}
-			cancel()
-			if err != nil {
+			if err := config.SyncPlatformSkills(ctx); err != nil {
 				fmt.Fprintf(os.Stderr, "platform skills not synced: %v\n", err)
 			}
 		}

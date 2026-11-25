@@ -158,6 +158,13 @@ func (h *relaySessionHost) dshTurnHostTools(ctx context.Context, ws *websocket.C
 		return nil, "", err
 	}
 	bridges = append(bridges, remote...)
+	if bridge, hint := h.dshPlatformCreateHostTools(ctx, ws, request, session, turn); bridge != nil {
+		bridges = append(bridges, *bridge)
+		if instructions != "" {
+			instructions += "\n\n"
+		}
+		instructions += hint
+	}
 	return bridges, instructions, nil
 }
 
