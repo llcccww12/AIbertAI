@@ -153152,7 +153152,8 @@ const n_e = (e, t) => {
   return Det(
     e.status,
     !!n?.ask,
-    !!n?.question || jwe(n?.toolCalls),
+    // 未结束的画布工具只在会话运行时表示等用户选择，结束后不再算待回复。
+    !!n?.question || (e.status === "running" && jwe(n?.toolCalls)),
     t.attention[e.id],
     e.agentsRunning ?? kA(n),
   );
@@ -197343,7 +197344,9 @@ function qPt(e, t) {
   ))
     try {
       const n = e.replace(/^\/+/, ""),
-        r = n.slice(0, n.lastIndexOf("/") + 1),
+        // 页面可以引用同一个设计任务里的文件，例如模板素材。
+        task = /^((?:.*\/)?\.(?:aibertai|monkeyai)\/design\/[^/]+\/)artifacts\//.exec(n),
+        r = task ? task[1] : n.slice(0, n.lastIndexOf("/") + 1),
         s = decodeURIComponent(
           new URL(t, `https://artifact.invalid/${n}`).pathname.slice(1),
         );

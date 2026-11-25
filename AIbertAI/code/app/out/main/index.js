@@ -22758,6 +22758,7 @@ async function answerRuntimeDesignTool(proc, server, event) {
     // so the runtime can tell a definite worker answer from an opaque failure.
     const code = /^([a-z][a-z0-9_]{1,70})(?::|$)/.exec(reason)?.[1];
     reply.error = code ? "design_" + code.replace(/^design_/, "") : "design_tool_failed";
+    if (!code) console.error(`[main] design tool ${typeof event.name === "string" ? event.name : "?"} failed: ${reason || String(error)}`);
   } finally {
     runtimeImageCalls.delete(id);
   }

@@ -1394,6 +1394,12 @@ func (h *relaySessionHost) requestToolApproval(ctx context.Context, ws *websocke
 		reply, err := h.interactions.ask(ctx, ws, "session/request_permission", permission["params"])
 		counts := reportedPermissions{Asked: 1}
 		if err != nil {
+			// The turn ended before an answer; take the card down like a question.
+			if h.goals != nil {
+				clear, cancel := context.WithTimeout(context.Background(), time.Second)
+				h.goals.notify(clear, "_monkeyai/session/request_cancelled", map[string]any{"sessionId": sessionID, "toolCallId": callID})
+				cancel()
+			}
 			return counts, err
 		}
 		return applyACPPermissionReply(counts, reply)
