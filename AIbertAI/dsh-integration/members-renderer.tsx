@@ -135,7 +135,7 @@ export default function EmployeeMembers({ accountId, sessionId, request, promptM
   </nav>
   return <span ref={anchor} className="dsh-native-theme" data-dsh-members>
     {(!selected || selected.aside) && <SubagentCatalogAction {...rootCatalog} />}
-    {!selected && !result.members.length && result.error && <button type="button" onClick={refreshCatalog}
+    {!selected && !result.members.length && result.error && !running && !watchSubmission && <button type="button" onClick={refreshCatalog}
       title={result.error}>{zhCN ? '重试读取成员' : 'Retry loading agents'}</button>}
     {selected && heading && createPortal(<section ref={pane} tabIndex={-1} aria-label={title}
       className="dsh-member-view dsh-native-theme" data-aside={selected.aside || undefined}>
