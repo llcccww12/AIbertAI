@@ -1,10 +1,10 @@
 package imageproxy
 
 import (
+	"aibertai.local/backend/internal/web"
 	"context"
 	"encoding/json"
 	"errors"
-	"aibertai.local/backend/internal/web"
 	"io"
 	"log/slog"
 	"net/http"
@@ -64,6 +64,7 @@ type Task struct {
 	ID        string   `json:"id"`
 	Operation string   `json:"operation"`
 	Status    string   `json:"status"`
+	ErrorCode string   `json:"error_code,omitempty"`
 	Outputs   []Output `json:"outputs,omitempty"`
 	Usage     *Usage   `json:"usage,omitempty"`
 }

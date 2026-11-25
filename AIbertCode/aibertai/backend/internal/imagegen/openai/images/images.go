@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"aibertai.local/backend/internal/imagegen"
 	"aibertai.local/backend/internal/proxy"
@@ -37,7 +38,23 @@ var dimensions = map[string]map[string]string{
 	},
 }
 
+// gpt-image-2 只接受长边 ≤ 3840、边长为 16 的倍数、总像素 ≤ 8,294,400 的尺寸，
+// 通用 4K 表超出这些限制，上游会直接拒绝或超时，因此 4K 按其上限单独换算。
+var gptImage2UltraSizes = map[string]string{
+	"1:1": "2880x2880", "4:3": "3264x2448", "3:4": "2448x3264",
+	"16:9": "3840x2160", "9:16": "2160x3840", "3:2": "3456x2304",
+	"2:3": "2304x3456", "21:9": "3840x1648",
+}
+
 var ratios = []string{"1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3", "21:9"}
+
+func isGPTImage2(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if i := strings.LastIndex(model, "/"); i >= 0 {
+		model = model[i+1:]
+	}
+	return model == "gpt-image-2" || strings.HasPrefix(model, "gpt-image-2-")
+}
 
 func (p *Provider) Capabilities(model string) (imagegen.Capabilities, error) {
 	return capabilities(model)
@@ -71,6 +88,11 @@ func Size(model, quality, aspect string) (string, error) {
 			}
 		}
 		return "", errors.New("不支持此 GPT Image 画质比例组合")
+	}
+	if quality == "4K" && isGPTImage2(model) {
+		if size, ok := gptImage2UltraSizes[aspect]; ok {
+			return size, nil
+		}
 	}
 	if sizes, ok := dimensions[quality]; ok {
 		if size, ok := sizes[aspect]; ok {

@@ -14,8 +14,26 @@
     <link rel="stylesheet" href="/dsh/native-presets/preset.css">
     <link rel="stylesheet" href="/dsh/native-files/files.css">
     <link rel="stylesheet" crossorigin href="/assets/index-BvV-3XZ5.css">
+    <style>
+      #boot-splash{position:fixed;inset:0;z-index:2147483000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;background:var(--background,#fff);color:var(--muted-foreground,#8a8a8a);font:13px/1.4 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;-webkit-app-region:drag;transition:opacity .35s ease,visibility .35s ease}
+      #boot-splash.boot-splash-done{opacity:0;visibility:hidden;pointer-events:none}
+      #boot-splash .boot-splash-logo{width:76px;height:76px;animation:boot-splash-in .7s cubic-bezier(.2,.8,.2,1) both,boot-splash-breathe 2.4s ease-in-out .7s infinite}
+      #boot-splash .boot-splash-track{position:relative;width:148px;height:3px;border-radius:3px;overflow:hidden;background:color-mix(in oklab,currentColor 18%,transparent);animation:boot-splash-fade .5s ease .35s both}
+      #boot-splash .boot-splash-track::after{content:"";position:absolute;inset:0;width:40%;border-radius:inherit;background:linear-gradient(90deg,#3ab8f0,#f2a33a,#e8566b);animation:boot-splash-slide 1.3s ease-in-out infinite}
+      #boot-splash .boot-splash-text{letter-spacing:.04em;animation:boot-splash-fade .5s ease .5s both}
+      @keyframes boot-splash-in{from{opacity:0;transform:scale(.82) translateY(6px)}to{opacity:1;transform:none}}
+      @keyframes boot-splash-breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}
+      @keyframes boot-splash-fade{from{opacity:0}to{opacity:1}}
+      @keyframes boot-splash-slide{from{transform:translateX(-100%)}to{transform:translateX(250%)}}
+      @media (prefers-reduced-motion:reduce){#boot-splash *{animation:none!important}}
+    </style>
   </head>
   <body>
     <div id="root"></div>
+    <div id="boot-splash" role="status" aria-live="polite">
+      <img class="boot-splash-logo" src="/brand-icon.png" alt="" />
+      <div class="boot-splash-track"></div>
+      <div class="boot-splash-text">正在启动…</div>
+    </div>
   </body>
 </html>

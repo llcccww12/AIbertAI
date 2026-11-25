@@ -491,8 +491,12 @@ func (s *Service) Get(ctx context.Context, userID, jobID string) (imageproxy.Tas
 			logging.Event(ctx, slog.Default(), slog.LevelWarn, "imagegen.operation.warn", "读取生图积分用量失败", "module", "imagegen", "operation", "Get", "job_id", job.ID, "operation", "image_charge", "error", err)
 		}
 	}
-	return imageproxy.Task{ID: job.ID, UserID: job.UserID, Operation: job.Operation, Status: status,
-		Outputs: outputs, Usage: usage}, nil
+	task := imageproxy.Task{ID: job.ID, UserID: job.UserID, Operation: job.Operation, Status: status,
+		Outputs: outputs, Usage: usage}
+	if job.ErrorCode != nil && (status == "failed" || status == "unknown") {
+		task.ErrorCode = *job.ErrorCode
+	}
+	return task, nil
 }
 
 func (s *Service) Run(ctx context.Context) {
