@@ -85,9 +85,18 @@ func TestHistorySQLHasNoCounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	history := strings.Split(string(b), "-- name: ReportingRealtime")[0]
-	if strings.Contains(strings.ToLower(history), "count(") {
-		t.Fatal("history requests must not execute COUNT")
+	// 分页本身不得统计总数；逐会话指标只在已分页的 page 结果上按会话时间跨度聚合。
+	history := strings.Split(string(b), "-- name: HistorySummary")[0]
+	paging := strings.Split(strings.Split(history, "WITH page AS (")[1], "\n)\nSELECT")[0]
+	if strings.Contains(strings.ToLower(paging), "count(") || strings.Contains(strings.ToLower(history), "over (") {
+		t.Fatal("history paging must not execute COUNT")
+	}
+	if !strings.Contains(history, "st.started_at <= p.last_active_at") {
+		t.Fatal("per-session turn aggregates must be bounded to the session time span")
+	}
+	conversations := strings.Split(strings.Split(string(b), "-- name: ListConversations")[1], "-- name: ReportingRealtime")[0]
+	if strings.Contains(strings.ToLower(conversations), "count(") {
+		t.Fatal("conversation history must not execute COUNT")
 	}
 	for _, name := range []string{"CountHistory", "CountConversations"} {
 		if strings.Contains(string(b), name) {

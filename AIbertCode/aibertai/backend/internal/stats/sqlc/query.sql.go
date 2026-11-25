@@ -10,6 +10,86 @@ import (
 	"time"
 )
 
+const historySummary = `-- name: HistorySummary :one
+WITH filtered AS (
+    SELECT s.id, s.owner_user_id, s.started_at
+    FROM
+        sessions s
+        JOIN users u ON u.id = s.owner_user_id
+    WHERE
+    s.deleted_at IS NULL
+    AND s.purged_at IS NULL
+    AND s.reporting_enabled_at IS NOT NULL
+    AND s.placeholder = false
+    AND s.parent_session_id IS NULL
+    AND ($1::text = ''
+        OR strpos(lower(s.title), lower($1::text)) > 0
+        OR strpos(s.id::text, lower($1::text)) > 0)
+    AND ($2::text = ''
+        OR strpos(lower(u.name), lower($2::text)) > 0
+        OR strpos(lower(u.email), lower($2::text)) > 0)
+    AND ($3::uuid IS NULL
+        OR s.owner_user_id = $3::uuid)
+    AND ($4::uuid IS NULL
+        OR s.expert_id = $4::uuid)
+    AND (NOT $5::boolean
+        OR EXISTS (SELECT 1 FROM session_turns ft WHERE ft.session_id = s.id AND ft.stop_reason = 'error'))
+    AND ($6::timestamptz IS NULL
+        OR s.started_at >= $6)
+    AND ($7::timestamptz IS NULL
+        OR s.started_at < $7)
+        AND s.started_at >= $8::timestamptz
+), turns AS (
+    SELECT count(*) AS turns,
+        count(*) FILTER (WHERE st.stop_reason = 'error') AS failed_turns,
+        count(DISTINCT st.session_id) FILTER (WHERE st.stop_reason = 'error') AS failed_sessions,
+        coalesce(sum(coalesce(st.input_tokens, 0) + coalesce(st.subagent_input_tokens, 0)
+            + coalesce(st.output_tokens, 0) + coalesce(st.subagent_output_tokens, 0)), 0) AS tokens
+    FROM filtered f JOIN session_turns st ON st.session_id = f.id
+    WHERE st.started_at >= $8::timestamptz - interval '1 minute'
+), credits AS (
+    SELECT coalesce(sum(bt.amount), 0) AS credits
+    FROM billing_transactions bt
+    JOIN sessions bs ON bs.id = bt.session_id
+    JOIN filtered f ON f.id = coalesce(bs.parent_session_id, bs.id)
+    WHERE bt.status = 'settled'
+        AND bt.started_at >= $8::timestamptz - interval '1 minute'
+)
+SELECT jsonb_build_object(
+    'sessions', (SELECT count(*) FROM filtered),
+    'members', (SELECT count(DISTINCT owner_user_id) FROM filtered),
+    'turns', turns.turns, 'failed_turns', turns.failed_turns, 'failed_sessions', turns.failed_sessions,
+    'tokens', turns.tokens, 'credits', credits.credits::text)
+FROM turns, credits
+`
+
+type HistorySummaryParams struct {
+	TitleQuery  string
+	UserQuery   string
+	UserID      *string
+	ExpertID    *string
+	FailedOnly  bool
+	FromTime    *time.Time
+	UntilTime   *time.Time
+	SummaryFrom time.Time
+}
+
+func (q *Queries) HistorySummary(ctx context.Context, arg HistorySummaryParams) ([]byte, error) {
+	row := q.db.QueryRow(ctx, historySummary,
+		arg.TitleQuery,
+		arg.UserQuery,
+		arg.UserID,
+		arg.ExpertID,
+		arg.FailedOnly,
+		arg.FromTime,
+		arg.UntilTime,
+		arg.SummaryFrom,
+	)
+	var jsonb_build_object []byte
+	err := row.Scan(&jsonb_build_object)
+	return jsonb_build_object, err
+}
+
 const listConversations = `-- name: ListConversations :many
 SELECT jsonb_build_object(
     'session_id', s.id, 'turn_index', t.turn_index, 'task_title', s.title,
@@ -83,19 +163,13 @@ func (q *Queries) ListConversations(ctx context.Context, arg ListConversationsPa
 }
 
 const listHistory = `-- name: ListHistory :many
-SELECT
-    -- Untitled sessions fall back to their first reported prompt (empty when text is not collected).
-    jsonb_build_object('id', s.id, 'title', coalesce(nullif(btrim(s.title), ''), (
-            SELECT left(regexp_replace(btrim(t.input_text), '\s+', ' ', 'g'), 40) FROM session_turns t
-            WHERE t.session_id = s.id AND btrim(coalesce(t.input_text, '')) <> ''
-            ORDER BY t.turn_index LIMIT 1), ''),
-        'title_source', s.title_source, 'user_id', s.owner_user_id, 'user_name', u.name, 'user_email', u.email,
-        'user_avatar_url', coalesce(nullif(btrim(u.custom_avatar_url), ''), nullif(btrim(u.avatar_url), '')),
-        'started_at', s.started_at, 'last_active_at', s.last_active_at, 'turn_count', CASE WHEN s.turn_count_verified THEN s.turn_count ELSE NULL END)
-FROM
-    sessions s
-    JOIN users u ON u.id = s.owner_user_id
-WHERE
+WITH page AS (
+    SELECT s.id, s.owner_user_id, s.title, s.title_source, s.started_at, s.last_active_at, s.turn_count,
+        s.turn_count_verified, s.expert_id, s.model_id, s.client_type, s.active_seconds
+    FROM
+        sessions s
+        JOIN users u ON u.id = s.owner_user_id
+    WHERE
     s.deleted_at IS NULL
     AND s.purged_at IS NULL
     AND s.reporting_enabled_at IS NOT NULL
@@ -109,20 +183,68 @@ WHERE
         OR strpos(lower(u.email), lower($2::text)) > 0)
     AND ($3::uuid IS NULL
         OR s.owner_user_id = $3::uuid)
-    AND ($4::timestamptz IS NULL
-        OR s.started_at >= $4)
-    AND ($5::timestamptz IS NULL
-        OR s.started_at < $5)
+    AND ($4::uuid IS NULL
+        OR s.expert_id = $4::uuid)
+    AND (NOT $5::boolean
+        OR EXISTS (SELECT 1 FROM session_turns ft WHERE ft.session_id = s.id AND ft.stop_reason = 'error'))
+    AND ($6::timestamptz IS NULL
+        OR s.started_at >= $6)
+    AND ($7::timestamptz IS NULL
+        OR s.started_at < $7)
+    ORDER BY
+        s.started_at DESC,
+        s.id DESC
+    LIMIT $9 OFFSET $8
+)
+SELECT
+    -- Untitled sessions fall back to their first reported prompt (empty when text is not collected).
+    jsonb_build_object('id', p.id, 'title', coalesce(nullif(btrim(p.title), ''), (
+            SELECT left(regexp_replace(btrim(t.input_text), '\s+', ' ', 'g'), 40) FROM session_turns t
+            WHERE t.session_id = p.id AND btrim(coalesce(t.input_text, '')) <> ''
+            ORDER BY t.turn_index LIMIT 1), ''),
+        'title_source', p.title_source, 'user_id', p.owner_user_id, 'user_name', u.name, 'user_email', u.email,
+        'user_avatar_url', coalesce(nullif(btrim(u.custom_avatar_url), ''), nullif(btrim(u.avatar_url), '')),
+        'started_at', p.started_at, 'last_active_at', p.last_active_at, 'turn_count', CASE WHEN p.turn_count_verified THEN p.turn_count ELSE NULL END,
+        'expert_id', p.expert_id, 'expert_name', e.name, 'model_name', m.display_name, 'client_type', p.client_type,
+        'active_seconds', p.active_seconds, 'failed_turns', t.failed_turns, 'interrupted_turns', t.interrupted_turns,
+        'input_tokens', t.input_tokens, 'output_tokens', t.output_tokens, 'files_changed', t.files_changed,
+        'credits', b.credits::text)
+FROM
+    page p
+    JOIN users u ON u.id = p.owner_user_id
+    LEFT JOIN experts e ON e.id = p.expert_id
+    LEFT JOIN models m ON m.id = p.model_id
+    LEFT JOIN LATERAL (
+        SELECT count(*) FILTER (WHERE st.stop_reason = 'error') AS failed_turns,
+            count(*) FILTER (WHERE st.stop_reason = 'interrupted') AS interrupted_turns,
+            coalesce(sum(coalesce(st.input_tokens, 0) + coalesce(st.subagent_input_tokens, 0)), 0) AS input_tokens,
+            coalesce(sum(coalesce(st.output_tokens, 0) + coalesce(st.subagent_output_tokens, 0)), 0) AS output_tokens,
+            coalesce(sum(st.files_created + st.files_updated + st.files_deleted), 0) AS files_changed
+        FROM session_turns st
+        -- 用会话自身时间跨度裁剪月分区，避免逐会话扫描全部分区。
+        WHERE st.session_id = p.id
+            AND st.started_at >= p.started_at - interval '1 minute'
+            AND st.started_at <= p.last_active_at + interval '1 minute') t ON true
+    -- 积分包含子智能体会话；按所属用户和时间缩小到 billing_transactions 的用户时间索引。
+    LEFT JOIN LATERAL (
+        SELECT coalesce(sum(bt.amount), 0) AS credits
+        FROM billing_transactions bt
+        WHERE bt.user_id = p.owner_user_id
+            AND bt.started_at >= p.started_at - interval '1 minute'
+            AND bt.status = 'settled'
+            AND (bt.session_id = p.id
+                OR bt.session_id IN (SELECT c.id FROM sessions c WHERE c.parent_session_id = p.id))) b ON true
 ORDER BY
-    s.started_at DESC,
-    s.id DESC
-LIMIT $7 OFFSET $6
+    p.started_at DESC,
+    p.id DESC
 `
 
 type ListHistoryParams struct {
 	TitleQuery string
 	UserQuery  string
 	UserID     *string
+	ExpertID   *string
+	FailedOnly bool
 	FromTime   *time.Time
 	UntilTime  *time.Time
 	Offset     int32
@@ -134,6 +256,8 @@ func (q *Queries) ListHistory(ctx context.Context, arg ListHistoryParams) ([][]b
 		arg.TitleQuery,
 		arg.UserQuery,
 		arg.UserID,
+		arg.ExpertID,
+		arg.FailedOnly,
 		arg.FromTime,
 		arg.UntilTime,
 		arg.Offset,
