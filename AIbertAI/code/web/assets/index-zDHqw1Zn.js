@@ -53622,8 +53622,9 @@ const yn = uc((e, t) => {
       },
       restartEngine: async () => {
         if (et.restartLocalRuntime && ts()?.transport !== "relay") {
-          await et.restartLocalRuntime();
+          // 先断开旧连接再重启；重启后再断开会把已经连向新引擎的连接取消掉。
           wH();
+          await et.restartLocalRuntime();
         } else {
           await d((S) => S.request("_monkeyai/runtime/restart", {}));
         }
