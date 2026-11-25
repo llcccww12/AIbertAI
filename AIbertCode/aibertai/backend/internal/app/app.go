@@ -230,6 +230,9 @@ func newApplicationHandlerWithMembers(ctx context.Context, logger *slog.Logger, 
 	if err := identities.EnsureInitialAdmin(ctx, cfg.InitialAdminName, cfg.InitialAdminEmail, cfg.InitialAdminPassword); err != nil && !errors.Is(err, member.ErrWriterUnavailable) {
 		return nil, fmt.Errorf("初始化管理员: %w", err)
 	}
+	if err := rule.SeedPresets(ctx, pool); err != nil {
+		logging.Event(ctx, logger, slog.LevelWarn, "rule.presets.failed", "写入预置规则失败", "module", "rule", "operation", "SeedPresets", "error", err)
+	}
 	charges := billing.NewService(pool)
 	if err := charges.Initialize(ctx); err != nil {
 		return nil, fmt.Errorf("初始化计费: %w", err)
