@@ -82,6 +82,10 @@ func TestMediaGenerationAsksInFullAccess(t *testing.T) {
 	if got, _ := ask("canvas_update_node", true); got != "" {
 		t.Fatal("other tools lost the full-access bypass")
 	}
+	goal := context.WithValue(t.Context(), goalRuntimeContext{}, newGoalRuntime())
+	if mediaApprovalBypass(t.Context(), "media_generate_image") || !mediaApprovalBypass(goal, "media_generate_image") || !mediaApprovalBypass(t.Context(), "canvas_update_node") {
+		t.Fatal("goal runs keep the full-access bypass; interactive turns ask")
+	}
 	if mediaGenerationTitle("media_generate_video") != "生成视频" || mediaGenerationTitle("media_edit_image") != "编辑图片" {
 		t.Fatal("titles")
 	}

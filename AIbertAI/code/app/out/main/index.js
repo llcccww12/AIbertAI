@@ -399,6 +399,8 @@ const ErrorCode = {
   // 计划内停止：账号切换或退出
   runtimeNotReady: "runtime_not_ready",
   // 就绪超时
+  runtimeAuthorizing: "runtime_authorizing",
+  // 首次登录等待浏览器授权
   runtimeUnavailable: "runtime_unavailable",
   // 连接建立时运行时已不在
   runtimeDownloadFailed: "runtime_download_failed",
@@ -14693,7 +14695,7 @@ let capabilities = null;
 const readyWaiters$1 = [];
 let reloadWhenReady = null;
 let verifiedOfficeResources = null;
-// 首次登录时运行时在等浏览器授权，就绪等待不按超时处理。
+// 首次登录时运行时在等浏览器授权，就绪等待超时改报 runtime_authorizing 提示用户。
 let sourceAuthorizing = false;
 function runtimeStatus() {
   return status$1;
@@ -14980,16 +14982,11 @@ function whenReady() {
         reject(error);
       }
     };
-    const expire = () => {
-      if (sourceAuthorizing && child$2) {
-        timer2 = setTimeout(expire, READY_TIMEOUT_MS$1);
-        return;
-      }
+    const timer2 = setTimeout(() => {
       const index2 = readyWaiters$1.indexOf(waiter);
       if (index2 >= 0) readyWaiters$1.splice(index2, 1);
-      reject(new Error(ErrorCode.runtimeNotReady));
-    };
-    let timer2 = setTimeout(expire, READY_TIMEOUT_MS$1);
+      reject(new Error(sourceAuthorizing && child$2 ? ErrorCode.runtimeAuthorizing : ErrorCode.runtimeNotReady));
+    }, READY_TIMEOUT_MS$1);
     readyWaiters$1.push(waiter);
   });
 }

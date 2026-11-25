@@ -27272,6 +27272,7 @@ const xVe = 1024,
     runtimeExited: "runtime_exited",
     runtimeStopped: "runtime_stopped",
     runtimeNotReady: "runtime_not_ready",
+    runtimeAuthorizing: "runtime_authorizing",
     runtimeUnavailable: "runtime_unavailable",
     runtimeDownloadFailed: "runtime_download_failed",
     runtimeDownloadInvalid: "runtime_download_invalid",
@@ -35322,6 +35323,7 @@ const BYe = {
     [Se.acpTimeout]: "errors.timeout",
     [Se.runtimeFailed]: "errors.runtimeFailed",
     [Se.runtimeNotReady]: "errors.codes.runtime_not_ready",
+    [Se.runtimeAuthorizing]: "errors.codes.runtime_authorizing",
     [Se.runtimeExited]: "errors.codes.runtime_exited",
     [Se.runtimeStopped]: "errors.codes.runtime_stopped",
     [Se.runtimeDownloadFailed]: "errors.codes.runtime_download_failed",
@@ -52512,7 +52514,10 @@ const zO = 20,
             await t().refresh());
         } catch (Z) {
           if (!p.current(G)) return;
-          (e({ ready: !1, connectError: wn(Z) }), p.failed());
+          // 等浏览器授权时保持短间隔重试，授权完成后尽快连上。
+          (e({ ready: !1, connectError: wn(Z) }),
+            wn(Z) === Se.runtimeAuthorizing && p.resetBackoff(),
+            p.failed());
         }
       },
       retryConnect: async () => {
@@ -53623,7 +53628,10 @@ const yn = uc((e, t) => {
       restartEngine: async () => {
         if (et.restartLocalRuntime && ts()?.transport !== "relay") {
           // 先断开旧连接再重启；重启后再断开会把已经连向新引擎的连接取消掉。
+          // wH 会先清掉当前连接，旧连接关闭时不会再通知，这里补发断开通知让会话重连。
+          const hadConnection = !!Yb;
           wH();
+          hadConnection && Ql.onDisconnect();
           await et.restartLocalRuntime();
         } else {
           await d((S) => S.request("_monkeyai/runtime/restart", {}));
@@ -70187,6 +70195,10 @@ function Zat({ children: e }) {
     }, [i]),
     y.useLayoutEffect(() => {
       document.documentElement.classList.toggle("dark", t);
+      try {
+        // 下次启动时开机画面按这里的深浅色显示（见 boot-theme.js）。
+        localStorage.setItem("aibertai.boot-dark", t ? "1" : "0");
+      } catch {}
       const o = n === "century-blue" || n === "textured-gray" ? n : "";
       o
         ? (document.documentElement.dataset.theme = o)
@@ -114638,6 +114650,7 @@ const qwt = {
         directory_create_failed:
           "创建文件夹失败，请检查名称、磁盘空间及目录访问权限。",
         runtime_not_ready: "运行时启动超时，请稍后重试。",
+        runtime_authorizing: "请在浏览器中完成授权，完成后会自动连接。",
         runtime_exited: "运行时已退出，正在重新启动。",
         runtime_stopped: "运行时已停止。",
         runtime_download_failed: "安装包下载失败，请检查网络后重试。",
@@ -117770,6 +117783,8 @@ Start with the conclusion, then explain the reasoning.`,
           "Could not create the folder. Check its name, available disk space, and directory permissions.",
         runtime_not_ready:
           "The runtime did not start in time. Please try again later.",
+        runtime_authorizing:
+          "Finish authorizing in your browser. The app connects automatically afterwards.",
         runtime_exited: "The runtime exited and is being restarted.",
         runtime_stopped: "The runtime was stopped.",
         runtime_download_failed:
@@ -280321,7 +280336,7 @@ function hideBootSplash() {
 function watchBootSplash() {
   const text = document.querySelector("#boot-splash .boot-splash-text");
   const slow = setTimeout(() => {
-    text && (text.textContent = "正在连接服务…");
+    text && ((text.querySelector("span") ?? text).textContent = "正在连接服务…");
   }, 3e3);
   let errorTimer;
   const stop = [];
