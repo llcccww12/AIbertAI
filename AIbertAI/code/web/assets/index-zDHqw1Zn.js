@@ -280315,7 +280315,7 @@ function hideBootSplash() {
   setTimeout(() => {
     el.classList.add("boot-splash-done");
     setTimeout(() => el.remove(), 400);
-  }, Math.max(0, 600 - (performance.now() - bootSplashStartedAt)));
+  }, Math.max(0, (matchMedia("(prefers-reduced-motion: reduce)").matches ? 600 : 1900) - (performance.now() - bootSplashStartedAt)));
 }
 function watchBootSplash() {
   const text = document.querySelector("#boot-splash .boot-splash-text");
