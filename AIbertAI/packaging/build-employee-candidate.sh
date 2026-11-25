@@ -18,15 +18,18 @@ electron_zip=${4:-}
 project=$(cd -- "$(dirname -- "$0")/.." && pwd)
 dsh_resources=${AIBERTAI_DSH_RESOURCES:-}
 dsh_manifest_sha256=${AIBERTAI_DSH_MANIFEST_SHA256:-}
-if [[ "$target" == mac-arm64 && -z "$dsh_resources" && -z "$dsh_manifest_sha256" ]]; then
+if [[ -z "$dsh_resources" && -z "$dsh_manifest_sha256" ]]; then
   if [[ $release == true ]]; then
     echo "Set AIBERTAI_DSH_RESOURCES and AIBERTAI_DSH_MANIFEST_SHA256 from the trusted DSH build record." >&2
     exit 2
   fi
+  dsh_target=darwin-arm64
+  [[ "$target" == win-x64 ]] && dsh_target=windows-amd64
   pin=$(shasum -a 256 "$project/dsh-integration/patches/experimental-invocation-id.patch" | awk '{print $1}')
-  built="$project/.local-runtime/dsh/$pin"
+  # The shipped runtime is the production-only subset of the development build.
+  built="$project/.local-runtime/dsh-slim/$dsh_target/$pin"
   if [[ ! -f "$built/manifest.sha256" ]]; then
-    echo "Build the macOS SDK with dsh-integration/build-dev-sdk.sh or supply a pinned DSH resource directory." >&2
+    echo "Build the DSH runtime, then run dsh-integration/build-slim-runtime.sh $dsh_target, or supply a pinned DSH resource directory." >&2
     exit 2
   fi
   dsh_resources="$built/resources"
