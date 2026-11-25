@@ -305,7 +305,7 @@ else
   channel=latest-mac.yml
 fi
 mkdir -p "$output/updates"
-python3 - "$stage/$update_zip" "$project/code/app/package.json" "$output/updates/$channel" <<'PY'
+python3 - "$stage/$update_zip" "$project/code/app/package.json" "$output/updates/$channel" "$project/packaging/release-notes.json" <<'PY'
 import base64
 import hashlib
 import json
@@ -313,7 +313,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-archive, package, channel = map(Path, sys.argv[1:])
+archive, package, channel, notes_file = map(Path, sys.argv[1:])
 digest = hashlib.sha512()
 with archive.open("rb") as f:
     for chunk in iter(lambda: f.read(1 << 20), b""):
@@ -330,5 +330,11 @@ path: {archive.name}
 sha512: {sha512}
 releaseDate: '{datetime.now(timezone.utc).isoformat()}'
 """)
+# 应用内更新页展示的更新日志，来自 packaging/release-notes.json；JSON 写法同样是合法 YAML。
+notes = json.loads(notes_file.read_text()) if notes_file.exists() else []
+if not any(entry.get("version") == version for entry in notes):
+    raise SystemExit(f"packaging/release-notes.json has no entry for {version}")
+with channel.open("a") as out:
+    out.write("releaseNotes: " + json.dumps(notes, ensure_ascii=False) + "\n")
 PY
 mv "$stage/$update_zip" "$output/updates/"

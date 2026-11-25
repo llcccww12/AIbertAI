@@ -14928,8 +14928,20 @@ function stop() {
   });
   return stopping$2;
 }
+function updaterOptions() {
+  return { override: process.env[platform.updateUrlEnvironment], canInstall: () => migrationScheduled() ? ErrorCode.dataMigrationPending : void 0 };
+}
+const UPDATER_CHANNELS = ["update:status", "update:check", "update:history", "update:download", "update:install", "update:remind", "update:skip", "update:auto-download"];
+// 首次安装时启动阶段还没有登录账号，更新服务处于未配置状态；登录后按该后端重新启用，无需重启应用。
+function activateUpdaterForAccount() {
+  if (!updater || updater.active || updater.getStatus().state !== "unconfigured" || !currentAccount()) return;
+  for (const channel of UPDATER_CHANNELS) electron.ipcMain.removeHandler(channel);
+  updater = setupUpdater(applyTrayMenu, updaterOptions());
+  applyTrayMenu();
+}
 function syncRuntimeToAccount() {
   if (quitting$1) return Promise.resolve();
+  activateUpdaterForAccount();
   transition = transition.catch(() => {
   }).then(async () => {
     if (quitting$1) return;
@@ -23436,6 +23448,7 @@ function setupUpdater(onStatus = () => {
     onStatus(status2);
   };
   const inactive = (state2, message) => {
+    console.log(`[updater] inactive: ${state2}${message ? ` (${message})` : ""} platform=${process.platform} packaged=${electron.app.isPackaged}`);
     let status2 = { state: state2, message, revision: 0, autoDownload: preferences.autoDownload };
     handle("update:status", none, () => status2);
     handle("update:check", none, () => status2);
@@ -25785,7 +25798,7 @@ function onReady() {
   electron.app.on("will-quit", () => pastedAttachments.dispose());
   void syncRuntimeToAccount();
   createTray();
-  updater = setupUpdater(applyTrayMenu, { override: process.env[platform.updateUrlEnvironment], canInstall: () => migrationScheduled() ? ErrorCode.dataMigrationPending : void 0 });
+  updater = setupUpdater(applyTrayMenu, updaterOptions());
   createWindow();
   mainWorkbench?.webContents.once("did-finish-load", () => {
     setLoginStorageUnavailableHandler(() => {
