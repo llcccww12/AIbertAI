@@ -338,6 +338,8 @@ export const zhTW = {
         search: "搜尋",
         expert: "專家",
         expertAll: "全部專家",
+        expertSystem: "系統專家",
+        expertEmployee: "員工自建專家",
         status: "狀態",
         statusAll: "全部會話",
         statusFailed: "有失敗的會話",

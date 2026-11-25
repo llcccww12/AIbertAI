@@ -340,6 +340,8 @@ export const deDE = {
         search: "Suchen",
         expert: "Experte",
         expertAll: "Alle Experten",
+        expertSystem: "System-Experten",
+        expertEmployee: "Experten von Mitarbeitenden",
         status: "Status",
         statusAll: "Alle Sitzungen",
         statusFailed: "Sitzungen mit Fehlern",

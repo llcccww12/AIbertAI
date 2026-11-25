@@ -1,3 +1,4 @@
+import { copyText } from "@/lib/copy-host-command"
 import { useTranslation } from "react-i18next"
 import { Copy01Icon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
@@ -42,7 +43,7 @@ function useCopyCredentials() {
           )
           .join("\n")
     try {
-      await navigator.clipboard.writeText(text)
+      await copyText(text)
       showToast({
         status: "success",
         title: t(

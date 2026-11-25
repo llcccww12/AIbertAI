@@ -323,6 +323,8 @@ export const koKR = {
         search: "검색",
         expert: "전문가",
         expertAll: "모든 전문가",
+        expertSystem: "시스템 전문가",
+        expertEmployee: "직원이 만든 전문가",
         status: "상태",
         statusAll: "모든 세션",
         statusFailed: "실패가 있는 세션",

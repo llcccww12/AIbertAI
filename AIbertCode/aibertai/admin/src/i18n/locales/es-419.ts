@@ -336,6 +336,8 @@ export const es419 = {
         search: "Buscar",
         expert: "Experto",
         expertAll: "Todos los expertos",
+        expertSystem: "Expertos del sistema",
+        expertEmployee: "Expertos creados por empleados",
         status: "Estado",
         statusAll: "Todas las sesiones",
         statusFailed: "Sesiones con fallos",

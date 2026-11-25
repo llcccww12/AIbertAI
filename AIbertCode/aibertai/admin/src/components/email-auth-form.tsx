@@ -156,6 +156,11 @@ export function EmailAuthForm({
     }
   }
   const locked = disabled || busy || sending
+  // Employee sign-in only: admins never self-register.
+  const selfSignup =
+    !admin &&
+    !!methods?.email_code_enabled &&
+    !!methods.email_code_auto_registration_enabled
   const canLogin = methods?.password_enabled || methods?.email_code_enabled
   const needsPassword = mode !== "login"
   const title =
@@ -217,7 +222,9 @@ export function EmailAuthForm({
                     )}
                     {methods.email_code_enabled && (
                       <TabsTrigger value="login">
-                        {t("login.codeLogin", "验证码登录")}
+                        {selfSignup
+                          ? t("login.codeLoginOrRegister", "验证码登录 / 注册")
+                          : t("login.codeLogin", "验证码登录")}
                       </TabsTrigger>
                     )}
                   </TabsList>
@@ -342,6 +349,16 @@ export function EmailAuthForm({
               )}
               {title}
             </Button>
+            {!admin && methods && mode !== "reset" && (
+              <p className="text-center text-sm text-muted-foreground">
+                {selfSignup
+                  ? t(
+                      "login.autoRegisterHint",
+                      "没有账号？用邮箱验证码登录即可自动注册。"
+                    )
+                  : t("login.noAccountHint", "没有账号？请联系管理员开通。")}
+              </p>
+            )}
           </fieldset>
         </form>
       )}

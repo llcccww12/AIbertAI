@@ -338,6 +338,8 @@ export const ruRU = {
         search: "Поиск",
         expert: "Эксперт",
         expertAll: "Все эксперты",
+        expertSystem: "Системные эксперты",
+        expertEmployee: "Эксперты сотрудников",
         status: "Статус",
         statusAll: "Все сеансы",
         statusFailed: "Сеансы с ошибками",

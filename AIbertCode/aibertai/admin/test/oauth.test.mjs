@@ -107,7 +107,7 @@ test("third-party sign-in uses items, an action menu, and confirmations", async 
   assert.match(source, /open=\{oauthCallbackDialogOpen\}/)
   assert.match(source, /oauth\.callbackDialogTitle/)
   assert.match(source, /value=\{oauthCallbackURL\}/)
-  assert.match(source, /navigator\.clipboard\.writeText\(oauthCallbackURL\)/)
+  assert.match(source, /copyText\(oauthCallbackURL\)/)
   assert.match(source, /oauth\.callbackCopied/)
   assert.match(source, /oauth\.callbackCopyFailed/)
   const callbackDialog = source

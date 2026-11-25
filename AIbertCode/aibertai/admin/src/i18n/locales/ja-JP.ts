@@ -331,6 +331,8 @@ export const jaJP = {
         search: "検索",
         expert: "エキスパート",
         expertAll: "すべてのエキスパート",
+        expertSystem: "システムエキスパート",
+        expertEmployee: "社員作成のエキスパート",
         status: "状態",
         statusAll: "すべてのセッション",
         statusFailed: "失敗のあるセッション",

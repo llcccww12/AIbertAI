@@ -34,6 +34,7 @@ import {
   SelectContent,
   SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
@@ -93,7 +94,12 @@ type TaskHistorySummary = {
   window_from: string
 }
 
-type ExpertOption = { id: string; name: string }
+type ExpertOption = {
+  id: string
+  name: string
+  ownership_type?: "system" | "user"
+  user?: { name?: string } | null
+}
 
 type TaskHistory = {
   items: TaskHistoryEntry[]
@@ -213,12 +219,22 @@ export function TaskHistoryPage() {
   const [experts, setExperts] = useState<ExpertOption[]>([])
   useEffect(() => {
     const controller = new AbortController()
-    api<{ items?: ExpertOption[] }>(
-      `${base}/experts?ownership_type=system&limit=200`,
-      { signal: controller.signal }
-    )
-      .then((data) => setExperts(data.items ?? []))
-      .catch(() => {})
+    // Admins need the global picture, so list employee-created experts too.
+    const loadAll = async () => {
+      const all: ExpertOption[] = []
+      let cursor = ""
+      for (let i = 0; i < 10; i++) {
+        const data = await api<{ items?: ExpertOption[]; next_cursor?: string }>(
+          `${base}/experts?limit=500${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+          { signal: controller.signal }
+        )
+        all.push(...(data.items ?? []))
+        cursor = data.next_cursor ?? ""
+        if (!cursor) break
+      }
+      setExperts(all)
+    }
+    loadAll().catch(() => {})
     return () => controller.abort()
   }, [])
   const [exporting, setExporting] = useState(false)
@@ -280,9 +296,23 @@ export function TaskHistoryPage() {
     { value: "all", label: t("pages.taskHistory.filters.statusAll") },
     { value: "failed", label: t("pages.taskHistory.filters.statusFailed") },
   ]
+  const expertLabel = (expert: ExpertOption) =>
+    expert.ownership_type === "user" && expert.user?.name
+      ? `${expert.name} · ${expert.user.name}`
+      : expert.name
+  const expertGroups = [
+    {
+      label: t("pages.taskHistory.filters.expertSystem"),
+      items: experts.filter((expert) => expert.ownership_type !== "user"),
+    },
+    {
+      label: t("pages.taskHistory.filters.expertEmployee"),
+      items: experts.filter((expert) => expert.ownership_type === "user"),
+    },
+  ].filter((group) => group.items.length > 0)
   const expertItems = [
     { value: "", label: t("pages.taskHistory.filters.expertAll") },
-    ...experts.map((expert) => ({ value: expert.id, label: expert.name })),
+    ...experts.map((expert) => ({ value: expert.id, label: expertLabel(expert) })),
   ]
   const exportCsv = async () => {
     setExporting(true)
@@ -515,12 +545,20 @@ export function TaskHistoryPage() {
                     </SelectTrigger>
                     <SelectContent alignItemWithTrigger={false} align="start">
                       <SelectGroup>
-                        {expertItems.map((item) => (
-                          <SelectItem key={item.value} value={item.value}>
-                            {item.label}
-                          </SelectItem>
-                        ))}
+                        <SelectItem value="">
+                          {t("pages.taskHistory.filters.expertAll")}
+                        </SelectItem>
                       </SelectGroup>
+                      {expertGroups.map((group) => (
+                        <SelectGroup key={group.label}>
+                          <SelectLabel>{group.label}</SelectLabel>
+                          {group.items.map((expert) => (
+                            <SelectItem key={expert.id} value={expert.id}>
+                              {expertLabel(expert)}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      ))}
                     </SelectContent>
                   </Select>
                 </Field>

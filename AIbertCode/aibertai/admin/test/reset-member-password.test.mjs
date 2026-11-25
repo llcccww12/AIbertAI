@@ -50,7 +50,7 @@ test("all member menus open the one-time password reset dialog", async () => {
   assert.match(dialog, /api<\{ password: string \}>\([\s\S]*?\/reset-password`/)
   assert.match(dialog, /\{ method: "POST" \}/)
   assert.match(dialog, /value=\{password\}\s+readOnly/)
-  assert.match(dialog, /navigator\.clipboard\.writeText\(password\)/)
+  assert.match(dialog, /copyText\(password\)/)
   assert.doesNotMatch(dialog, /description:\s*password|title:\s*password/)
 })
 

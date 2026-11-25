@@ -629,6 +629,9 @@ export const zhCN = {
     passwordHint: "密码至少 12 个字符。",
     passwordLogin: "密码登录",
     codeLogin: "验证码登录",
+    codeLoginOrRegister: "验证码登录 / 注册",
+    autoRegisterHint: "没有账号？用邮箱验证码登录即可自动注册。",
+    noAccountHint: "没有账号？请联系管理员开通。",
 
     adminPanelSubtitle: "登录到 {{teamName}} 的管理员面板",
     adminPanelDocumentTitle: "{{toolName}} 管理员面板 - {{teamName}}",
@@ -1025,6 +1028,8 @@ export const zhCN = {
         search: "搜索",
         expert: "专家",
         expertAll: "全部专家",
+        expertSystem: "系统专家",
+        expertEmployee: "员工自建专家",
         status: "状态",
         statusAll: "全部会话",
         statusFailed: "有失败的会话",

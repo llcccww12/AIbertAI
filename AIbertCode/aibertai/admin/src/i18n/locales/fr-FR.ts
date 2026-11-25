@@ -344,6 +344,8 @@ export const frFR = {
         search: "Rechercher",
         expert: "Expert",
         expertAll: "Tous les experts",
+        expertSystem: "Experts système",
+        expertEmployee: "Experts créés par les employés",
         status: "Statut",
         statusAll: "Toutes les sessions",
         statusFailed: "Sessions avec échecs",

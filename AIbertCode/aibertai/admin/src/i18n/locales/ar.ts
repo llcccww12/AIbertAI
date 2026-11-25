@@ -319,6 +319,8 @@ export const ar = {
         search: "بحث",
         expert: "الخبير",
         expertAll: "كل الخبراء",
+        expertSystem: "خبراء النظام",
+        expertEmployee: "خبراء أنشأهم الموظفون",
         status: "الحالة",
         statusAll: "كل الجلسات",
         statusFailed: "جلسات بها إخفاقات",

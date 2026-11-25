@@ -673,6 +673,9 @@ export const enUS = {
     passwordHint: "Use at least 12 characters.",
     passwordLogin: "Password sign-in",
     codeLogin: "Code sign-in",
+    codeLoginOrRegister: "Code sign-in / Sign up",
+    autoRegisterHint: "No account? Sign in with an email code to create one.",
+    noAccountHint: "No account? Ask your administrator to create one.",
 
     adminPanelSubtitle: "Sign in to the {{teamName}} admin panel",
     adminPanelDocumentTitle: "{{toolName}} Admin Panel - {{teamName}}",
@@ -1098,6 +1101,8 @@ export const enUS = {
         search: "Search",
         expert: "Expert",
         expertAll: "All experts",
+        expertSystem: "System experts",
+        expertEmployee: "Employee experts",
         status: "Status",
         statusAll: "All sessions",
         statusFailed: "Sessions with failures",

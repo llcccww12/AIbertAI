@@ -1,3 +1,4 @@
+import { copyText } from "@/lib/copy-host-command"
 import { useEffect, useState, type FormEvent } from "react"
 import {
   Delete02Icon,
@@ -503,7 +504,7 @@ export function OtherSettingsPage() {
 
   const copyOauthCallbackURL = async () => {
     try {
-      await navigator.clipboard.writeText(oauthCallbackURL)
+      await copyText(oauthCallbackURL)
       showToast({
         status: "success",
         title: t("pages.otherSettings.oauth.callbackCopied"),
