@@ -14928,8 +14928,20 @@ function stop() {
   });
   return stopping$2;
 }
+function updaterOptions() {
+  return { override: process.env[platform.updateUrlEnvironment], canInstall: () => migrationScheduled() ? ErrorCode.dataMigrationPending : void 0 };
+}
+const UPDATER_CHANNELS = ["update:status", "update:check", "update:history", "update:download", "update:install", "update:remind", "update:skip", "update:auto-download"];
+// 首次安装时启动阶段还没有登录账号，更新服务处于未配置状态；登录后按该后端重新启用，无需重启应用。
+function activateUpdaterForAccount() {
+  if (!updater || updater.active || updater.getStatus().state !== "unconfigured" || !currentAccount()) return;
+  for (const channel of UPDATER_CHANNELS) electron.ipcMain.removeHandler(channel);
+  updater = setupUpdater(applyTrayMenu, updaterOptions());
+  applyTrayMenu();
+}
 function syncRuntimeToAccount() {
   if (quitting$1) return Promise.resolve();
+  activateUpdaterForAccount();
   transition = transition.catch(() => {
   }).then(async () => {
     if (quitting$1) return;
@@ -23379,6 +23391,26 @@ class ArchiveReplaceUpdater extends electronUpdater.BaseUpdater {
     const run = options2.isForceRunAfter ? "1" : "0";
     const target = process.platform === "darwin" ? node_path.resolve(process.execPath, "../../..") : node_path.dirname(process.execPath);
     if (process.platform === "darwin" && !target.endsWith(".app")) throw new Error("无法定位当前应用，请从下载页手动安装新版。");
+    // 从 DMG 或下载目录直接打开时，macOS 会把应用隔离到只读的 AppTranslocation 路径，无法原地替换。
+    if (process.platform === "darwin" && !electron.app.isInApplicationsFolder()) {
+      const chinese = String(readPrefs().locale ?? electron.app.getLocale()).startsWith("zh");
+      const choice = electron.dialog.showMessageBoxSync({
+        type: "info",
+        buttons: chinese ? ["移到「应用程序」", "取消"] : ["Move to Applications", "Cancel"],
+        defaultId: 0,
+        cancelId: 1,
+        message: chinese ? "请先把 AIbertAI 移到「应用程序」文件夹" : "Move AIbertAI to the Applications folder first",
+        detail: chinese ? "当前是从安装镜像或下载位置直接打开的，无法原地更新。移动后应用会自动重新打开，账号和会话都会保留，然后再点一次更新即可。" : "The app is running from the disk image or download location and cannot update in place. It will reopen from Applications with your account and sessions kept; then choose update again."
+      });
+      if (choice === 0) {
+        try {
+          if (electron.app.moveToApplicationsFolder()) return false;
+        } catch (error) {
+          throw new Error(`${chinese ? "移动到「应用程序」失败" : "Could not move to Applications"}：${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      throw new Error(chinese ? "请先把 AIbertAI 拖到「应用程序」文件夹，从那里打开后再更新。" : "Drag AIbertAI to the Applications folder, open it from there, then update again.");
+    }
     try {
       node_fs.accessSync(node_path.dirname(target), node_fs.constants.W_OK);
     } catch {
@@ -23436,6 +23468,7 @@ function setupUpdater(onStatus = () => {
     onStatus(status2);
   };
   const inactive = (state2, message) => {
+    console.log(`[updater] inactive: ${state2}${message ? ` (${message})` : ""} platform=${process.platform} packaged=${electron.app.isPackaged}`);
     let status2 = { state: state2, message, revision: 0, autoDownload: preferences.autoDownload };
     handle("update:status", none, () => status2);
     handle("update:check", none, () => status2);
@@ -25785,7 +25818,7 @@ function onReady() {
   electron.app.on("will-quit", () => pastedAttachments.dispose());
   void syncRuntimeToAccount();
   createTray();
-  updater = setupUpdater(applyTrayMenu, { override: process.env[platform.updateUrlEnvironment], canInstall: () => migrationScheduled() ? ErrorCode.dataMigrationPending : void 0 });
+  updater = setupUpdater(applyTrayMenu, updaterOptions());
   createWindow();
   mainWorkbench?.webContents.once("did-finish-load", () => {
     setLoginStorageUnavailableHandler(() => {
