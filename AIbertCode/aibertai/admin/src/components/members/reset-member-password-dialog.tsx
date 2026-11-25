@@ -1,3 +1,4 @@
+import { copyText } from "@/lib/copy-host-command"
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
 
@@ -48,7 +49,7 @@ export function ResetMemberPasswordDialog({
 
   const copyPassword = async () => {
     try {
-      await navigator.clipboard.writeText(password)
+      await copyText(password)
       showToast({
         status: "success",
         title: t("pages.membersAndGroups.passwordCopied"),

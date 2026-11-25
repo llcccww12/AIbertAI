@@ -26,3 +26,6 @@ export async function copyHostCommand(command: string): Promise<void> {
     if (previous instanceof HTMLElement) previous.focus({ preventScroll: true })
   }
 }
+
+// Works on plain-HTTP deployments where navigator.clipboard is unavailable.
+export const copyText = copyHostCommand

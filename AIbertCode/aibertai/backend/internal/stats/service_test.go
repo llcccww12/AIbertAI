@@ -388,6 +388,25 @@ func TestHistory(t *testing.T) {
 	assertHistoryPage(t, out, true, 1)
 	number(t, out, "page", 2)
 	number(t, out["items"].([]any)[0].(map[string]any), "turn_count", 3)
+	window := "from=" + from.Format(time.RFC3339) + "&until=" + now.Format(time.RFC3339)
+	out = request(t, s, "/statistics/history?status=failed&"+window, 200)
+	assertHistoryPage(t, out, false, 1)
+	failed := out["items"].([]any)[0].(map[string]any)
+	if failed["title"] != "报告失败" || failed["credits"] != "0" {
+		t.Fatalf("失败筛选结果错误: %v", failed)
+	}
+	number(t, failed, "failed_turns", 3)
+	number(t, failed, "interrupted_turns", 0)
+	request(t, s, "/statistics/history?status=bad", 400)
+	request(t, s, "/statistics/history?expert_id=bad", 400)
+	summary := request(t, s, "/statistics/history/summary?"+window, 200)
+	for key, want := range map[string]float64{"sessions": 3, "members": 1, "turns": 6, "failed_turns": 3, "failed_sessions": 1, "tokens": 0} {
+		number(t, summary, key, want)
+	}
+	if summary["credits"] != "0" || summary["window_from"] == nil {
+		t.Fatalf("汇总积分或窗口错误: %v", summary)
+	}
+	number(t, request(t, s, "/statistics/history/summary?status=failed&"+window, 200), "sessions", 1)
 }
 func TestRemovedStatisticsEndpoints(t *testing.T) {
 	router := chi.NewRouter()

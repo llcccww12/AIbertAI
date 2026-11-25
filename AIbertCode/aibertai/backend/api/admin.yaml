@@ -1616,6 +1616,20 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: expert_id
+          in: query
+          required: false
+          description: 按会话使用的专家 UUID 精确匹配。
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          required: false
+          description: failed 只返回至少有一轮执行失败（stop_reason=error）的会话；all 或省略返回全部。
+          schema:
+            type: string
+            enum: [all, failed]
         - name: from
           in: query
           required: false
@@ -1660,6 +1674,38 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/StatisticsHistory"
+        "400":
+          $ref: "#/components/responses/ResourceError400"
+        "401":
+          $ref: "#/components/responses/ResourceError401"
+        "403":
+          $ref: "#/components/responses/ResourceError403"
+        "500":
+          $ref: "#/components/responses/ResourceError500"
+  /api/admin/v1/statistics/history/summary:
+    get:
+      summary: 汇总会话历史
+      description: 仅管理员可访问。按与会话历史列表相同的筛选条件汇总会话、成员、轮次、失败、Token 与积分；未传 from 时只汇总最近 30 天。page 与 page_size 不生效。
+      parameters:
+        - {name: task, in: query, required: false, schema: {type: string, maxLength: 200}}
+        - {name: user, in: query, required: false, schema: {type: string, maxLength: 200}}
+        - {name: user_id, in: query, required: false, schema: {type: string, format: uuid}}
+        - {name: expert_id, in: query, required: false, schema: {type: string, format: uuid}}
+        - {name: status, in: query, required: false, schema: {type: string, enum: [all, failed]}}
+        - {name: from, in: query, required: false, schema: {type: string, format: date-time}}
+        - {name: until, in: query, required: false, schema: {type: string, format: date-time}}
+      responses:
+        "200":
+          description: 汇总结果。
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatisticsHistorySummary"
         "400":
           $ref: "#/components/responses/ResourceError400"
         "401":
@@ -8233,6 +8279,18 @@ components:
           description: 本轮原始结束原因；不表示整个任务是否结束。
         error_code: {type: [string, 'null'], description: 已上报的错误码，无错误码时为 null。}
         is_completed: {type: [boolean, 'null'], description: complete 为 true；unknown 为 null；其他结束原因为 false。只表示本轮是否正常完成。}
+    StatisticsHistorySummary:
+      type: object
+      required: [sessions, members, turns, failed_turns, failed_sessions, tokens, credits, window_from]
+      properties:
+        sessions: {type: integer, minimum: 0}
+        members: {type: integer, minimum: 0}
+        turns: {type: integer, minimum: 0}
+        failed_turns: {type: integer, minimum: 0}
+        failed_sessions: {type: integer, minimum: 0}
+        tokens: {type: integer, minimum: 0, description: 输入与输出 Token 之和，含子智能体。}
+        credits: {type: string, description: 已结算积分，含子智能体会话。}
+        window_from: {type: string, format: date-time, description: 实际汇总的开始时间。}
     StatisticsHistory:
       type: object
       required:
@@ -8287,6 +8345,44 @@ components:
                 type: [integer, 'null']
                 minimum: 0
                 description: 已维护的累计轮次数；存量后台校准期间为 null，不在列表请求中执行计数查询。
+              expert_id:
+                type: [string, 'null']
+                format: uuid
+              expert_name:
+                type: [string, 'null']
+                description: 会话使用的专家名称。
+              model_name:
+                type: [string, 'null']
+                description: 会话所选模型的显示名称。
+              client_type:
+                type: string
+                description: 发起会话的客户端类型。
+              active_seconds:
+                type: integer
+                minimum: 0
+                description: 会话累计活跃秒数。
+              failed_turns:
+                type: integer
+                minimum: 0
+                description: 执行失败的轮次数，只在本页会话的时间跨度内聚合。
+              interrupted_turns:
+                type: integer
+                minimum: 0
+              input_tokens:
+                type: integer
+                minimum: 0
+                description: 输入 Token，含子智能体。
+              output_tokens:
+                type: integer
+                minimum: 0
+                description: 输出 Token，含子智能体。
+              files_changed:
+                type: integer
+                minimum: 0
+                description: 新建、修改、删除的文件数之和。
+              credits:
+                type: string
+                description: 已结算积分，含子智能体会话。
         has_next:
           type: boolean
           description: 每页多查一条判断是否还有下一页，不执行总数查询。

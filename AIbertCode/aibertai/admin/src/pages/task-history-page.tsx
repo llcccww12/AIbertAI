@@ -1,6 +1,16 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react"
-import { FilterHorizontalIcon, Search02Icon } from "@hugeicons/core-free-icons"
-import { HugeiconsIcon } from "@hugeicons/react"
+import {
+  AiChat02Icon,
+  Alert02Icon,
+  Coins01Icon,
+  Download04Icon,
+  FilterHorizontalIcon,
+  Search02Icon,
+  Task01Icon,
+  TokenCircleIcon,
+  UserMultiple02Icon,
+} from "@hugeicons/core-free-icons"
+import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react"
 import { useTranslation } from "react-i18next"
 import { TablePagination } from "@/components/table-pagination"
 import { TableLoading } from "@/components/table-loading"
@@ -18,6 +28,18 @@ import { StatisticsFeedback } from "@/components/statistics-feedback"
 import { DatePickerField } from "@/components/date-picker-field"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import { StatisticsCardHeader } from "@/components/statistics-card-header"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { api } from "@/lib/api"
+import { base } from "@/lib/resources"
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import {
   DropdownMenu,
@@ -48,6 +70,35 @@ type TaskHistoryEntry = {
   started_at: string
   last_active_at: string
   turn_count: number | null
+  expert_id?: string | null
+  expert_name?: string | null
+  model_name?: string | null
+  client_type?: string
+  active_seconds?: number
+  failed_turns?: number
+  interrupted_turns?: number
+  input_tokens?: number
+  output_tokens?: number
+  files_changed?: number
+  credits?: string
+}
+
+type TaskHistorySummary = {
+  sessions: number
+  members: number
+  turns: number
+  failed_turns: number
+  failed_sessions: number
+  tokens: number
+  credits: string
+  window_from: string
+}
+
+type ExpertOption = {
+  id: string
+  name: string
+  ownership_type?: "system" | "user"
+  user?: { name?: string } | null
 }
 
 type TaskHistory = {
@@ -57,12 +108,15 @@ type TaskHistory = {
   page_size: number
 }
 
-type SearchField = "taskName" | "user" | "dateRange"
+type SearchField = "taskName" | "user" | "expert" | "status" | "dateRange"
+type StatusFilter = "all" | "failed"
 
 type TaskHistoryFilters = {
   taskName: string
   userName: string
   userId: string
+  expertId: string
+  status: StatusFilter
   startTime: Date | undefined
   endTime: Date | undefined
 }
@@ -73,17 +127,31 @@ const EMPTY_FILTERS: TaskHistoryFilters = {
   taskName: "",
   userName: "",
   userId: "",
+  expertId: "",
+  status: "all",
   startTime: undefined,
   endTime: undefined,
 }
 
-const TASK_QUERY_KEYS = ["task", "user", "user_id", "from", "until"] as const
+const TASK_QUERY_KEYS = [
+  "task",
+  "user",
+  "user_id",
+  "expert_id",
+  "status",
+  "from",
+  "until",
+] as const
+const EXPORT_PAGE_SIZE = 500
+const EXPORT_MAX_PAGES = 20
 function taskFilterInput(filters: Record<string, string>): TaskHistoryFilters {
   return {
     ...EMPTY_FILTERS,
     taskName: filters.task ?? "",
     userName: filters.user_id ? "" : (filters.user ?? ""),
     userId: filters.user_id ?? "",
+    expertId: filters.expert_id ?? "",
+    status: filters.status === "failed" ? "failed" : "all",
     startTime: queryDate(filters.from),
     endTime: queryDate(filters.until, true),
   }
@@ -92,6 +160,8 @@ function activeTaskFields(filters: Record<string, string>): SearchField[] {
   return [
     ...(filters.task ? ["taskName" as const] : []),
     ...(filters.user || filters.user_id ? ["user" as const] : []),
+    ...(filters.expert_id ? ["expert" as const] : []),
+    ...(filters.status === "failed" ? ["status" as const] : []),
     ...(filters.from || filters.until ? ["dateRange" as const] : []),
   ]
 }
@@ -107,7 +177,8 @@ export function TaskHistoryPage() {
     taskFilterInput(filters)
   )
   const [visibleFields, setVisibleFields] = useState<Set<SearchField>>(
-    () => new Set(["taskName", "user", ...activeTaskFields(filters)])
+    () =>
+      new Set(["taskName", "user", "status", ...activeTaskFields(filters)])
   )
   const [now, setNow] = useState(() => Date.now())
   const [accountUserID, setAccountUserID] = useState<string | null>(null)
@@ -125,18 +196,48 @@ export function TaskHistoryPage() {
     return () => window.clearInterval(timer)
   }, [])
 
-  const query = new URLSearchParams({
+  const filterParams = new URLSearchParams({
     task: filters.task ?? "",
     user: filters.user_id ? "" : (filters.user ?? ""),
-    page: String(page),
-    page_size: String(pageSize),
   })
-  if (filters.user_id) query.set("user_id", filters.user_id)
-  if (filters.from) query.set("from", filters.from)
-  if (filters.until) query.set("until", filters.until)
+  if (filters.user_id) filterParams.set("user_id", filters.user_id)
+  if (filters.expert_id) filterParams.set("expert_id", filters.expert_id)
+  if (filters.status === "failed") filterParams.set("status", "failed")
+  if (filters.from) filterParams.set("from", filters.from)
+  if (filters.until) filterParams.set("until", filters.until)
+  const query = new URLSearchParams(filterParams)
+  query.set("page", String(page))
+  query.set("page_size", String(pageSize))
   const request = useStatistics<TaskHistory>(
     `/api/admin/v1/statistics/history?${query}`
   )
+  const summary = useStatistics<TaskHistorySummary>(
+    `/api/admin/v1/statistics/history/summary?${filterParams}`,
+    0,
+    { retryAction: false }
+  )
+  const [experts, setExperts] = useState<ExpertOption[]>([])
+  useEffect(() => {
+    const controller = new AbortController()
+    // Admins need the global picture, so list employee-created experts too.
+    const loadAll = async () => {
+      const all: ExpertOption[] = []
+      let cursor = ""
+      for (let i = 0; i < 10; i++) {
+        const data = await api<{ items?: ExpertOption[]; next_cursor?: string }>(
+          `${base}/experts?limit=500${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+          { signal: controller.signal }
+        )
+        all.push(...(data.items ?? []))
+        cursor = data.next_cursor ?? ""
+        if (!cursor) break
+      }
+      setExperts(all)
+    }
+    loadAll().catch(() => {})
+    return () => controller.abort()
+  }, [])
+  const [exporting, setExporting] = useState(false)
   const currentPage = request.data?.page ?? page
   useEffect(() => {
     if (
@@ -167,10 +268,138 @@ export function TaskHistoryPage() {
     () => new Intl.DateTimeFormat(locale, TABLE_DATE_TIME_OPTIONS),
     [locale]
   )
+  const compactFormatter = useMemo(
+    () =>
+      new Intl.NumberFormat(locale, {
+        notation: "compact",
+        maximumFractionDigits: 1,
+      }),
+    [locale]
+  )
+  const creditFormatter = useMemo(
+    () => new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }),
+    [locale]
+  )
+  const formatCredits = (value?: string) =>
+    value == null ? "—" : creditFormatter.format(Number(value))
+  const formatDuration = (seconds?: number) => {
+    if (seconds == null) return "—"
+    if (seconds < 60) return t("pages.taskHistory.duration.seconds", { count: seconds })
+    const minutes = Math.round(seconds / 60)
+    if (minutes < 60) return t("pages.taskHistory.duration.minutes", { count: minutes })
+    return t("pages.taskHistory.duration.hours", {
+      hours: Math.floor(minutes / 60),
+      minutes: minutes % 60,
+    })
+  }
+  const statusItems: { value: StatusFilter; label: string }[] = [
+    { value: "all", label: t("pages.taskHistory.filters.statusAll") },
+    { value: "failed", label: t("pages.taskHistory.filters.statusFailed") },
+  ]
+  const expertLabel = (expert: ExpertOption) =>
+    expert.ownership_type === "user" && expert.user?.name
+      ? `${expert.name} · ${expert.user.name}`
+      : expert.name
+  const expertGroups = [
+    {
+      label: t("pages.taskHistory.filters.expertSystem"),
+      items: experts.filter((expert) => expert.ownership_type !== "user"),
+    },
+    {
+      label: t("pages.taskHistory.filters.expertEmployee"),
+      items: experts.filter((expert) => expert.ownership_type === "user"),
+    },
+  ].filter((group) => group.items.length > 0)
+  const expertItems = [
+    { value: "", label: t("pages.taskHistory.filters.expertAll") },
+    ...experts.map((expert) => ({ value: expert.id, label: expertLabel(expert) })),
+  ]
+  const exportCsv = async () => {
+    setExporting(true)
+    try {
+      const rows: TaskHistoryEntry[] = []
+      let truncated = false
+      for (let exportPage = 1; ; exportPage++) {
+        const pageQuery = new URLSearchParams(filterParams)
+        pageQuery.set("page", String(exportPage))
+        pageQuery.set("page_size", String(EXPORT_PAGE_SIZE))
+        const data = await api<TaskHistory>(
+          `/api/admin/v1/statistics/history?${pageQuery}`
+        )
+        rows.push(...data.items)
+        if (!data.has_next) break
+        if (exportPage >= EXPORT_MAX_PAGES) {
+          truncated = true
+          break
+        }
+      }
+      const cell = (value: unknown) => {
+        const text = value == null ? "" : String(value)
+        return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text
+      }
+      const header = [
+        t("pages.taskHistory.columns.startedAt"),
+        t("pages.taskHistory.columns.user"),
+        "Email",
+        t("pages.taskHistory.columns.task"),
+        t("pages.taskHistory.columns.expert"),
+        t("pages.taskHistory.columns.model"),
+        t("pages.taskHistory.columns.conversationCount"),
+        t("pages.taskHistory.columns.failedTurnsHeader"),
+        `${t("pages.taskHistory.columns.tokens")} ${t("pages.taskHistory.columns.inputTokens")}`,
+        `${t("pages.taskHistory.columns.tokens")} ${t("pages.taskHistory.columns.outputTokens")}`,
+        t("pages.taskHistory.columns.credits"),
+        `${t("pages.taskHistory.columns.activeTime")} (s)`,
+        t("pages.taskHistory.columns.lastActiveAt"),
+        "ID",
+      ]
+      const lines = [header, ...rows.map((row) => [
+        dateFormatter.format(new Date(row.started_at)),
+        row.user_name,
+        row.user_email,
+        row.title,
+        row.expert_name ?? "",
+        row.model_name ?? "",
+        row.turn_count ?? "",
+        row.failed_turns ?? "",
+        row.input_tokens ?? "",
+        row.output_tokens ?? "",
+        row.credits ?? "",
+        row.active_seconds ?? "",
+        dateFormatter.format(new Date(row.last_active_at)),
+        row.id,
+      ])].map((line) => line.map(cell).join(","))
+      const blob = new Blob(["\ufeff" + lines.join("\r\n")], {
+        type: "text/csv;charset=utf-8",
+      })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement("a")
+      link.href = url
+      link.download = `session-history-${new Date().toISOString().slice(0, 10)}.csv`
+      link.click()
+      URL.revokeObjectURL(url)
+      if (truncated)
+        showToast({
+          status: "info",
+          title: t("pages.taskHistory.filters.exportTruncated", {
+            count: EXPORT_PAGE_SIZE * EXPORT_MAX_PAGES,
+          }),
+        })
+    } catch (error) {
+      showToast({
+        status: "error",
+        title: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      setExporting(false)
+    }
+  }
 
   const fieldOptions: { key: SearchField; label: string }[] = [
     { key: "taskName", label: t("pages.taskHistory.filters.taskName") },
     { key: "user", label: t("pages.billingDetails.filters.userPlaceholder") },
+    { key: "expert", label: t("pages.taskHistory.filters.expert") },
+    { key: "status", label: t("pages.taskHistory.filters.status") },
     {
       key: "dateRange",
       label: `${t("pages.taskHistory.filters.startTime")} – ${t("pages.taskHistory.filters.endTime")}`,
@@ -189,6 +418,8 @@ export function TaskHistoryPage() {
       task: filterInput.taskName,
       user: "",
       user_id: filterInput.userId.trim(),
+      expert_id: filterInput.expertId,
+      status: filterInput.status === "failed" ? "failed" : "",
       from: queryDateValue(filterInput.startTime, filters.from, "from"),
       until: queryDateValue(
         filterInput.endTime,
@@ -196,7 +427,10 @@ export function TaskHistoryPage() {
         "exclusiveUntil"
       ),
     }
-    if (!tableQuery.commit(next)) request.reload()
+    if (!tableQuery.commit(next)) {
+      request.reload()
+      summary.reload()
+    }
   }
   const openAccount = (task: TaskHistoryEntry) => {
     if (!task.user_id) {
@@ -212,6 +446,41 @@ export function TaskHistoryPage() {
   return (
     <section className="data-table-page-layout">
       <StatisticsFeedback {...request} />
+      <div className="grid shrink-0 grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+        {(
+          [
+            [Task01Icon, "sessions", summary.data && numberFormatter.format(summary.data.sessions)],
+            [UserMultiple02Icon, "members", summary.data && numberFormatter.format(summary.data.members)],
+            [AiChat02Icon, "turns", summary.data && numberFormatter.format(summary.data.turns)],
+            [
+              Alert02Icon,
+              "failedSessions",
+              summary.data &&
+                `${numberFormatter.format(summary.data.failed_sessions)}${
+                  summary.data.sessions
+                    ? ` · ${Math.round((summary.data.failed_sessions * 100) / summary.data.sessions)}%`
+                    : ""
+                }`,
+            ],
+            [TokenCircleIcon, "tokens", summary.data && compactFormatter.format(summary.data.tokens)],
+            [Coins01Icon, "credits", summary.data && formatCredits(summary.data.credits)],
+          ] as [IconSvgElement, string, string | undefined][]
+        ).map(([icon, key, value], index) => (
+          <SummaryTile
+            key={key}
+            icon={icon}
+            label={t(`pages.taskHistory.summary.${key}`)}
+            qualifier={
+              index === 0 && !filters.from
+                ? t("pages.taskHistory.summary.last30Days")
+                : undefined
+            }
+            value={summary.error ? "—" : value}
+            loading={summary.loading && !summary.data}
+            danger={key === "failedSessions" && !!summary.data?.failed_sessions}
+          />
+        ))}
+      </div>
       <Card className="min-h-0 flex-1">
         <CardContent className="min-h-0 flex-1 gap-4 px-0">
           <form onSubmit={applySearch} className="px-[var(--card-spacing)]">
@@ -254,6 +523,74 @@ export function TaskHistoryPage() {
                       }))
                     }
                   />
+                </Field>
+              )}
+              {visibleFields.has("expert") && (
+                <Field className="sm:w-44">
+                  <FieldLabel className="sr-only">
+                    {t("pages.taskHistory.filters.expert")}
+                  </FieldLabel>
+                  <Select
+                    items={expertItems}
+                    value={filterInput.expertId}
+                    onValueChange={(value) =>
+                      setFilterInput((current) => ({
+                        ...current,
+                        expertId: value ?? "",
+                      }))
+                    }
+                  >
+                    <SelectTrigger aria-label={t("pages.taskHistory.filters.expert")}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent alignItemWithTrigger={false} align="start">
+                      <SelectGroup>
+                        <SelectItem value="">
+                          {t("pages.taskHistory.filters.expertAll")}
+                        </SelectItem>
+                      </SelectGroup>
+                      {expertGroups.map((group) => (
+                        <SelectGroup key={group.label}>
+                          <SelectLabel>{group.label}</SelectLabel>
+                          {group.items.map((expert) => (
+                            <SelectItem key={expert.id} value={expert.id}>
+                              {expertLabel(expert)}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+              )}
+              {visibleFields.has("status") && (
+                <Field className="sm:w-40">
+                  <FieldLabel className="sr-only">
+                    {t("pages.taskHistory.filters.status")}
+                  </FieldLabel>
+                  <Select
+                    items={statusItems}
+                    value={filterInput.status}
+                    onValueChange={(value) =>
+                      setFilterInput((current) => ({
+                        ...current,
+                        status: value === "failed" ? "failed" : "all",
+                      }))
+                    }
+                  >
+                    <SelectTrigger aria-label={t("pages.taskHistory.filters.status")}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent alignItemWithTrigger={false} align="start">
+                      <SelectGroup>
+                        {statusItems.map((item) => (
+                          <SelectItem key={item.value} value={item.value}>
+                            {item.label}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
                 </Field>
               )}
               {visibleFields.has("dateRange") && (
@@ -327,6 +664,16 @@ export function TaskHistoryPage() {
                               userId: "",
                               userName: "",
                             }))
+                          if (!checked && key === "expert")
+                            setFilterInput((current) => ({
+                              ...current,
+                              expertId: "",
+                            }))
+                          if (!checked && key === "status")
+                            setFilterInput((current) => ({
+                              ...current,
+                              status: "all",
+                            }))
                         }}
                       >
                         {label}
@@ -344,6 +691,18 @@ export function TaskHistoryPage() {
                   {t("pages.taskHistory.filters.search")}
                 </Button>
               </Field>
+              <Button
+                type="button"
+                variant="outline"
+                className="ms-auto"
+                disabled={exporting}
+                onClick={() => void exportCsv()}
+              >
+                <HugeiconsIcon icon={Download04Icon} data-icon="inline-start" />
+                {exporting
+                  ? t("pages.taskHistory.filters.exporting")
+                  : t("pages.taskHistory.filters.export")}
+              </Button>
             </FieldGroup>
           </form>
           <ScrollArea
@@ -353,15 +712,15 @@ export function TaskHistoryPage() {
             <Table
               className={
                 !visibleTasks.length
-                  ? "h-full min-w-4xl table-fixed"
-                  : "min-w-4xl table-fixed"
+                  ? "h-full min-w-6xl table-fixed"
+                  : "min-w-6xl table-fixed"
               }
               aria-label={t("pages.taskHistory.title")}
               aria-busy={request.loading}
             >
               <TableHeader className="sticky top-0 z-10">
                 <TableRow>
-                  <TableHead className="w-52 ps-[var(--card-spacing)]">
+                  <TableHead className="w-44 ps-[var(--card-spacing)]">
                     {t("pages.taskHistory.columns.startedAt")}
                   </TableHead>
                   <TableHead className="w-44">
@@ -370,6 +729,15 @@ export function TaskHistoryPage() {
                   <TableHead>{t("pages.taskHistory.columns.task")}</TableHead>
                   <TableHead className="w-28">
                     {t("pages.taskHistory.columns.conversationCount")}
+                  </TableHead>
+                  <TableHead className="w-24">
+                    {t("pages.taskHistory.columns.tokens")}
+                  </TableHead>
+                  <TableHead className="w-24">
+                    {t("pages.taskHistory.columns.credits")}
+                  </TableHead>
+                  <TableHead className="w-28">
+                    {t("pages.taskHistory.columns.activeTime")}
                   </TableHead>
                   <TableHead className="w-36 pe-[var(--card-spacing)]">
                     {t("pages.taskHistory.columns.lastActiveAt")}
@@ -411,13 +779,52 @@ export function TaskHistoryPage() {
                           className="block min-w-0 cursor-pointer truncate rounded-sm underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring [&:hover]:underline"
                           title={task.title}
                         >
-                          {task.title}
+                          {task.title || "—"}
                         </Link>
+                        {(task.expert_name || task.model_name) && (
+                          <span
+                            className="mt-0.5 block truncate text-xs text-muted-foreground"
+                            title={[task.expert_name, task.model_name].filter(Boolean).join(" · ")}
+                          >
+                            {[task.expert_name, task.model_name]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell className="tabular-nums">
+                        <span className="block truncate">
+                          {task.turn_count == null
+                            ? "—"
+                            : numberFormatter.format(task.turn_count)}
+                        </span>
+                        {!!task.failed_turns && (
+                          <span className="block truncate text-xs text-destructive">
+                            {t("pages.taskHistory.columns.failedTurns", {
+                              count: task.failed_turns,
+                            })}
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell
+                        className="truncate tabular-nums"
+                        title={
+                          task.input_tokens == null
+                            ? undefined
+                            : `${t("pages.taskHistory.columns.inputTokens")} ${numberFormatter.format(task.input_tokens)} / ${t("pages.taskHistory.columns.outputTokens")} ${numberFormatter.format(task.output_tokens ?? 0)}`
+                        }
+                      >
+                        {task.input_tokens == null
+                          ? "—"
+                          : compactFormatter.format(
+                              task.input_tokens + (task.output_tokens ?? 0)
+                            )}
                       </TableCell>
                       <TableCell className="truncate tabular-nums">
-                        {task.turn_count == null
-                          ? "—"
-                          : numberFormatter.format(task.turn_count)}
+                        {formatCredits(task.credits)}
+                      </TableCell>
+                      <TableCell className="truncate tabular-nums text-muted-foreground">
+                        {formatDuration(task.active_seconds)}
                       </TableCell>
                       <TableCell
                         className="whitespace-nowrap pe-[var(--card-spacing)] text-muted-foreground"
@@ -439,7 +846,7 @@ export function TaskHistoryPage() {
                 ) : (
                   <TableRow className="h-full">
                     <TableCell
-                      colSpan={5}
+                      colSpan={8}
                       className="h-full text-center text-muted-foreground"
                     >
                       {request.loading ? (
@@ -478,5 +885,41 @@ export function TaskHistoryPage() {
         />
       )}
     </section>
+  )
+}
+
+function SummaryTile({
+  icon,
+  label,
+  qualifier,
+  value,
+  loading,
+  danger,
+}: {
+  icon: IconSvgElement
+  label: string
+  qualifier?: string
+  value?: string
+  loading: boolean
+  danger?: boolean
+}) {
+  return (
+    <Card className="gap-1.5 bg-muted/40 p-2 shadow-none ring-1 ring-border/70">
+      <StatisticsCardHeader icon={icon} title={label} qualifier={qualifier} truncateTitle />
+      <CardContent
+        className="min-h-12 flex-row items-center rounded-xl border border-border/60 bg-card px-4 py-2.5"
+        aria-busy={loading}
+      >
+        <p
+          className={
+            "min-w-0 truncate text-xl font-medium tabular-nums tracking-tight" +
+            (danger ? " text-destructive" : "")
+          }
+          title={value}
+        >
+          {loading ? "…" : (value ?? "—")}
+        </p>
+      </CardContent>
+    </Card>
   )
 }

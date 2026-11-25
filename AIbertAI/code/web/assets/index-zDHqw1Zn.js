@@ -36298,6 +36298,9 @@ function OG(e) {
     }
   );
 }
+function useEmployeeStandardPreset() {
+  return y.useSyncExternalStore(OG, () => employeeStandardPreset, () => employeeStandardPreset);
+}
 const jve = (e) => {
   for (const t of xH) t(e);
 };
@@ -53656,7 +53659,18 @@ function ptt(e) {
   });
 }
 async function mtt(e = !1) {
-  return a4(wi.billingAccount.name, { refresh: e });
+  // 启动时运行时可能还在拉起，请求会悬挂；超时后按 unavailable 重试，避免额度一直不显示。
+  let timer;
+  try {
+    return await Promise.race([
+      a4(wi.billingAccount.name, { refresh: e }),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("billing_timeout")), 2e4);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 async function gtt(e) {
   return a4(wi.billingEntries.name, e);
@@ -136901,7 +136915,8 @@ function p8t(e, t) {
   )
     return null;
   if (!e.lastAttempt) return t;
-  let n = e.lastAttempt + 15e3;
+  // 还没拿到过额度（多为启动阶段运行时未就绪）时缩短重试间隔。
+  let n = e.lastAttempt + (e.overview ? 15e3 : 3e3);
   if (
     (e.activityRevision > e.overviewRevision &&
       (n = Math.min(n, Math.max(e.activityAt + 1e3, e.lastAttempt + 3e3))),
@@ -160521,6 +160536,7 @@ function sTt({
   });
 }
 function y_e(e) {
+  const liveStandardPreset = useEmployeeStandardPreset();
   const usedDSHTools = y.useMemo(() => {
     const messages = e.session?.messages?.filter(message => message.dshExecution);
     if (!messages?.length) return null;
@@ -160699,7 +160715,7 @@ function y_e(e) {
           children: l.jsx(f_e, {
             ...E,
             experts: n?.expertSummaries ?? [],
-            standardMode: e.session ? e.session.dshJobsAvailable : employeeStandardPreset,
+            standardMode: e.session ? e.session.dshJobsAvailable : liveStandardPreset,
             value: e.expertId ?? "",
             onSelect: (N) => {
               (e.onCloseMenu(),
@@ -166288,6 +166304,7 @@ const W7 = () => ({
   mediaModelId: null,
 });
 function fhe() {
+  const liveStandardPreset = useEmployeeStandardPreset();
   const { t: e, i18n: t } = Xe(),
     n = jA(),
     r = ts()?.transport === "relay" && !n,
@@ -166654,7 +166671,7 @@ ${e("settings.experts.aiPrompt")}`,
                     },
                   }),
                 expertControl: l.jsx(b_e, {
-                  standardMode: employeeStandardPreset, expertId: $,
+                  standardMode: liveStandardPreset, expertId: $,
                   disabled: !w || at,
                   onSelect: xe,
                   onManage: f.show,
@@ -280281,6 +280298,44 @@ function Rrn(e = document) {
 }
 Rrn();
 const JIe = () => document.getElementById("root");
+// 启动动画：index.html 里的静态遮罩，在本机运行时连上（或未登录、出错、超时）后淡出。
+const bootSplashStartedAt = performance.now();
+let bootSplashDone = !1;
+function hideBootSplash() {
+  if (bootSplashDone) return;
+  bootSplashDone = !0;
+  const el = document.getElementById("boot-splash");
+  if (!el) return;
+  setTimeout(() => {
+    el.classList.add("boot-splash-done");
+    setTimeout(() => el.remove(), 400);
+  }, Math.max(0, 600 - (performance.now() - bootSplashStartedAt)));
+}
+function watchBootSplash() {
+  const text = document.querySelector("#boot-splash .boot-splash-text");
+  const slow = setTimeout(() => {
+    text && (text.textContent = "正在连接服务…");
+  }, 3e3);
+  let errorTimer;
+  const stop = [];
+  const finish = () => {
+    clearTimeout(slow);
+    clearTimeout(errorTimer);
+    clearTimeout(limit);
+    for (const off of stop) off();
+    hideBootSplash();
+  };
+  const check = () => {
+    const session = Jt.getState();
+    if (!ir.getState().account || session.ready) return finish();
+    // 连接失败先等运行时自动重连，持续失败再露出界面里的错误与重试入口。
+    if (session.connectError) errorTimer ??= setTimeout(finish, 8e3);
+    else (clearTimeout(errorTimer), (errorTimer = void 0));
+  };
+  const limit = setTimeout(finish, 3e4);
+  stop.push(Jt.subscribe(check), ir.subscribe(check));
+  check();
+}
 Trn(et);
 vtt();
 async function Irn() {
@@ -280303,11 +280358,13 @@ async function Irn() {
           l.jsx(lwt, { children: l.jsx(NOe, { router: Arn }) }),
         ],
       }),
-    ));
+    ),
+    watchBootSplash());
 }
 function Lrn(e) {
   const t = wn(e);
   (console.error("[web] startup failed", e),
+    hideBootSplash(),
     (document.title = "AIbertAI"),
     Iye.createRoot(JIe()).render(
       l.jsxs("main", {

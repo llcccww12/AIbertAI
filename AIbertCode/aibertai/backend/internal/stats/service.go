@@ -63,6 +63,7 @@ func (s *Service) RegisterAdmin(r chi.Router) {
 	r.Get("/statistics/session-reporting/members/{id}", s.memberAnalysis)
 	r.Get("/statistics/models/overview", s.modelsOverview)
 	r.Get("/statistics/history", s.history)
+	r.Get("/statistics/history/summary", s.historySummary)
 	r.Get("/statistics/conversations", s.conversations)
 	r.Get("/statistics/session-reporting/sessions/{id}", s.reportingDetail)
 	r.Get("/statistics/session-reporting/resources", s.reportingResources)

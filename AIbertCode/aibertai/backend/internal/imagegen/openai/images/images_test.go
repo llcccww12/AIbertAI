@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/png"
 	"io"
@@ -121,5 +122,29 @@ func TestCustomModelAndRejectedResponse(t *testing.T) {
 	if _, err = p.Generate(context.Background(), proxy.Target{BaseURL: gateway.URL + "/v1", UpstreamModel: "gpt-image-2"},
 		imagegen.ProviderRequest{Prompt: "猫", Quality: "1K", AspectRatio: "1:1", Count: 1}); err == nil {
 		t.Fatal("无法确认结果的 5xx 仍应进入待核查")
+	}
+}
+
+func TestGPTImage2UltraSizesStayWithinUpstreamLimits(t *testing.T) {
+	for _, model := range []string{"gpt-image-2", "GPT-Image-2-2026-04", "openai/gpt-image-2"} {
+		for _, aspect := range ratios {
+			size, err := Size(model, "4K", aspect)
+			if err != nil {
+				t.Fatalf("%s %s: %v", model, aspect, err)
+			}
+			var w, h int
+			if _, err := fmt.Sscanf(size, "%dx%d", &w, &h); err != nil {
+				t.Fatal(err)
+			}
+			if w > 3840 || h > 3840 || w%16 != 0 || h%16 != 0 || w*h > 8294400 || w*h < 655360 {
+				t.Fatalf("%s %s 超出 gpt-image-2 尺寸限制: %s", model, aspect, size)
+			}
+		}
+	}
+	if size, _ := Size("gpt-image-2.5-flare", "4K", "9:16"); size != "2880x5120" {
+		t.Fatalf("其他模型的 4K 尺寸不应改变: %s", size)
+	}
+	if size, _ := Size("gpt-image-2", "1K", "3:2"); size != "1248x832" {
+		t.Fatalf("gpt-image-2 的 1K 尺寸不应改变: %s", size)
 	}
 }
