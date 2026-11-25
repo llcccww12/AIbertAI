@@ -165147,7 +165147,7 @@ function I_e(e, t) {
 function L_e(e, t, n, r) {
   e.setItem(I_e(t, n), JSON.stringify(r));
 }
-const GTt = "/expert-builder";
+const GTt = "请帮我创建一个专家：";
 function KTt(e) {
   const t = [{ kind: "skill_selection", ids: e.skills }];
   for (const n of e.rules) t.push({ kind: "resource", id: n, enabled: !1 });

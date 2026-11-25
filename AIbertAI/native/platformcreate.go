@@ -128,3 +128,76 @@ func (l *acpLive) enableSessionSkill(sessionID, skillID string) error {
 	session.ResourceRevision++
 	return l.save(session)
 }
+
+type expertConnectorLink struct {
+	ID       string `json:"id"`
+	Required bool   `json:"required"`
+}
+
+// personalExpertInput is the backend body for POST /api/v1/experts. DSH
+// plugins are left unset, so the expert keeps every default capability.
+func personalExpertInput(name, description, prompt string, skills []string, connectors []expertConnectorLink) (map[string]any, error) {
+	name, description = strings.TrimSpace(name), strings.TrimSpace(description)
+	if name == "" || utf8.RuneCountInString(name) > 200 || utf8.RuneCountInString(description) > 2000 ||
+		strings.TrimSpace(prompt) == "" || len(prompt) > 32<<10 || !utf8.ValidString(name+description+prompt) ||
+		len(skills) > 50 || len(connectors) > 50 {
+		return nil, errors.New("expert_input_invalid")
+	}
+	seen := map[string]bool{}
+	skillIDs := make([]string, 0, len(skills))
+	for _, id := range skills {
+		if !validUUID(id) || seen[id] {
+			return nil, errors.New("expert_input_invalid")
+		}
+		seen[id] = true
+		skillIDs = append(skillIDs, id)
+	}
+	links := make([]map[string]any, 0, len(connectors))
+	for _, link := range connectors {
+		if !validUUID(link.ID) || seen[link.ID] {
+			return nil, errors.New("expert_input_invalid")
+		}
+		seen[link.ID] = true
+		links = append(links, map[string]any{"connector_id": link.ID, "required": link.Required})
+	}
+	return map[string]any{"name": name, "description": description, "prompt": prompt, "skill_ids": skillIDs, "connectors": links}, nil
+}
+
+// platformResourceCatalog lists what a new expert may reference: the
+// account's skills and remote connectors, with names for the model.
+func (h *relaySessionHost) platformResourceCatalog(ctx context.Context) (map[string]any, error) {
+	auth, err := h.live.authorization(ctx)
+	if err != nil {
+		return nil, err
+	}
+	skills, err := h.live.client.desktopSkillCatalog(ctx, auth)
+	if err != nil {
+		return nil, err
+	}
+	connectors, err := h.live.client.employeeConnectors(ctx, auth)
+	if err != nil {
+		return nil, err
+	}
+	type entry struct {
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	out := map[string]any{"skills": []entry{}, "connectors": []entry{}}
+	skillRows := make([]entry, 0, len(skills))
+	for _, s := range skills {
+		id, _ := s["id"].(string)
+		name, _ := s["name"].(string)
+		description, _ := s["description"].(string)
+		skillRows = append(skillRows, entry{id, name, description})
+	}
+	connectorRows := make([]entry, 0, len(connectors))
+	for _, raw := range connectors {
+		var c entry
+		if json.Unmarshal(raw, &c) == nil && validUUID(c.ID) {
+			connectorRows = append(connectorRows, c)
+		}
+	}
+	out["skills"], out["connectors"] = skillRows, connectorRows
+	return out, nil
+}

@@ -49,3 +49,25 @@ func TestPlatformCreateToolSchemasAreStrict(t *testing.T) {
 		}
 	}
 }
+
+func TestPersonalExpertInput(t *testing.T) {
+	skill, connector := "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"
+	body, err := personalExpertInput(" 周报专家 ", "写周报", "你负责周报", []string{skill}, []expertConnectorLink{{ID: connector, Required: true}})
+	if err != nil || body["name"] != "周报专家" {
+		t.Fatalf("valid expert rejected: %v %v", body, err)
+	}
+	for _, bad := range []func() error{
+		func() error { _, err := personalExpertInput("", "", "p", nil, nil); return err },
+		func() error { _, err := personalExpertInput("n", "", " ", nil, nil); return err },
+		func() error { _, err := personalExpertInput("n", "", "p", []string{"x"}, nil); return err },
+		func() error { _, err := personalExpertInput("n", "", "p", []string{skill, skill}, nil); return err },
+		func() error {
+			_, err := personalExpertInput("n", "", "p", nil, []expertConnectorLink{{ID: "nope"}})
+			return err
+		},
+	} {
+		if bad() == nil {
+			t.Fatal("invalid expert accepted")
+		}
+	}
+}
