@@ -30,7 +30,8 @@ var dshHostDisabledPlugins string
 type dshLocalGateway struct {
 	standardMode                             bool
 	platformSkillsDir                        string
-	agentTeamEnabled                         *bool // New SDK sessions only. Existing sessions restore their journaled team/mode.
+	teamExperts                              []dshTeamExpert // Standard sessions: experts offered as subagent presets.
+	agentTeamEnabled                         *bool           // New SDK sessions only. Existing sessions restore their journaled team/mode.
 	gateway                                  *dshGateway
 	selected                                 selectedModelConfig
 	session, model, protocol, token, journal string
@@ -703,9 +704,16 @@ func (g *dshLocalGateway) Patch(baseURL string, model selectedModelConfig, disab
 	// Web Standard enables discovery and selection on spawn. DSH limits both to
 	// the parent's authorized route when no other session routes were granted.
 	if g.standardMode {
-		patch = append(patch, map[string]any{"id": "tool-subagent", "config": map[string]any{
-			"provider": "spawn", "toolName": "subagent", "modelDiscovery": true, "modelSelection": true,
-		}})
+		subagent := map[string]any{"provider": "spawn", "toolName": "subagent", "modelDiscovery": true, "modelSelection": true}
+		if len(g.teamExperts) > 0 && !slices.Contains(disabledPlugins, "tool-subagent") {
+			patch = append(patch, map[string]any{"insert": dshTeamPresetRows(g.teamExperts)})
+			allowed := []string{"standard"}
+			for _, e := range g.teamExperts {
+				allowed = append(allowed, e.PresetID)
+			}
+			subagent["allowedAgentPresets"] = allowed
+		}
+		patch = append(patch, map[string]any{"id": "tool-subagent", "config": subagent})
 	}
 	if g.platformSkillsDir != "" && !slices.Contains(disabledPlugins, "skill-filesystem") {
 		patch = append(patch, map[string]any{"id": "skill-filesystem", "config": map[string]any{"customSkillDirs": []string{g.platformSkillsDir}}})

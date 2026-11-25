@@ -35,6 +35,8 @@ type dshRuntimeConfig struct {
 	SyncPlatformSkills func(context.Context) error
 	// SessionSkills refreshes one conversation's enabled skills from the cache.
 	SessionSkills func(acpSession) error
+	// TeamExperts lists the platform experts offered as subagent presets.
+	TeamExperts func(context.Context) []dshTeamExpert
 }
 
 // dshInstalledRuntime describes a platform-provisioned SDK bundle. Env is an

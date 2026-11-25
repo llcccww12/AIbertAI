@@ -169,6 +169,14 @@ func (h *relaySessionHost) dshTurnHostTools(ctx context.Context, ws *websocket.C
 		}
 		instructions += hint
 	}
+	if session.ExpertID == "" && h.live.dsh != nil && h.live.dsh.TeamExperts != nil {
+		if hint := dshTeamExpertInstructions(h.live.dsh.TeamExperts(ctx)); hint != "" {
+			if instructions != "" {
+				instructions += "\n\n"
+			}
+			instructions += hint
+		}
+	}
 	return bridges, instructions, nil
 }
 

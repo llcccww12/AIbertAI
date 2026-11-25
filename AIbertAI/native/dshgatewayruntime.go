@@ -73,7 +73,14 @@ func newDSHGatewayRuntime(installation dshInstalledRuntime, journalRoot string, 
 		}
 		return dshDisabledPlugins(expert.DSHPlugins)
 	}
-	return &dshRuntimeConfig{JournalRoot: journalRoot, SharedPluginHome: installation.Home, ResolveDisabledPlugins: resolvePlugins, ValidateLease: validate, BindLease: bind, Prepare: func(ctx context.Context, session acpSession) (*exec.Cmd, string, string, *dshLocalGateway, func(), error) {
+	experts := &dshTeamExpertCache{load: func(ctx context.Context) ([]dshTeamExpert, error) {
+		auth, err := gateway.authorization(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return gateway.client.dshTeamExperts(ctx, auth)
+	}}
+	return &dshRuntimeConfig{TeamExperts: experts.get, JournalRoot: journalRoot, SharedPluginHome: installation.Home, ResolveDisabledPlugins: resolvePlugins, ValidateLease: validate, BindLease: bind, Prepare: func(ctx context.Context, session acpSession) (*exec.Cmd, string, string, *dshLocalGateway, func(), error) {
 		selected, err := validate(ctx, session)
 		if err != nil {
 			return nil, "", "", nil, nil, err
@@ -111,7 +118,10 @@ func newDSHGatewayRuntime(installation dshInstalledRuntime, journalRoot string, 
 		local.agentTeamEnabled = session.AgentTeamEnabled
 		local.standardMode = session.ExpertID == ""
 		if session.ExpertID == "" {
-			local.platformSkillsDir = dshSessionSkillsDir(installation.PlatformSkillsDir, session.ID)
+			if installation.PlatformSkillsDir != "" {
+				local.platformSkillsDir = dshSessionSkillsDir(installation.PlatformSkillsDir, session.ID)
+			}
+			local.teamExperts = experts.get(ctx)
 		}
 		disabled, _ := ctx.Value(dshDisabledPluginsKey{}).([]string)
 		patch, err := local.Patch(base, selected, disabled...)
