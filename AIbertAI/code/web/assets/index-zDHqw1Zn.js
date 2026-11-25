@@ -113915,6 +113915,7 @@ const qwt = {
       env: "环境变量",
       envHint: "每行一项：KEY=VALUE",
       url: "服务地址",
+      urlInvalid: "请填写以 http:// 或 https:// 开头的完整地址，例如 https://mcp.example.com/mcp。",
       headers: "请求头",
       headersHint:
         "值会加密保存在这台设备上；按服务要求填写完整内容（如 Bearer …）。",
@@ -116958,6 +116959,7 @@ const qwt = {
       env: "Environment variables",
       envHint: "One KEY=VALUE per line.",
       url: "Service URL",
+      urlInvalid: "Enter a full address starting with http:// or https://, for example https://mcp.example.com/mcp.",
       headers: "Request headers",
       headersHint:
         "Values are stored encrypted on this device. Enter the full value the service expects (for example Bearer …).",
@@ -148735,8 +148737,12 @@ function K_t({ id: e, onCreated: t, onClose: n }) {
             value: a.url,
             placeholder: "https://mcp.example.com/mcp",
             required: !0,
+            "aria-invalid": (a.url.trim() && !/^https?:\/\//.test(a.url.trim())) || void 0,
             onChange: (b) => c({ ...a, url: b.target.value }),
           }),
+          a.url.trim() && !/^https?:\/\//.test(a.url.trim())
+            ? l.jsx(l8t, { children: r("settings.tools.urlInvalid") })
+            : null,
         ],
       }),
       l.jsxs(_r, {

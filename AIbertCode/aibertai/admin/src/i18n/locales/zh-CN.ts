@@ -1429,6 +1429,8 @@ export const zhCN = {
         videoConfigInvalid: "请选择有效的视频协议，并确认模型能力已加载。",
         videoPriceInvalid:
           "请填写所有视频分辨率的每秒积分，必须为非负数且最多六位小数。",
+        videoResolutionInvalid:
+          "至少开放一个清晰度，且每种视频模式都要有它支持的清晰度。",
         imageOptionsInvalid: "当前生图协议的配置不可用，请切换协议或重试。",
         imagePriceInvalid: "每种清晰度的单张积分必须为非负数，且最多六位小数。",
       },
@@ -1449,6 +1451,7 @@ export const zhCN = {
       embeddingDimension: "向量维度",
       embeddingDimensionAuto: "保存时自动检测向量维度。",
       videoCreditsPerSecond: "每秒积分扣费 - {{resolution}}",
+      videoResolution: "开放清晰度",
       imageCreditsPerImage: "每张图积分扣费 - {{quality}}",
       discoverModels: "获取可用模型",
       discoveryCredentialsRequired: "请先填写 Base URL 和密钥。",

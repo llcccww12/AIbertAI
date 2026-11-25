@@ -113,9 +113,13 @@ import { useSkillTags } from "@/hooks/use-skill-tags"
 import { getModelIconName } from "@/lib/model-utils"
 import type { SkillTag } from "@/lib/skill-tags"
 import { cn } from "@/lib/utils"
+import { ImageCapabilitySelector } from "@/components/image-capability-selector"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
   VIDEO_MODELS,
   videoDefaults,
+  videoModeResolutions,
+  videoOpenResolutions,
   videoResolutions,
   type VideoCapabilities,
   type VideoConfig,
@@ -451,6 +455,17 @@ export function ModelsPage() {
     useState<VideoCapabilities | null>(null)
   const [videoCapabilitiesFailed, setVideoCapabilitiesFailed] = useState(false)
   const [videoModes, setVideoModes] = useState<VideoMode[]>([])
+  const [videoResolutionChoices, setVideoResolutionChoices] = useState<
+    string[]
+  >([])
+  // Billed resolutions: open ones that at least one enabled mode accepts.
+  const openVideoResolutions = videoCapabilities
+    ? videoResolutionChoices.filter((value) =>
+        videoModes.some((mode) =>
+          videoModeResolutions(videoCapabilities, mode).includes(value)
+        )
+      )
+    : []
   const [videoRates, setVideoRates] = useState<Record<string, string>>(() => ({
     ...DEFAULT_VIDEO_RATES,
   }))
@@ -540,8 +555,17 @@ export function ModelsPage() {
             formModel?.kind === "image" && formModel.provider === provider
               ? formModel.imageConfig
               : undefined
-          const nextQualities = [...capability.qualities]
-          const nextAspectRatios = [...capability.aspect_ratios]
+          // Editing keeps the tiers the admin opened before; a new model opens all.
+          const nextQualities = savedConfig
+            ? capability.qualities.filter((value) =>
+                savedConfig.qualities.includes(value)
+              )
+            : [...capability.qualities]
+          const nextAspectRatios = savedConfig
+            ? capability.aspect_ratios.filter((value) =>
+                savedConfig.aspect_ratios.includes(value)
+              )
+            : [...capability.aspect_ratios]
 
           setImageCapabilities(capability)
           setImageCapabilitiesFailed(false)
@@ -588,6 +612,12 @@ export function ModelsPage() {
         setVideoCapabilities(cap)
         setVideoCapabilitiesFailed(false)
         setVideoModes([...cap.modes])
+        setVideoResolutionChoices(
+          videoOpenResolutions(
+            cap,
+            formModel?.modelId === modelId ? formModel.videoConfig : undefined
+          )
+        )
       })
       .catch(() => {
         if (active) {
@@ -1118,7 +1148,17 @@ export function ModelsPage() {
       )
         return reject(t("pages.models.validation.videoConfigInvalid"))
       if (
-        resolutions.some(
+        videoResolutionChoices.length === 0 ||
+        videoModes.some(
+          (mode) =>
+            !videoModeResolutions(videoCapabilities, mode).some((value) =>
+              videoResolutionChoices.includes(value)
+            )
+        )
+      )
+        return reject(t("pages.models.validation.videoResolutionInvalid"))
+      if (
+        openVideoResolutions.some(
           (value) => !decimalCredits.test(videoRates[value] ?? "")
         )
       )
@@ -1207,11 +1247,25 @@ export function ModelsPage() {
                     videoModes,
                     formModel?.modelId === modelId
                       ? formModel.videoConfig
-                      : undefined
+                      : undefined,
+                    videoResolutionChoices
                   ),
+                  ...(videoResolutionChoices.length <
+                  videoResolutions(videoCapabilities).length
+                    ? {
+                        limits: Object.fromEntries(
+                          videoModes.map((mode) => [
+                            mode,
+                            {
+                              resolution: { choices: videoResolutionChoices },
+                            },
+                          ])
+                        ),
+                      }
+                    : {}),
                 },
                 video_pricing: {
-                  rates: videoResolutions(videoCapabilities).map(
+                  rates: openVideoResolutions.map(
                     (resolution) => ({
                       resolution,
                       credits_per_second: videoRates[resolution],
@@ -1784,6 +1838,36 @@ export function ModelsPage() {
                                   <ModelPricingSkeleton />
                                 )
                               ) : (
+                                <>
+                                  <ImageCapabilitySelector
+                                    qualities={imageCapabilities.qualities}
+                                    aspectRatios={imageCapabilities.aspect_ratios}
+                                    selectedQualities={qualities}
+                                    selectedAspectRatios={aspectRatios}
+                                    qualityLabel={t("pages.models.imageQuality")}
+                                    aspectRatioLabel={t("pages.models.aspectRatio")}
+                                    selectAllLabel={t(
+                                      "pages.models.selectAllSupported"
+                                    )}
+                                    onQualitiesChange={(values) => {
+                                      const next =
+                                        imageCapabilities.qualities.filter(
+                                          (value) => values.includes(value)
+                                        )
+                                      setQualities(next)
+                                      if (!next.includes(defaultQuality))
+                                        setDefaultQuality(next[0] ?? "")
+                                    }}
+                                    onAspectRatiosChange={(values) => {
+                                      const next =
+                                        imageCapabilities.aspect_ratios.filter(
+                                          (value) => values.includes(value)
+                                        )
+                                      setAspectRatios(next)
+                                      if (!next.includes(defaultAspectRatio))
+                                        setDefaultAspectRatio(next[0] ?? "")
+                                    }}
+                                  />
                                 <FieldGroup className="grid gap-3 sm:grid-cols-2">
                                   {qualities.map((quality) => (
                                     <Field key={quality}>
@@ -1812,6 +1896,7 @@ export function ModelsPage() {
                                     </Field>
                                   ))}
                                 </FieldGroup>
+                                </>
                               )}
                             </FieldGroup>
                           )}
@@ -1832,8 +1917,43 @@ export function ModelsPage() {
                                 )
                               ) : (
                                 <>
+                                  <Field>
+                                    <FieldLabel>
+                                      {t("pages.models.videoResolution")}
+                                    </FieldLabel>
+                                    <ToggleGroup
+                                      aria-label={t("pages.models.videoResolution")}
+                                      className="grid w-full grid-cols-[repeat(auto-fit,minmax(7rem,1fr))] gap-2"
+                                      multiple
+                                      value={videoResolutionChoices}
+                                      onValueChange={(values: string[]) =>
+                                        setVideoResolutionChoices(
+                                          videoResolutions(
+                                            videoCapabilities
+                                          ).filter((value) =>
+                                            values.includes(value)
+                                          )
+                                        )
+                                      }
+                                    >
+                                      {videoResolutions(videoCapabilities).map(
+                                        (resolution) => (
+                                          <ToggleGroupItem
+                                            key={resolution}
+                                            aria-label={resolution}
+                                            className="h-9 w-full min-w-0 justify-start rounded-md border border-border bg-background px-3 py-1 text-start shadow-xs aria-pressed:border-primary/60 aria-pressed:bg-primary/6"
+                                            value={resolution}
+                                          >
+                                            <span className="text-sm font-semibold tracking-tight">
+                                              {resolution}
+                                            </span>
+                                          </ToggleGroupItem>
+                                        )
+                                      )}
+                                    </ToggleGroup>
+                                  </Field>
                                   <FieldGroup className="grid gap-3 sm:grid-cols-2">
-                                    {videoResolutions(videoCapabilities).map(
+                                    {openVideoResolutions.map(
                                       (resolution) => (
                                         <Field key={resolution}>
                                           <FieldLabel
