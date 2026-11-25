@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 )
 
 const (
@@ -226,6 +227,9 @@ func (h *relaySessionHost) dshPlatformCreateBridge(ctx context.Context, ws *webs
 		if err = effect.complete(output); err != nil {
 			return nil, err
 		}
+		// Settings lists the account's skills, connectors and experts from
+		// config, so reload it instead of waiting for the user to refresh.
+		_ = wsjson.Write(ctx, ws, map[string]any{"jsonrpc": "2.0", "method": "_monkeyai/config/changed", "params": map[string]any{}})
 		return map[string]any{"output": output}, nil
 	}
 }

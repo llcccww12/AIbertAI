@@ -27272,6 +27272,7 @@ const xVe = 1024,
     runtimeExited: "runtime_exited",
     runtimeStopped: "runtime_stopped",
     runtimeNotReady: "runtime_not_ready",
+    runtimeAuthorizing: "runtime_authorizing",
     runtimeUnavailable: "runtime_unavailable",
     runtimeDownloadFailed: "runtime_download_failed",
     runtimeDownloadInvalid: "runtime_download_invalid",
@@ -31316,6 +31317,7 @@ const DKe = [
   "_monkeyai/kb/documents/list",
   "_monkeyai/kb/documents/get",
   "_monkeyai/kb/documents/save",
+  "_monkeyai/kb/documents/upload",
   "_monkeyai/kb/documents/delete",
   "_monkeyai/environments/list",
   "_monkeyai/environments/get",
@@ -35322,6 +35324,7 @@ const BYe = {
     [Se.acpTimeout]: "errors.timeout",
     [Se.runtimeFailed]: "errors.runtimeFailed",
     [Se.runtimeNotReady]: "errors.codes.runtime_not_ready",
+    [Se.runtimeAuthorizing]: "errors.codes.runtime_authorizing",
     [Se.runtimeExited]: "errors.codes.runtime_exited",
     [Se.runtimeStopped]: "errors.codes.runtime_stopped",
     [Se.runtimeDownloadFailed]: "errors.codes.runtime_download_failed",
@@ -52512,7 +52515,10 @@ const zO = 20,
             await t().refresh());
         } catch (Z) {
           if (!p.current(G)) return;
-          (e({ ready: !1, connectError: wn(Z) }), p.failed());
+          // 等浏览器授权时保持短间隔重试，授权完成后尽快连上。
+          (e({ ready: !1, connectError: wn(Z) }),
+            wn(Z) === Se.runtimeAuthorizing && p.resetBackoff(),
+            p.failed());
         }
       },
       retryConnect: async () => {
@@ -53622,8 +53628,12 @@ const yn = uc((e, t) => {
       },
       restartEngine: async () => {
         if (et.restartLocalRuntime && ts()?.transport !== "relay") {
-          await et.restartLocalRuntime();
+          // 先断开旧连接再重启；重启后再断开会把已经连向新引擎的连接取消掉。
+          // wH 会先清掉当前连接，旧连接关闭时不会再通知，这里补发断开通知让会话重连。
+          const hadConnection = !!Yb;
           wH();
+          hadConnection && Ql.onDisconnect();
+          await et.restartLocalRuntime();
         } else {
           await d((S) => S.request("_monkeyai/runtime/restart", {}));
         }
@@ -70186,6 +70196,10 @@ function Zat({ children: e }) {
     }, [i]),
     y.useLayoutEffect(() => {
       document.documentElement.classList.toggle("dark", t);
+      try {
+        // 下次启动时开机画面按这里的深浅色显示（见 boot-theme.js）。
+        localStorage.setItem("aibertai.boot-dark", t ? "1" : "0");
+      } catch {}
       const o = n === "century-blue" || n === "textured-gray" ? n : "";
       o
         ? (document.documentElement.dataset.theme = o)
@@ -112952,6 +112966,15 @@ const qwt = {
     title: "标题",
     content: "正文",
     import: "导入文本文件",
+    uploadFiles: "上传文件",
+    uploadFolder: "上传文件夹",
+    uploading: "正在上传 {{done}}/{{total}}",
+    uploadDone: "已上传 {{count}} 个文件，学习完成后即可检索",
+    uploadFailed: "{{count}} 个文件未上传：{{names}}",
+    uploadHint: "支持 Word、Excel、PPT、PDF、图片和文本文件，单个文件最多 10 MB。",
+    uploadUnsupported: "不支持这种文件格式。支持 Word、Excel、PPT、PDF、图片和文本文件。",
+    uploadTooLarge: "文件超过 10 MB。",
+    uploadEmpty: "文件里没有可读取的文字。",
     fileHint: "支持 UTF-8 编码的 Markdown 和 TXT，单篇最多 1 MiB。",
     fileInvalid: "请选择 1 MiB 以内、内容非空的 UTF-8 Markdown 或 TXT 文件。",
     contentLimit: "正文最多 1 MiB。",
@@ -113126,6 +113149,15 @@ const qwt = {
     title: "Title",
     content: "Content",
     import: "Import text file",
+    uploadFiles: "Upload files",
+    uploadFolder: "Upload folder",
+    uploading: "Uploading {{done}}/{{total}}",
+    uploadDone: "Uploaded {{count}} files. They can be searched once learned.",
+    uploadFailed: "{{count}} files were not uploaded: {{names}}",
+    uploadHint: "Word, Excel, PowerPoint, PDF, images and text files, up to 10 MB each.",
+    uploadUnsupported: "This file type is not supported. Use Word, Excel, PowerPoint, PDF, images or text files.",
+    uploadTooLarge: "The file is larger than 10 MB.",
+    uploadEmpty: "The file has no readable text.",
     fileHint: "UTF-8 Markdown and TXT, up to 1 MiB per document.",
     fileInvalid: "Choose a non-empty UTF-8 Markdown or TXT file up to 1 MiB.",
     contentLimit: "Content is limited to 1 MiB.",
@@ -114637,6 +114669,7 @@ const qwt = {
         directory_create_failed:
           "创建文件夹失败，请检查名称、磁盘空间及目录访问权限。",
         runtime_not_ready: "运行时启动超时，请稍后重试。",
+        runtime_authorizing: "请在浏览器中完成授权，完成后会自动连接。",
         runtime_exited: "运行时已退出，正在重新启动。",
         runtime_stopped: "运行时已停止。",
         runtime_download_failed: "安装包下载失败，请检查网络后重试。",
@@ -114959,11 +114992,11 @@ const qwt = {
         brand: "设计一个品牌展示页面",
       },
       starting: "正在创建…",
-      generalExpert: "通用助理",
+      generalExpert: "标准模式",
       standardMode: "标准模式",
       standardModeHint: "处理代码、文件和资料，也能生成图片，适合大多数任务。Agent 会按需使用检索、编辑和终端等工具。",
       designExpert: "创作模式",
-      generalExpertHint: "解答问题、撰写内容、分析资料和编写代码。",
+      generalExpertHint: "处理代码、文件和资料，也能生成图片，适合大多数任务。Agent 会按需使用检索、编辑和终端等工具。",
       expertSource: {
         builtin: "引擎内置",
         server: "团队下发",
@@ -116086,14 +116119,14 @@ const qwt = {
       experts: {
         label: "专家",
         title: "选择处理这次任务的角色",
-        hint: "每个对话选择一位专家，也可以使用通用助手。专家会带上自己的工作要求和技能。",
+        hint: "每个对话选择一位专家，也可以使用标准模式。专家会带上自己的工作要求和技能。",
         existingHint:
           "当前角色用于整段对话。选择其他角色后会新建对话，聊天记录保留在原对话中。",
         current: "当前对话的角色",
         currentRole: "当前角色：{{name}}",
         deleted: "当前选择的专家已被删除",
-        useGeneral: "改用通用助理",
-        clearHint: "点击右侧 × 改用通用助理",
+        useGeneral: "改用标准模式",
+        clearHint: "点击右侧 × 改用标准模式",
         changeHint: "更换专家会保留当前任务、聊天记录和产物。",
         includes: "自带技能：{{names}}",
         search: "搜索专家名称或擅长领域",
@@ -117769,6 +117802,8 @@ Start with the conclusion, then explain the reasoning.`,
           "Could not create the folder. Check its name, available disk space, and directory permissions.",
         runtime_not_ready:
           "The runtime did not start in time. Please try again later.",
+        runtime_authorizing:
+          "Finish authorizing in your browser. The app connects automatically afterwards.",
         runtime_exited: "The runtime exited and is being restarted.",
         runtime_stopped: "The runtime was stopped.",
         runtime_download_failed:
@@ -118172,12 +118207,12 @@ Start with the conclusion, then explain the reasoning.`,
         brand: "Design a brand showcase page",
       },
       starting: "Creating…",
-      generalExpert: "General assistant",
+      generalExpert: "Standard mode",
       standardMode: "Standard mode",
       standardModeHint: "Work with code, files, and information, and generate images. Suitable for most tasks, with search, editing, terminal commands, and other tools available as needed.",
       designExpert: "Creative mode",
       generalExpertHint:
-        "Answer questions, draft content, analyze information, and write code.",
+        "Work with code, files, and information, and generate images. Suitable for most tasks.",
       expertSource: {
         builtin: "Built into the engine",
         server: "Provided by the team",
@@ -119372,14 +119407,14 @@ Start with the conclusion, then explain the reasoning.`,
       experts: {
         label: "Expert",
         title: "Choose a role for this task",
-        hint: "Choose one expert or use the general assistant. An expert brings its own instructions and skills.",
+        hint: "Choose one expert or use standard mode. An expert brings its own instructions and skills.",
         existingHint:
           "The current role applies to this entire conversation. Choosing another role starts a new conversation; existing messages stay here.",
         current: "Current role",
         currentRole: "Current role: {{name}}",
         deleted: "The selected expert has been deleted",
-        useGeneral: "Use the general assistant",
-        clearHint: "Click × to switch back to the general assistant",
+        useGeneral: "Use standard mode",
+        clearHint: "Click × to switch back to standard mode",
         changeHint:
           "Changing experts keeps this task, conversation, and artifacts.",
         includes: "Included skills: {{names}}",
@@ -146421,6 +146456,8 @@ function S_t(e, t) {
       s(wi.knowledgeDocumentsGet.name, { id: i, documentId: o }),
     saveDocument: (i, o, a) =>
       s(wi.knowledgeDocumentsSave.name, { id: i, input: o, documentId: a }),
+    uploadDocument: (i, o, a, c) =>
+      s("_monkeyai/kb/documents/upload", { id: i, parentId: o, fileName: a, data: c }),
     moveDocument: (i, o, a) =>
       s(wi.knowledgeDocumentsMove.name, { id: i, documentId: o, input: a }),
     batchDocuments: (i, o) =>
@@ -146710,6 +146747,9 @@ function Nk(e, t) {
       document_revision_conflict: "versionConflict",
       kb_permissions_conflict: "permissionsConflict",
       precondition_required: "versionRequired",
+      kb_upload_format_unsupported: "uploadUnsupported",
+      kb_upload_too_large: "uploadTooLarge",
+      kb_upload_empty: "uploadEmpty",
     };
   return r[n] ? t("settings.knowledgeBases." + r[n]) : ni(e, t);
 }
@@ -153136,7 +153176,8 @@ const n_e = (e, t) => {
   return Det(
     e.status,
     !!n?.ask,
-    !!n?.question || jwe(n?.toolCalls),
+    // 未结束的画布工具只在会话运行时表示等用户选择，结束后不再算待回复。
+    !!n?.question || (e.status === "running" && jwe(n?.toolCalls)),
     t.attention[e.id],
     e.agentsRunning ?? kA(n),
   );
@@ -160863,7 +160904,7 @@ function b_e({
     m = sL(
       (h ? f.expert : void 0) ?? d?.expertSummaries.find((C) => C.id === p),
     ),
-    g = p === "monkeyai-design" ? a(standardMode ? "home.standardMode" : "home.generalExpert") : (m?.name ?? (p || a("home.generalExpert"))),
+    g = p === "monkeyai-design" ? a(standardMode ? "home.standardMode" : "home.generalExpert") : (m?.name ?? (p || a("home.standardMode"))),
     b = `composer-expert-avatar${p === "monkeyai-design" ? " composer-expert-avatar-design" : ""}`,
     v = l.jsx(z0, {
       kind: "expert",
@@ -166690,7 +166731,7 @@ ${e("settings.experts.aiPrompt")}`,
                   (Qe ? e("errors.codes.project_folder_missing") : null) ??
                   qe ??
                   _?.models.status?.error ??
-                  (C ? `${e("session.connectError")}: ${C}` : null),
+                  (C ? `${e("session.connectError")}: ${ni(C, e)}` : null),
                 modelControl: l.jsx(E_e, {
                   models: _?.models.all ?? [],
                   media: { kind: A_e(B?.designType), value: me, onChange: be },
@@ -197327,7 +197368,9 @@ function qPt(e, t) {
   ))
     try {
       const n = e.replace(/^\/+/, ""),
-        r = n.slice(0, n.lastIndexOf("/") + 1),
+        // 页面可以引用同一个设计任务里的文件，例如模板素材。
+        task = /^((?:.*\/)?\.(?:aibertai|monkeyai)\/design\/[^/]+\/)artifacts\//.exec(n),
+        r = task ? task[1] : n.slice(0, n.lastIndexOf("/") + 1),
         s = decodeURIComponent(
           new URL(t, `https://artifact.invalid/${n}`).pathname.slice(1),
         );
@@ -279115,6 +279158,67 @@ function xrn({
   function X() {
     P(new Set(YIe(A, C, v).slice(0, G9)));
   }
+  // 上传本地文件或整个文件夹：文件夹按相对路径在当前位置重建，文件交给运行时提取正文。
+  const uploadFilesInput = y.useRef(null),
+    uploadFolderInput = y.useRef(null),
+    [uploadProgress, setUploadProgress] = y.useState(null);
+  async function uploadKnowledge(list) {
+    const files = [...(list ?? [])].filter(
+      (Oe) => !(Oe.webkitRelativePath || Oe.name).split("/").some((he) => he.startsWith(".")),
+    );
+    if (!files.length || !Ce || te.current) return;
+    ((te.current = !0), Q(!0));
+    const folders = new Map(),
+      failed = [];
+    let firstError;
+    setUploadProgress({ done: 0, total: files.length });
+    try {
+      for (const [index, file] of files.entries()) {
+        try {
+          if (file.size > 10 * 1024 * 1024) throw new Error("kb_upload_too_large");
+          let parent = I,
+            key = "";
+          for (const part of (file.webkitRelativePath || file.name).split("/").slice(0, -1)) {
+            key += "/" + part;
+            if (!folders.has(key))
+              folders.set(
+                key,
+                (
+                  await e.saveDocument(t.id, {
+                    title: part.slice(0, 200),
+                    node_type: "folder",
+                    source_type: "text",
+                    content: "",
+                    parent_id: parent ?? null,
+                  })
+                ).id,
+              );
+            parent = folders.get(key);
+          }
+          const bytes = new Uint8Array(await file.arrayBuffer());
+          let binary = "";
+          for (let Oe = 0; Oe < bytes.length; Oe += 32768)
+            binary += String.fromCharCode(...bytes.subarray(Oe, Oe + 32768));
+          await e.uploadDocument(t.id, parent ?? null, file.name, btoa(binary));
+        } catch (Oe) {
+          (failed.push(file.name), (firstError ??= Oe));
+        }
+        re.current && setUploadProgress({ done: index + 1, total: files.length });
+      }
+    } finally {
+      ((te.current = !1), re.current && (Q(!1), setUploadProgress(null), p.refresh()), r?.());
+    }
+    const uploaded = files.length - failed.length;
+    uploaded && rn.success(a("settings.knowledgeBases.uploadDone", { count: uploaded }));
+    failed.length &&
+      rn.error(
+        a("settings.knowledgeBases.uploadFailed", {
+          count: failed.length,
+          names: failed.slice(0, 5).join("、") + (failed.length > 5 ? "…" : ""),
+        }),
+        { description: Nk(firstError, a) },
+      );
+  }
   const ve = R?.kind === "document" ? (R.node?.id ?? R.parentId) : _,
     We = ve ? Nu(m, ve) : [],
     je = l.jsxs("nav", {
@@ -279505,6 +279609,50 @@ function xrn({
                                     "settings.knowledgeBases.createDocument",
                                   ),
                                   onClick: () => Ve(),
+                                }),
+                                l.jsxs(Te, {
+                                  size: "sm",
+                                  variant: "ghost",
+                                  disabled: !Ce,
+                                  title: a("settings.knowledgeBases.uploadHint"),
+                                  onClick: () => uploadFilesInput.current?.click(),
+                                  children: [
+                                    l.jsx(ke, { icon: kK, size: 16 }),
+                                    uploadProgress
+                                      ? a("settings.knowledgeBases.uploading", uploadProgress)
+                                      : a("settings.knowledgeBases.uploadFiles"),
+                                  ],
+                                }),
+                                l.jsxs(Te, {
+                                  size: "sm",
+                                  variant: "ghost",
+                                  disabled: !Ce,
+                                  title: a("settings.knowledgeBases.uploadHint"),
+                                  onClick: () => uploadFolderInput.current?.click(),
+                                  children: [
+                                    l.jsx(ke, { icon: Ywe, size: 16 }),
+                                    a("settings.knowledgeBases.uploadFolder"),
+                                  ],
+                                }),
+                                l.jsx("input", {
+                                  ref: uploadFilesInput,
+                                  type: "file",
+                                  multiple: !0,
+                                  hidden: !0,
+                                  onChange: (Oe) => {
+                                    const he = Oe.target.files;
+                                    (void uploadKnowledge(he), (Oe.target.value = ""));
+                                  },
+                                }),
+                                l.jsx("input", {
+                                  ref: uploadFolderInput,
+                                  type: "file",
+                                  webkitdirectory: "",
+                                  hidden: !0,
+                                  onChange: (Oe) => {
+                                    const he = Oe.target.files;
+                                    (void uploadKnowledge(he), (Oe.target.value = ""));
+                                  },
                                 }),
                               ],
                             })
@@ -280305,22 +280453,27 @@ function Rrn(e = document) {
 Rrn();
 const JIe = () => document.getElementById("root");
 // 启动动画：index.html 里的静态遮罩，在本机运行时连上（或未登录、出错、超时）后淡出。
-const bootSplashStartedAt = performance.now();
+// 知识库窗口不用本机运行时，页面载入即可使用，不再播放启动动画。
+const bootSplashSecondary = location.pathname.startsWith("/knowledge-bases/");
 let bootSplashDone = !1;
 function hideBootSplash() {
   if (bootSplashDone) return;
   bootSplashDone = !0;
   const el = document.getElementById("boot-splash");
   if (!el) return;
-  setTimeout(() => {
+  if (bootSplashSecondary) return el.remove();
+  // 最短展示时间从窗口真正显示时算起（见 boot-splash.js）。
+  const fade = () => setTimeout(() => {
     el.classList.add("boot-splash-done");
     setTimeout(() => el.remove(), 400);
-  }, Math.max(0, 600 - (performance.now() - bootSplashStartedAt)));
+  }, Math.max(0, (matchMedia("(prefers-reduced-motion: reduce)").matches ? 600 : 1900) - (performance.now() - window.__bootSplashShownAt)));
+  if (window.__bootSplashShownAt !== void 0) fade();
+  else window.addEventListener("aibertai:boot-splash-shown", fade, { once: !0 });
 }
 function watchBootSplash() {
   const text = document.querySelector("#boot-splash .boot-splash-text");
   const slow = setTimeout(() => {
-    text && (text.textContent = "正在连接服务…");
+    text && ((text.querySelector("span") ?? text).textContent = "正在连接服务…");
   }, 3e3);
   let errorTimer;
   const stop = [];
@@ -280333,7 +280486,7 @@ function watchBootSplash() {
   };
   const check = () => {
     const session = Jt.getState();
-    if (!ir.getState().account || session.ready) return finish();
+    if (bootSplashSecondary || !ir.getState().account || session.ready) return finish();
     // 连接失败先等运行时自动重连，持续失败再露出界面里的错误与重试入口。
     if (session.connectError) errorTimer ??= setTimeout(finish, 8e3);
     else (clearTimeout(errorTimer), (errorTimer = void 0));

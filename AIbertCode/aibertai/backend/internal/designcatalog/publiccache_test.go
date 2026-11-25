@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -59,4 +60,36 @@ func TestPublicCacheListsAndChecksDetailDigest(t *testing.T) {
 	read("/catalog/templates/image-one?content_digest=sha256:different", http.StatusConflict)
 	read("/catalog/styles", http.StatusNotFound)
 	read("/assets/catalog.json", http.StatusNotFound)
+}
+
+func TestPublicCacheHidesBundlesWithoutPackage(t *testing.T) {
+	dir := t.TempDir()
+	snapshot := `{
+		"revision":"asset-snapshot:fixture",
+		"listing":{"templates":{
+			"deck-ok":{"id":"deck-ok","mode":"deck","template_kind":"bundle","downloadable":true,"download_url":"/api/v1/design-resources/public-cache/assets/` + strings.Repeat("a", 64) + `.zip"},
+			"deck-missing":{"id":"deck-missing","mode":"deck","template_kind":"bundle","downloadable":false}}},
+		"mode_buckets":{"deck":["deck-missing","deck-ok"]},
+		"details":{"templates":{}}
+	}`
+	if err := os.WriteFile(filepath.Join(dir, "catalog.json"), []byte(snapshot), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MONKEYAI_DESIGN_PUBLIC_CACHE_DIR", dir)
+	router := chi.NewRouter()
+	(&Service{}).RegisterCatalog(router, func(next http.Handler) http.Handler { return next })
+	for _, query := range []string{"mode=deck", "q=deck"} {
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, publicCachePath+"/catalog/templates?"+query, nil))
+		var payload struct {
+			Data struct {
+				Total int
+				Items []struct{ ID string }
+			}
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil || payload.Data.Total != 1 ||
+			len(payload.Data.Items) != 1 || payload.Data.Items[0].ID != "deck-ok" {
+			t.Fatalf("%s: %s, %v", query, w.Body, err)
+		}
+	}
 }

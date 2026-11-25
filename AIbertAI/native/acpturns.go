@@ -466,7 +466,7 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 				if background && (len(files) != 0 || len(turn.CanvasNodes) != 0) {
 					err = errors.New("dsh_input_unsupported")
 				} else {
-					turnCtx, err = h.bindDSHRules(turnCtx)
+					turnCtx, err = h.bindDSHRules(turnCtx, session)
 					if err == nil && session.ExpertID != "" && session.ExpertID != designExpertID {
 						var releaseExpert func()
 						turnCtx, releaseExpert, err = h.bindDSHExpert(turnCtx, session)
@@ -1128,6 +1128,8 @@ func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Co
 				title := tool.ConnectorName + " / " + tool.Name
 				permissions, permissionErr = h.requestACPToolApproval(ctx, ws, id, call.ID, title, tool.Name, "other",
 					map[string]any{"connector": tool.ConnectorName, "tool": tool.Name, "arguments": args.JSON})
+			} else if args.Design && dshMediaWrite(call.Function.Name) {
+				permissions, permissionErr = h.requestToolApproval(ctx, ws, id, call.ID, mediaGenerationTitle(call.Function.Name), call.Function.Name, "edit", args.JSON, mediaApprovalBypass(ctx, call.Function.Name), false)
 			} else if args.Design {
 				permissions, permissionErr = h.requestACPToolApproval(ctx, ws, id, call.ID, call.Function.Name, call.Function.Name, workspaceToolKind(call.Function.Name), args.JSON)
 			} else if args.Compat != nil {
@@ -1392,6 +1394,12 @@ func (h *relaySessionHost) requestToolApproval(ctx context.Context, ws *websocke
 		reply, err := h.interactions.ask(ctx, ws, "session/request_permission", permission["params"])
 		counts := reportedPermissions{Asked: 1}
 		if err != nil {
+			// The turn ended before an answer; take the card down like a question.
+			if h.goals != nil {
+				clear, cancel := context.WithTimeout(context.Background(), time.Second)
+				h.goals.notify(clear, "_monkeyai/session/request_cancelled", map[string]any{"sessionId": sessionID, "toolCallId": callID})
+				cancel()
+			}
 			return counts, err
 		}
 		return applyACPPermissionReply(counts, reply)

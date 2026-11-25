@@ -235,6 +235,8 @@ const modernPlatform = {
     let owner = electron.BrowserWindow.fromId(windowId);
     if (!owner || workbenches$2.has(ownerId)) throw new Error("Invalid workbench owner");
     const container = new electron.View(), page = new electron.WebContentsView({ webPreferences: preferences });
+    // 页面自行关闭后 view.webContents 会变成 undefined，清理时用创建时的引用判断。
+    const contents = page.webContents;
     const children = /* @__PURE__ */ new Set();
     let disposed = false;
     container.addChildView(page);
@@ -274,7 +276,7 @@ const modernPlatform = {
         workbenches$2.delete(ownerId);
         for (const child2 of [...children]) child2.dispose();
         if (!owner.isDestroyed()) owner.contentView.removeChildView(container);
-        if (!page.webContents.isDestroyed()) page.webContents.close({ waitForBeforeUnload: false });
+        if (!contents.isDestroyed()) contents.close({ waitForBeforeUnload: false });
       }
     };
     workbenches$2.set(ownerId, workbench);
@@ -399,6 +401,8 @@ const ErrorCode = {
   // 计划内停止：账号切换或退出
   runtimeNotReady: "runtime_not_ready",
   // 就绪超时
+  runtimeAuthorizing: "runtime_authorizing",
+  // 首次登录等待浏览器授权
   runtimeUnavailable: "runtime_unavailable",
   // 连接建立时运行时已不在
   runtimeDownloadFailed: "runtime_download_failed",
@@ -1824,6 +1828,7 @@ const ACCOUNT_REQUEST_METHODS = [
   "_monkeyai/kb/documents/list",
   "_monkeyai/kb/documents/get",
   "_monkeyai/kb/documents/save",
+  "_monkeyai/kb/documents/upload",
   "_monkeyai/kb/documents/delete",
   "_monkeyai/environments/list",
   "_monkeyai/environments/get",
@@ -14693,6 +14698,8 @@ let capabilities = null;
 const readyWaiters$1 = [];
 let reloadWhenReady = null;
 let verifiedOfficeResources = null;
+// 首次登录时运行时在等浏览器授权，就绪等待超时改报 runtime_authorizing 提示用户。
+let sourceAuthorizing = false;
 function runtimeStatus() {
   return status$1;
 }
@@ -14738,6 +14745,7 @@ function onStdoutLine(proc, token, raw, logger, authorizationServer) {
   }
   if (authorizationServer && event?.event === "source_authorize") {
     if (child$2 !== proc || typeof event.url !== "string") return;
+    sourceAuthorizing = true;
     try {
       const target = new URL(event.url);
       if (target.origin !== new URL(authorizationServer).origin || target.pathname !== "/oauth/authorize" || target.username || target.password || target.hash) throw new Error("invalid_runtime_authorization_url");
@@ -14776,6 +14784,7 @@ function onStdoutLine(proc, token, raw, logger, authorizationServer) {
     return;
   }
   status$1 = "ready";
+  sourceAuthorizing = false;
   verifiedOfficeResources = authorizationServer && typeof event.dshResources === "string" && node_path.isAbsolute(event.dshResources) ? event.dshResources : null;
   if (authorizationServer) ready2.sourcePreview = true;
   endpoint$2 = ready2;
@@ -14855,6 +14864,7 @@ async function start$2(account) {
     closeBrowserRuntime();
     child$2 = null;
     reloadWhenReady = null;
+    sourceAuthorizing = false;
     status$1 = "exited";
     endpoint$2 = null;
     clearDeviceRemoteStatus();
@@ -14900,6 +14910,7 @@ function stop() {
   cancelBackoff();
   const proc = child$2;
   child$2 = null;
+  sourceAuthorizing = false;
   status$1 = "stopped";
   endpoint$2 = null;
   activeAccountId = null;
@@ -14977,7 +14988,7 @@ function whenReady() {
     const timer2 = setTimeout(() => {
       const index2 = readyWaiters$1.indexOf(waiter);
       if (index2 >= 0) readyWaiters$1.splice(index2, 1);
-      reject(new Error(ErrorCode.runtimeNotReady));
+      reject(new Error(sourceAuthorizing && child$2 ? ErrorCode.runtimeAuthorizing : ErrorCode.runtimeNotReady));
     }, READY_TIMEOUT_MS$1);
     readyWaiters$1.push(waiter);
   });
@@ -22750,6 +22761,7 @@ async function answerRuntimeDesignTool(proc, server, event) {
     // so the runtime can tell a definite worker answer from an opaque failure.
     const code = /^([a-z][a-z0-9_]{1,70})(?::|$)/.exec(reason)?.[1];
     reply.error = code ? "design_" + code.replace(/^design_/, "") : "design_tool_failed";
+    if (!code) console.error(`[main] design tool ${typeof event.name === "string" ? event.name : "?"} failed: ${reason || String(error)}`);
   } finally {
     runtimeImageCalls.delete(id);
   }

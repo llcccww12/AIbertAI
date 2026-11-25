@@ -264,6 +264,21 @@ func verifyDSHResourcesWithStamp(root, trustedDigest, target, stamp string) (str
 	return filepath.Join(root, filepath.FromSlash(node)), filepath.Join(root, filepath.FromSlash(dshEntry)), nil
 }
 
+// dshProcessEnvironment passes DSH the system variables its tools rely on.
+// Without TEMP/TMP, Windows reports C:\Windows as the temporary folder and the
+// sandbox cannot create its ACL locks there. Account secrets stay out.
+func dshProcessEnvironment() []string {
+	var env []string
+	for _, key := range []string{"PATH", "HOME", "USERPROFILE", "SystemRoot", "TEMP", "TMP", "TMPDIR", "LANG",
+		"SystemDrive", "windir", "COMSPEC", "PATHEXT", "APPDATA", "LOCALAPPDATA", "ProgramData", "ProgramFiles",
+		"ProgramFiles(x86)", "PSModulePath", "USERNAME", "COMPUTERNAME", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE", "OS"} {
+		if value, ok := os.LookupEnv(key); ok {
+			env = append(env, key+"="+value)
+		}
+	}
+	return env
+}
+
 func configureInstalledDSH(live *acpLive, profile, serverID, machineID string) error {
 	if dshManifestSHA256 == "" {
 		return nil
@@ -290,7 +305,7 @@ func configureDSHResources(live *acpLive, profile, serverID, machineID, resource
 		return fmt.Errorf("dsh home: %w", err)
 	}
 	gateway := &dshGateway{client: live.client, authorization: live.authorization}
-	config, err := newDSHGatewayRuntime(dshInstalledRuntime{Executable: node, Entry: entry, StandardSkillsDir: filepath.Join(resourceRoot, "app", "packages", "preset", "agent-preset", "skills"), Home: filepath.Join(base, "home"), PlatformSkillsDir: filepath.Join(base, "platform-skills"), Env: []string{"PATH=" + os.Getenv("PATH")}}, filepath.Join(base, "gateway"), gateway, func(ctx context.Context, session acpSession) (selectedModelConfig, error) {
+	config, err := newDSHGatewayRuntime(dshInstalledRuntime{Executable: node, Entry: entry, StandardSkillsDir: filepath.Join(resourceRoot, "app", "packages", "preset", "agent-preset", "skills"), Home: filepath.Join(base, "home"), PlatformSkillsDir: filepath.Join(base, "platform-skills"), Env: dshProcessEnvironment()}, filepath.Join(base, "gateway"), gateway, func(ctx context.Context, session acpSession) (selectedModelConfig, error) {
 		auth, err := live.authorization(ctx)
 		if err != nil {
 			return selectedModelConfig{}, err

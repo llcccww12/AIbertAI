@@ -204,7 +204,7 @@ func (h *relaySessionHost) runDSHGoalTurn(ctx context.Context, ws *websocket.Con
 	session.Goal = &queryGoal
 	// Bind to the working SDK turn so approval counts and call receipts survive
 	// the next durable checkpoint. Local goals can use the desktop canvas.
-	ctx, err = h.bindDSHRules(ctx)
+	ctx, err = h.bindDSHRules(ctx, session)
 	if err != nil {
 		return err
 	}

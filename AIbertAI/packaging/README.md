@@ -62,7 +62,7 @@ macOS 构建使用本机的 Electron ARM64 和系统 DMG 工具，生成带临�
 
 使用 `build-employee-candidate.sh` 生成包含真实员工端界面的候选包。依次传入平台、合成文本文件或 `-`，以及输出目录。传入 `-` 时测试实际工作区。Windows 还需提供官方 Electron Windows x64 ZIP 及同目录的 `SHASUMS256.txt`。脚本输出 macOS DMG 或 Windows x64 便携 ZIP，以及 SHA-256 校验文件。回环后端地址适合在运行后端的同一台机器上验收。
 
-macOS arm64 候选包默认携带本工作树已构建的 DSH SDK。要使用单独准备的资源，设置 `AIBERTAI_DSH_RESOURCES` 为含 `manifest.json` 的目录的绝对路径，`AIBERTAI_DSH_MANIFEST_SHA256` 为该资源构建时记录的摘要。macOS 发行构建必须显式传入这两个值。打包脚本校验资源清单及目标架构，把清单摘要编译进原生宿主，签名后再次核对资源。此开发构建脚本只生成 `darwin-arm64` SDK；为 Windows 构建 DSH 需要单独准备对应的 `windows-amd64` 资源。
+候选包默认携带本工作树精简后的 DSH 运行时。构建完整 DSH SDK 后，运行 `AIbertAI/dsh-integration/build-slim-runtime.sh darwin-arm64`（Windows 为 `windows-amd64`）生成精简版：按 DSH 官方桌面端的方式，只保留 SDK 入口在生产环境下加载的依赖和各包发布的文件，并去掉源码映射、类型声明和其他平台的二进制，体积从约 2.8 GB 降到约 570 MB。完整构建保留在原处，供测试和派生 Windows 构建使用。要使用单独准备的资源，设置 `AIBERTAI_DSH_RESOURCES` 为含 `manifest.json` 的目录的绝对路径，`AIBERTAI_DSH_MANIFEST_SHA256` 为该资源构建时记录的摘要。macOS 发行构建必须显式传入这两个值。打包脚本校验资源清单及目标架构，把清单摘要编译进原生宿主，签名后再次核对资源。此开发构建脚本只生成 `darwin-arm64` SDK；为 Windows 构建 DSH 需要单独准备对应的 `windows-amd64` 资源。
 
 ### 工作区目录迁移
 

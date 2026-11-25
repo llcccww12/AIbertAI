@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -125,7 +126,9 @@ func (b *desktopDesignBridge) callGuarded(ctx context.Context, row acpSession, d
 	if err := b.send(event); err != nil {
 		return "", err
 	}
-	timeout := 20 * time.Second
+	// Slightly above the design worker's own 110s limit, so a slow Windows
+	// render reports the worker's answer instead of a host timeout.
+	timeout := 115 * time.Second
 	if dshMediaWrite(name) {
 		timeout = 21 * time.Minute
 	} else if name == "canvas_capture_preview" || name == designStyleChoiceTool || name == "design_session_open" {
@@ -139,6 +142,7 @@ func (b *desktopDesignBridge) callGuarded(ctx context.Context, row acpSession, d
 			if strings.HasPrefix(reply.Error, "design_") {
 				return "", errors.New(reply.Error)
 			}
+			slog.Warn("design tool failed", "tool", name, "error", reply.Error)
 			return "", errors.New("design_tool_failed")
 		}
 		return string(reply.Result), nil

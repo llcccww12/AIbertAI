@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"os"
 	"os/exec"
@@ -126,6 +127,8 @@ type dshProcess struct {
 	sharedProfile                dshSharedProfile
 	cmd                          *exec.Cmd
 	in                           io.WriteCloser
+	out                          io.Closer
+	releaseTree                  func()
 	frames                       chan dshFrame
 	done                         chan error
 	stop                         chan struct{}
@@ -162,7 +165,7 @@ func startDSH(ctx context.Context, cmd *exec.Cmd) (*dshProcess, error) {
 		in.Close()
 		return nil, err
 	}
-	p := &dshProcess{cmd: cmd, in: in, frames: make(chan dshFrame), done: make(chan error, 1), stop: make(chan struct{}), questions: make(map[string]*pendingQuestion), questionReplies: make(chan dshQuestionReply, 1)}
+	p := &dshProcess{cmd: cmd, in: in, out: out, releaseTree: dshProcessTree(cmd.Process), frames: make(chan dshFrame), done: make(chan error, 1), stop: make(chan struct{}), questions: make(map[string]*pendingQuestion), questionReplies: make(chan dshQuestionReply, 1)}
 	go func() {
 		defer close(p.frames)
 		defer func() { p.done <- cmd.Wait() }()
@@ -278,6 +281,8 @@ func dshHostToolReason(err error) string {
 		return "canvas_outcome_unknown: this canvas write was interrupted and its outcome is unknown; it may or may not have been applied. Read the canvas first. Repeat the write only if it is missing, otherwise continue from what is there or explain the limitation to the user."
 	case strings.Contains(err.Error(), "dsh_connector_outcome_unknown"), strings.Contains(err.Error(), "dsh_connector_dispatch_uncertain"):
 		return "connector_outcome_unknown: this connector call was interrupted and its outcome is unknown; the remote side may have completed it. Verify the remote state or ask the user before repeating it."
+	case strings.Contains(err.Error(), "tool_permission_denied"):
+		return "tool_denied_by_user: the user declined this call, so it did not run. Do not repeat it unchanged; continue another way or ask the user what they want."
 	case strings.Contains(err.Error(), "tool_approval_unavailable"), strings.Contains(err.Error(), "tool_permission_cancelled"):
 		return "tool_denied: the approval channel was unavailable or the call was cancelled. The tool did not run; choose another approach or ask the user."
 	case strings.Contains(err.Error(), "design_media_model_unavailable"):
@@ -484,10 +489,8 @@ func (p *dshProcess) call(ctx context.Context, method string, params any, event 
 								}
 							}
 							// A failed file change is a tool outcome, not a session
-							// failure. The model receives the reason and decides.
-							if ctx.Err() != nil {
-								return nil, err
-							}
+							// failure. The model receives the reason and decides; on
+							// Stop the reply is still sent so the cancel below reaches DSH.
 							response["error"] = map[string]any{"code": -32603, "message": dshWorkspaceToolReason(err)}
 						} else {
 							response["result"] = result
@@ -496,11 +499,9 @@ func (p *dshProcess) call(ctx context.Context, method string, params any, event 
 						result, err := p.hostTool(f.Params)
 						if err != nil {
 							// The SDK reports a failed tool as an isError result and the
-							// model chooses the next step. Only a dead context may end
-							// the run; a tool outcome never may.
-							if ctx.Err() != nil {
-								return nil, err
-							}
+							// model chooses the next step. A tool outcome never ends the
+							// run; on Stop the reply is still sent so DSH can cancel.
+							slog.Warn("dsh host tool failed", "params", string(f.Params[:min(len(f.Params), 200)]), "error", err)
 							response["error"] = map[string]any{"code": -32603, "message": dshHostToolReason(err)}
 						} else {
 							response["result"] = result
@@ -508,7 +509,7 @@ func (p *dshProcess) call(ctx context.Context, method string, params any, event 
 					} else {
 						response["error"] = map[string]any{"code": -32601, "message": "unsupported host request"}
 					}
-					// Stop the Agent before releasing a failed approval back to the SDK.
+					// Stop the Agent before releasing a failed approval or tool back to the SDK.
 					if ctx.Err() != nil && !cancelling && (method == "session/wait" || method == "aibertai/query-wait" || method == "session/query") {
 						if err := beginCancel(); err != nil {
 							return nil, err
@@ -597,7 +598,18 @@ func (p *dshProcess) close() {
 	if p.cmd.Process != nil {
 		_ = p.cmd.Process.Kill()
 	}
-	<-p.done
+	if p.releaseTree != nil {
+		p.releaseTree()
+	}
+	// Children DSH started can keep its output pipe open after it is killed
+	// (on Windows they inherit it), so the reader would never see EOF.
+	if p.out != nil {
+		_ = p.out.Close()
+	}
+	select {
+	case <-p.done:
+	case <-time.After(2 * time.Second):
+	}
 }
 
 type dshContextUsage struct {

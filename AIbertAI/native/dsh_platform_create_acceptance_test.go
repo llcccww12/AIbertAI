@@ -245,6 +245,15 @@ func TestDSHCreatePlatformSkillByChatPatchedSDK(t *testing.T) {
 	if err = <-done; err != nil {
 		t.Fatalf("turn failed: %v; runs: %+v", err, turn.ToolRuns)
 	}
+	// Settings must reload so the new skill appears without a manual refresh.
+	for frame.Method != "_monkeyai/config/changed" {
+		readCtx, stop := context.WithTimeout(ctx, 5*time.Second)
+		err = wsjson.Read(readCtx, ws, &frame)
+		stop()
+		if err != nil {
+			t.Fatalf("settings were not told to reload: %v", err)
+		}
+	}
 	mu.Lock()
 	pkg := saved
 	mu.Unlock()

@@ -473,8 +473,21 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 	if host.desktopRelay.uploads != nil {
 		defer host.desktopRelay.uploads.root.Close()
 	}
-	if _, err := host.employeeConfig(startup); err != nil {
-		return err
+	// Right after the first browser authorization the model catalog failed
+	// once on Windows and the whole runtime exited; retry before giving up.
+	for attempt := 1; ; attempt++ {
+		_, err := host.employeeConfig(startup)
+		if err == nil {
+			break
+		}
+		if attempt == 3 {
+			return err
+		}
+		select {
+		case <-startup.Done():
+			return err
+		case <-time.After(2 * time.Second):
+		}
 	}
 	importCtx, stopImport := context.WithTimeout(startup, 15*time.Second)
 	host.legacyImport = host.importLegacyResources(importCtx, auth, store.cipher)

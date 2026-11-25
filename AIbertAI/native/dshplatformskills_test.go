@@ -169,4 +169,11 @@ func TestSessionSkillSelection(t *testing.T) {
 	if change(map[string]any{"kind": "skill_selection", "ids": []string{"mcp/x"}}) == nil {
 		t.Fatal("non-skill id accepted")
 	}
+	rule := "rule/server/44444444-4444-4444-8444-444444444444"
+	if err := change(map[string]any{"kind": "resource", "id": rule, "enabled": true}); err != nil || !h.live.sessions[id].ConnectorPreferences.Enabled[rule] {
+		t.Fatal("per-conversation rule not saved", err)
+	}
+	if change(map[string]any{"kind": "resource", "id": "rule/server/not-a-uuid", "enabled": true}) == nil {
+		t.Fatal("invalid rule id accepted")
+	}
 }
