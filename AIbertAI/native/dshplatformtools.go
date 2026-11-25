@@ -136,7 +136,7 @@ func (h *relaySessionHost) dshPlatformCreateBridge(ctx context.Context, ws *webs
 		var output string
 		switch req.Name {
 		case dshCreateSkillTool:
-			_, err = h.createPlatformSkill(ctx, input.Name, input.Description, input.Content)
+			_, err = h.createPlatformSkill(ctx, session.ID, input.Name, input.Description, input.Content)
 			output = "Saved skill " + input.Name + " to the user's account. It is listed in Settings → Skills and can be loaded now with the skill tool."
 		case dshCreateConnectorTool:
 			var auth authorization
@@ -167,4 +167,3 @@ func (h *relaySessionHost) dshPlatformCreateHostTools(ctx context.Context, ws *w
 	}
 	return &dshHostToolBridge{Tools: dshPlatformCreateTools(), Handle: h.dshPlatformCreateBridge(ctx, ws, request, session, turn)}, dshPlatformCreateInstructions
 }
-

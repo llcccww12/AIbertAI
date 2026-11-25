@@ -140,3 +140,71 @@ func (c *client) installDSHPlatformSkill(ctx context.Context, auth authorization
 	}
 	return os.Rename(stage, target)
 }
+
+// dshSkillPreferencePrefix keys a platform skill in resource preferences; the
+// desktop's "default enable" switch and per-conversation picks use it.
+const dshSkillPreferencePrefix = "skill/server/"
+
+func dshSessionSkillsDir(cache, sessionID string) string {
+	return filepath.Join(cache+"-sessions", sessionID)
+}
+
+// materializeDSHSessionSkills gives one conversation only the skills it has
+// enabled: copies of the account cache's bundles in its own watched folder.
+func materializeDSHSessionSkills(cache, sessionDir string, enabled func(id string) bool) error {
+	dshPlatformSkillSync.Lock()
+	defer dshPlatformSkillSync.Unlock()
+	if err := os.MkdirAll(sessionDir, 0700); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(cache)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	keep := map[string]bool{}
+	var failed error
+	for _, entry := range entries {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		stamp, err := os.ReadFile(filepath.Join(cache, entry.Name(), dshPlatformSkillStamp))
+		id, _, _ := strings.Cut(string(stamp), "\n")
+		if err != nil || !validUUID(id) || !enabled(id) {
+			continue
+		}
+		keep[entry.Name()] = true
+		target := filepath.Join(sessionDir, entry.Name())
+		if current, err := os.ReadFile(filepath.Join(target, dshPlatformSkillStamp)); err == nil && bytes.Equal(current, stamp) {
+			continue
+		}
+		if err := copyDSHSkillBundle(filepath.Join(cache, entry.Name()), target); err != nil {
+			failed = errors.Join(failed, err)
+		}
+	}
+	current, err := os.ReadDir(sessionDir)
+	if err != nil {
+		return errors.Join(failed, err)
+	}
+	for _, entry := range current {
+		if !keep[entry.Name()] {
+			_ = os.RemoveAll(filepath.Join(sessionDir, entry.Name()))
+		}
+	}
+	return failed
+}
+
+func copyDSHSkillBundle(source, target string) error {
+	// Stage beside the watched folder so DSH never sees a partial bundle.
+	stage, err := os.MkdirTemp(filepath.Dir(filepath.Dir(target)), ".session-skill-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(stage)
+	if err := os.CopyFS(stage, os.DirFS(source)); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(target); err != nil {
+		return err
+	}
+	return os.Rename(stage, target)
+}

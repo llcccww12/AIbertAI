@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -308,12 +309,30 @@ func configureDSHResources(live *acpLive, profile, serverID, machineID, resource
 		}
 		return live.client.syncDSHPlatformSkills(ctx, auth, filepath.Join(base, "platform-skills"))
 	}
+	config.SessionSkills = func(session acpSession) error {
+		live.mu.Lock()
+		prefs := live.connectorPrefs
+		if current, ok := live.sessions[session.ID]; ok && current.ConnectorPreferences != nil {
+			prefs = *current.ConnectorPreferences
+		} else if session.ConnectorPreferences != nil {
+			prefs = *session.ConnectorPreferences
+		}
+		enabled := maps.Clone(prefs.Enabled)
+		live.mu.Unlock()
+		cache := filepath.Join(base, "platform-skills")
+		return materializeDSHSessionSkills(cache, dshSessionSkillsDir(cache, session.ID), func(id string) bool {
+			return enabled[dshSkillPreferencePrefix+id]
+		})
+	}
 	prepare := config.Prepare
 	config.Prepare = func(ctx context.Context, session acpSession) (*exec.Cmd, string, string, *dshLocalGateway, func(), error) {
 		if session.ExpertID == "" {
 			// Best effort: an unreachable catalog keeps the last synced skills.
 			if err := config.SyncPlatformSkills(ctx); err != nil {
 				fmt.Fprintf(os.Stderr, "platform skills not synced: %v\n", err)
+			}
+			if err := config.SessionSkills(session); err != nil {
+				fmt.Fprintf(os.Stderr, "conversation skills not prepared: %v\n", err)
 			}
 		}
 		return prepare(ctx, session)

@@ -143,7 +143,7 @@ func (h *relaySessionHost) desktopResource(ctx context.Context, method string, r
 		if json.Unmarshal(raw, &p) != nil {
 			return nil, errors.New("invalid_request")
 		}
-		result, err := h.createPlatformSkill(ctx, p.Name, p.Description, p.Content)
+		result, err := h.createPlatformSkill(ctx, "", p.Name, p.Description, p.Content)
 		if err != nil {
 			return nil, err
 		}

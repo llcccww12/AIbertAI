@@ -407,6 +407,7 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 					MediaModels                                  desktopMediaModels
 					Thinking                                     *modelThinking
 					AgentTeamEnabled                             *bool
+					ResourceChanges                              []json.RawMessage
 				} `json:"_meta"`
 			}
 			if len(in.Params) != 0 && json.Unmarshal(in.Params, &p) != nil {
@@ -808,6 +809,14 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 										id, fault = h.live.createSessionWithTeam(p.Meta.OperationID, p.CWD, p.Meta.ProjectID, selected, expert.expertSelection, p.Meta.Thinking, p.Meta.Mode, p.Meta.MediaModels, dsh, p.Meta.AgentTeamEnabled, &available)
 									}
 								}
+							}
+						}
+						if fault == nil && len(p.Meta.ResourceChanges) <= 200 {
+							// The composer's picks for a new conversation. Each change is
+							// applied on its own; one the host does not track is skipped.
+							for _, change := range p.Meta.ResourceChanges {
+								raw, _ := json.Marshal(map[string]any{"sessionId": id, "change": change})
+								_, _ = h.sessionConnectorResources(raw, true)
 							}
 						}
 						if fault == nil {

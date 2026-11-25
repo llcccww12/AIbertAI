@@ -167,10 +167,28 @@ func (h *relaySessionHost) sessionConnectorResources(raw json.RawMessage, write 
 			prefs.KnowledgeBaseIDs = slices.Clone(change.IDs)
 		case "resource":
 			name, ok := strings.CutPrefix(change.ID, "mcp/")
-			if !ok || !h.validConnectorPreference(name) || change.Enabled == nil {
+			skill, isSkill := strings.CutPrefix(change.ID, dshSkillPreferencePrefix)
+			if change.Enabled == nil || !(ok && h.validConnectorPreference(name) || isSkill && validUUID(skill)) {
 				return nil, errors.New("invalid_session_resources")
 			}
 			prefs.Enabled[change.ID] = *change.Enabled
+		case "skill_selection":
+			if len(change.IDs) > 200 {
+				return nil, errors.New("invalid_session_resources")
+			}
+			for _, id := range change.IDs {
+				if skill, ok := strings.CutPrefix(id, dshSkillPreferencePrefix); !ok || !validUUID(skill) {
+					return nil, errors.New("invalid_session_resources")
+				}
+			}
+			for key := range prefs.Enabled {
+				if strings.HasPrefix(key, "skill/") {
+					delete(prefs.Enabled, key)
+				}
+			}
+			for _, id := range change.IDs {
+				prefs.Enabled[id] = true
+			}
 		case "mcp_tool":
 			if !h.validConnectorPreference(change.Server) || change.Enabled == nil || change.Name == "" || len(change.Name) > 256 {
 				return nil, errors.New("invalid_session_resources")

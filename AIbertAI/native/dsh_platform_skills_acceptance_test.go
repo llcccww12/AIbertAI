@@ -26,15 +26,26 @@ func TestDSHPlatformSkillsPatchedSDK(t *testing.T) {
 	const expertID = "99999999-9999-4999-8999-999999999999"
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
+	const enabledSkill = "66666666-6666-4666-8666-666666666666"
+	const disabledSkill = "77777777-7777-4777-8777-777777777777"
 	skills := filepath.Join(root, "platform-skills")
-	if err := os.MkdirAll(filepath.Join(skills, "weekly-report"), 0700); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.MkdirAll(home, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(skills, "weekly-report", "SKILL.md"), dshSkillDocument("weekly-report", "Write the weekly report", "PLATFORM-SKILL-BODY: use three bullet points."), 0600); err != nil {
-		t.Fatal(err)
+	for _, skill := range []struct{ id, name, description, body string }{
+		{enabledSkill, "weekly-report", "Write the weekly report", "PLATFORM-SKILL-BODY: use three bullet points."},
+		{disabledSkill, "travel-plan", "Plan a business trip", "Book flights."},
+	} {
+		dir := filepath.Join(skills, skill.name)
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), dshSkillDocument(skill.name, skill.description, skill.body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, dshPlatformSkillStamp), []byte(skill.id+"\nsha\n"+skill.name+"\n"+skill.description), 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	requests := make(chan string, 8)
 	var loaded atomic.Bool
@@ -76,8 +87,11 @@ func TestDSHPlatformSkillsPatchedSDK(t *testing.T) {
 	defer cfg.LeasePool.close(context.Background())
 	host := &relaySessionHost{live: &acpLive{client: client, auth: authorization{Access: "test"}}}
 
-	// Standard session: the skill is listed, then loaded by the skill tool.
+	// Standard session: only the enabled skill is listed, then loaded by the skill tool.
 	session := acpSession{ID: id, DSHSessionID: id, Engine: "dsh", CWD: root, Model: model}
+	if err := materializeDSHSessionSkills(skills, dshSessionSkillsDir(skills, id), func(skill string) bool { return skill == enabledSkill }); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
 	turn := acpTurn{Operation: "22222222-2222-4222-8222-000000000001", Prompt: "Write my weekly report"}
 	err = runDSHTurn(ctx, cfg, session, &turn, false, func(map[string]any) error { return nil })
@@ -87,6 +101,8 @@ func TestDSHPlatformSkillsPatchedSDK(t *testing.T) {
 	}
 	if first := <-requests; !strings.Contains(first, "weekly-report") || !strings.Contains(first, "Write the weekly report") {
 		t.Fatal("platform skill not listed to the model")
+	} else if strings.Contains(first, "travel-plan") {
+		t.Fatal("a skill switched off for this conversation was listed")
 	}
 	select {
 	case after := <-requests:

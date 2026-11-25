@@ -111,7 +111,7 @@ func newDSHGatewayRuntime(installation dshInstalledRuntime, journalRoot string, 
 		local.agentTeamEnabled = session.AgentTeamEnabled
 		local.standardMode = session.ExpertID == ""
 		if session.ExpertID == "" {
-			local.platformSkillsDir = installation.PlatformSkillsDir
+			local.platformSkillsDir = dshSessionSkillsDir(installation.PlatformSkillsDir, session.ID)
 		}
 		disabled, _ := ctx.Value(dshDisabledPluginsKey{}).([]string)
 		patch, err := local.Patch(base, selected, disabled...)

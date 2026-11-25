@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -107,5 +108,65 @@ func TestDSHPatchAddsPlatformSkillsDir(t *testing.T) {
 	patch, _ = g.Patch("http://127.0.0.1:1234/v1", selectedModelConfig{ID: "m", Protocol: "openai_chat_completions"}, "skill-filesystem")
 	if strings.Contains(string(patch), "customSkillDirs") {
 		t.Fatal("disabled skill provider still configured")
+	}
+}
+
+func TestMaterializeDSHSessionSkillsKeepsOnlyEnabled(t *testing.T) {
+	root := t.TempDir()
+	cache := filepath.Join(root, "platform-skills")
+	a, b := "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"
+	for id, name := range map[string]string{a: "alpha", b: "beta"} {
+		if err := os.MkdirAll(filepath.Join(cache, name, "scripts"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		_ = os.WriteFile(filepath.Join(cache, name, "SKILL.md"), []byte(name), 0600)
+		_ = os.WriteFile(filepath.Join(cache, name, "scripts", "run.sh"), []byte("echo"), 0600)
+		_ = os.WriteFile(filepath.Join(cache, name, dshPlatformSkillStamp), []byte(id+"\nsha"), 0600)
+	}
+	dir := dshSessionSkillsDir(cache, "s1")
+	enabled := map[string]bool{a: true}
+	if err := materializeDSHSessionSkills(cache, dir, func(id string) bool { return enabled[id] }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "alpha", "scripts", "run.sh")); err != nil {
+		t.Fatal("enabled skill not copied with its files")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "beta")); !os.IsNotExist(err) {
+		t.Fatal("disabled skill exposed")
+	}
+	enabled = map[string]bool{b: true}
+	if err := materializeDSHSessionSkills(cache, dir, func(id string) bool { return enabled[id] }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "alpha")); !os.IsNotExist(err) {
+		t.Fatal("switched-off skill kept")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "beta", "SKILL.md")); err != nil {
+		t.Fatal("newly enabled skill missing")
+	}
+}
+
+func TestSessionSkillSelection(t *testing.T) {
+	id := "11111111-1111-4111-8111-111111111111"
+	skill := "skill/server/22222222-2222-4222-8222-222222222222"
+	h := &relaySessionHost{live: &acpLive{dir: t.TempDir(), sessions: map[string]acpSession{id: {ID: id, State: "idle"}},
+		connectorPrefs: connectorPreferences{Enabled: map[string]bool{"skill/server/33333333-3333-4333-8333-333333333333": true}}}}
+	change := func(c map[string]any) error {
+		raw, _ := json.Marshal(map[string]any{"sessionId": id, "change": c})
+		_, err := h.sessionConnectorResources(raw, true)
+		return err
+	}
+	if err := change(map[string]any{"kind": "skill_selection", "ids": []string{skill}}); err != nil {
+		t.Fatal(err)
+	}
+	enabled := h.live.sessions[id].ConnectorPreferences.Enabled
+	if !enabled[skill] || len(enabled) != 1 {
+		t.Fatalf("selection = %v", enabled)
+	}
+	if err := change(map[string]any{"kind": "resource", "id": skill, "enabled": false}); err != nil || h.live.sessions[id].ConnectorPreferences.Enabled[skill] {
+		t.Fatal("per-conversation switch not saved", err)
+	}
+	if change(map[string]any{"kind": "skill_selection", "ids": []string{"mcp/x"}}) == nil {
+		t.Fatal("non-skill id accepted")
 	}
 }

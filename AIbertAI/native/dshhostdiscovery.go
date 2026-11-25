@@ -44,6 +44,10 @@ var errDSHCanvasUnavailable = errors.New("dsh_canvas_unavailable")
 // dshTurnHostTools exposes only account/session-authorized tools. Canvas writes
 // are restricted to those with verified guards and durable receipt handling.
 func (h *relaySessionHost) dshTurnHostTools(ctx context.Context, ws *websocket.Conn, request *http.Request, session acpSession, turn *acpTurn) ([]dshHostToolBridge, string, error) {
+	if h.live != nil && h.live.dsh != nil && h.live.dsh.SessionSkills != nil && session.ExpertID == "" {
+		// Best effort: skill switches changed since the last turn take effect now.
+		_ = h.live.dsh.SessionSkills(session)
+	}
 	selected := h.dshSelectedKnowledge(session)
 	requiresCanvas := session.ExpertID == designExpertID || len(turn.CanvasNodes) > 0
 	if h.live == nil || request == nil {

@@ -136,6 +136,14 @@ func TestDSHCreatePlatformSkillByChatPatchedSDK(t *testing.T) {
 	if err := cfg.SyncPlatformSkills(ctx); err != nil {
 		t.Fatal(err)
 	}
+	cfg.SessionSkills = func(session acpSession) error {
+		current, err := live.load(session.ID)
+		if err != nil {
+			return err
+		}
+		prefs := current.ConnectorPreferences.normalized()
+		return materializeDSHSessionSkills(skills, dshSessionSkillsDir(skills, session.ID), func(id string) bool { return prefs.Enabled[dshSkillPreferencePrefix+id] })
+	}
 	cfg.LeasePool = &dshLeasePool{}
 	defer cfg.LeasePool.close(context.Background())
 	live.dsh = cfg

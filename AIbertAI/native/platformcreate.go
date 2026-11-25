@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -81,9 +82,10 @@ func remoteConnectorInput(name, description, endpoint string) (map[string]any, e
 		"authorization_mode": "none", "authorization_method": nil}, nil
 }
 
-// createPlatformSkill saves a personal skill and refreshes the DSH copy, whose
-// watcher makes it loadable in running conversations without an expert.
-func (h *relaySessionHost) createPlatformSkill(ctx context.Context, name, description, content string) (json.RawMessage, error) {
+// createPlatformSkill saves a personal skill and refreshes the DSH copy. A
+// skill created from a conversation is enabled there, so the folder watcher
+// makes it loadable in the same turn.
+func (h *relaySessionHost) createPlatformSkill(ctx context.Context, sessionID, name, description, content string) (json.RawMessage, error) {
 	if h.live == nil || h.live.client == nil {
 		return nil, errors.New("skill_create_unavailable")
 	}
@@ -95,8 +97,34 @@ func (h *relaySessionHost) createPlatformSkill(ctx context.Context, name, descri
 	if err != nil {
 		return nil, err
 	}
-	if h.live.dsh != nil && h.live.dsh.SyncPlatformSkills != nil {
-		_ = h.live.dsh.SyncPlatformSkills(ctx)
+	var created struct{ ID string }
+	if sessionID != "" && json.Unmarshal(result, &created) == nil && validUUID(created.ID) {
+		_ = h.live.enableSessionSkill(sessionID, created.ID)
+	}
+	if dsh := h.live.dsh; dsh != nil && dsh.SyncPlatformSkills != nil {
+		_ = dsh.SyncPlatformSkills(ctx)
+		if session, err := h.live.load(sessionID); sessionID != "" && err == nil && dsh.SessionSkills != nil {
+			_ = dsh.SessionSkills(session)
+		}
 	}
 	return result, nil
+}
+
+func (l *acpLive) enableSessionSkill(sessionID, skillID string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	session, ok := l.sessions[sessionID]
+	if !ok {
+		return errors.New("session_not_found")
+	}
+	prefs := l.connectorPrefs
+	if session.ConnectorPreferences != nil {
+		prefs = *session.ConnectorPreferences
+	}
+	prefs.Enabled = maps.Clone(prefs.Enabled)
+	prefs = prefs.normalized()
+	prefs.Enabled[dshSkillPreferencePrefix+skillID] = true
+	session.ConnectorPreferences = &prefs
+	session.ResourceRevision++
+	return l.save(session)
 }
