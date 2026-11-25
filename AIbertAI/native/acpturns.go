@@ -1128,6 +1128,9 @@ func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Co
 				title := tool.ConnectorName + " / " + tool.Name
 				permissions, permissionErr = h.requestACPToolApproval(ctx, ws, id, call.ID, title, tool.Name, "other",
 					map[string]any{"connector": tool.ConnectorName, "tool": tool.Name, "arguments": args.JSON})
+			} else if args.Design && dshMediaWrite(call.Function.Name) {
+				// Billed generations always ask, even in full-access mode.
+				permissions, permissionErr = h.requestToolApproval(ctx, ws, id, call.ID, mediaGenerationTitle(call.Function.Name), call.Function.Name, "edit", args.JSON, false, false)
 			} else if args.Design {
 				permissions, permissionErr = h.requestACPToolApproval(ctx, ws, id, call.ID, call.Function.Name, call.Function.Name, workspaceToolKind(call.Function.Name), args.JSON)
 			} else if args.Compat != nil {

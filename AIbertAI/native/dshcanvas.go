@@ -53,6 +53,18 @@ func dshCanvasRetrySafe(name string) bool {
 	return false
 }
 
+// mediaGenerationTitle names a billed generation on its approval card.
+func mediaGenerationTitle(name string) string {
+	switch name {
+	case "media_edit_image":
+		return "编辑图片"
+	case "media_generate_video":
+		return "生成视频"
+	default:
+		return "生成图片"
+	}
+}
+
 // dshMediaWrite lists billed generations. They keep a durable claim; only a
 // definite refusal before generation is reported as not applied.
 func dshMediaWrite(name string) bool {
@@ -339,7 +351,12 @@ func (h *relaySessionHost) dshCanvasBridge(ctx context.Context, ws *websocket.Co
 		}
 		if req.Name != designReadTool {
 			approvalCtx := context.WithValue(ctx, dshNativeApprovalWaitKey{}, true)
-			counts, err := h.requestDSHToolApproval(approvalCtx, ws, session.ID, callID, req.Name, req.Name, workspaceToolKind(req.Name), args, true)
+			title := req.Name
+			if dshMediaWrite(req.Name) {
+				title = mediaGenerationTitle(req.Name)
+			}
+			// Billed generations always ask, even in full-access mode.
+			counts, err := h.requestDSHToolApproval(approvalCtx, ws, session.ID, callID, title, req.Name, workspaceToolKind(req.Name), args, !dshMediaWrite(req.Name))
 			turn.Permissions.Asked += counts.Asked
 			turn.Permissions.Allowed += counts.Allowed
 			turn.Permissions.Denied += counts.Denied
