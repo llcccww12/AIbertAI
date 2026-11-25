@@ -26,24 +26,28 @@ resources="$stage/resources"
 mkdir -p "$resources/bin"
 rsync -a --exclude node_modules "$source_resources/app/" "$resources/app/"
 (cd "$resources/app" && "$pnpm_bin" install --frozen-lockfile --ignore-scripts --os win32 --cpu x64 --config.node-linker=hoisted --registry "$registry")
+# Every workspace package gets one real copy at the top-level node_modules; nested
+# workspace links and .bin shims are dropped so Node resolves each package once.
 python3 - "$resources/app" <<'PY'
 import os, shutil, sys
 root = os.path.realpath(sys.argv[1])
-for _ in range(10):
-    links = [os.path.join(d, n) for d, dirs, files in os.walk(sys.argv[1]) for n in dirs + files if os.path.islink(os.path.join(d, n))]
-    if not links:
-        break
-    for link in links:
-        real = os.path.realpath(link)
-        os.unlink(link)
-        if not os.path.exists(real) or not real.startswith(root + os.sep):
+top = os.path.join(root, "node_modules")
+links = [os.path.join(d, n) for d, dirs, files in os.walk(root) for n in dirs + files if os.path.islink(os.path.join(d, n))]
+skip_links = lambda d, names: [n for n in names if os.path.islink(os.path.join(d, n))]
+for link in links:
+    real = os.path.realpath(link)
+    parent = os.path.dirname(link)
+    os.unlink(link)
+    if "/node_modules/" in link + "/":
+        top_level = parent == top or (os.path.dirname(parent) == top and os.path.basename(parent).startswith("@"))
+        if "/.bin/" in link or not top_level:
             continue
-        if os.path.isdir(real):
-            shutil.copytree(real, link, symlinks=True)
-        else:
-            shutil.copy2(real, link)
-else:
-    raise SystemExit("symlinks remain after dereferencing")
+    if os.path.isdir(real):
+        shutil.copytree(real, link, ignore=skip_links)
+    elif os.path.exists(real):
+        shutil.copy2(real, link)
+if any(os.path.islink(os.path.join(d, n)) for d, dirs, files in os.walk(root) for n in dirs + files):
+    raise SystemExit("symlinks remain")
 PY
 unzip -q -j "$node_zip" node-v25.9.0-win-x64/node.exe -d "$resources/bin"
 python3 "$integration/manifest.py" create "$resources" --patch "$patch" --lockfile "$resources/app/pnpm-lock.yaml" \

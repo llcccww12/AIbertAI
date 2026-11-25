@@ -256,7 +256,6 @@ for path in files:
 PY
 
 if [[ $target == mac-arm64 ]]; then
-  image_source="$app"
   if [[ $release == true ]]; then
     electron-osx-sign "$app" "$resources/bin/$binary" "$resources/bin/$browser_host" --platform=darwin --type=distribution --hardened-runtime --identity="$mac_identity"
     codesign --verify --strict -R='anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and identifier "com.aibertai.desktop"' "$app"
@@ -264,9 +263,6 @@ if [[ $target == mac-arm64 ]]; then
       echo "The app signature must enable the hardened runtime." >&2
       exit 2
     fi
-    image_source="$stage/image"
-    mkdir "$image_source"
-    ln -s /Applications "$image_source/Applications"
   else
     codesign --force --deep --sign - "$app"
   fi
@@ -279,9 +275,11 @@ if [[ $target == mac-arm64 ]]; then
   # 应用内更新下载此压缩包并整体替换 .app，需与下载页的 DMG 同时发布。
   update_zip="${artifact%.dmg}.zip"
   ditto -c -k --keepParent "$app" "$stage/$update_zip"
-  if [[ $release == true ]]; then
-    mv "$app" "$image_source/"
-  fi
+  # 安装窗口提供「应用程序」快捷方式：直接从 DMG 或下载目录运行时 macOS 会把应用隔离到只读的临时路径，应用内更新无法替换。
+  image_source="$stage/image"
+  mkdir "$image_source"
+  ln -s /Applications "$image_source/Applications"
+  mv "$app" "$image_source/"
   hdiutil create -volname "$mac_name" -srcfolder "$image_source" -format UDZO "$stage/$artifact"
   if [[ $release == true ]]; then
     codesign --sign "$mac_identity" --timestamp --identifier com.aibertai.desktop.dmg "$stage/$artifact"
