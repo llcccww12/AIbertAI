@@ -63,6 +63,11 @@ func TestDSHCanvasImageSourceAndReceipt(t *testing.T) {
 		}
 	}
 	verify(true)
+	model.Function.Name = "media_edit_image"
+	verify(true)
+	model.Function.Name = "media_remove_background"
+	verify(false)
+	model.Function.Name = "media_generate_image"
 	row.ID, row.DSHSessionID = other, other
 	verify(false)
 	row.ID, row.DSHSessionID = session, session
