@@ -197404,14 +197404,35 @@ async function zk(e, t, n, r) {
       ) {
         const m = new URL(await r(f));
         if (
-          m.protocol !== "http:" ||
-          !["127.0.0.1", "localhost"].includes(m.hostname) ||
-          !m.pathname.startsWith("/files/") ||
+          !["http:", "https:"].includes(m.protocol) ||
           m.username ||
           m.password
         )
           throw new Error(`图片资源链接无效：${f}`);
-        a.set(d, m.href);
+        // Loopback file links pass the preview CSP as they are. Links from a
+        // remote endpoint's proxy do not, so inline the image instead.
+        if (
+          m.protocol === "http:" &&
+          ["127.0.0.1", "localhost"].includes(m.hostname) &&
+          m.pathname.startsWith("/files/")
+        )
+          a.set(d, m.href);
+        else {
+          const g = await fetch(m.href);
+          if (!g.ok) throw new Error(`图片资源读取失败：${f}`);
+          const b = await g.blob();
+          if (!/^image\//.test(b.type) || b.size > 32 * 1024 * 1024)
+            throw new Error(`图片资源不可用（${b.type || "unknown"}）：${f}`);
+          a.set(
+            d,
+            await new Promise((x, y) => {
+              const R = new FileReader();
+              ((R.onload = () => x(R.result)),
+                (R.onerror = () => y(R.error)),
+                R.readAsDataURL(b));
+            }),
+          );
+        }
       } else if (h)
         throw new Error(
           `图片资源不可用（${p?.reason ?? "unavailable"}）：${f}`,
