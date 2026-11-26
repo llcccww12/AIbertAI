@@ -21,12 +21,15 @@ import (
 
 type ProbeInput struct {
 	Message string `json:"message"`
+	// Vision sends a generated test image through the model's configured
+	// protocol and checks that the model describes it.
+	Vision bool `json:"vision"`
 }
 
 func (s *Service) probeModel(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	var input ProbeInput
-	if err := decodeModelRequest(w, r, &input); err != nil || strings.TrimSpace(input.Message) == "" || utf8.RuneCountInString(input.Message) > 4000 {
+	if err := decodeModelRequest(w, r, &input); err != nil || !input.Vision && strings.TrimSpace(input.Message) == "" || utf8.RuneCountInString(input.Message) > 4000 {
 		modelError(r.Context(), w, http.StatusBadRequest, "测试消息不能为空且不超过 4000 个字符")
 		return
 	}
@@ -41,6 +44,14 @@ func (s *Service) probeModel(w http.ResponseWriter, r *http.Request) {
 	}
 	if item.OwnershipType != "system" || (item.Kind != KindText && item.Kind != KindEmbedding) {
 		modelError(r.Context(), w, http.StatusBadRequest, "仅支持测试系统大语言模型或向量模型")
+		return
+	}
+	if input.Vision {
+		if item.Kind != KindText {
+			modelError(r.Context(), w, http.StatusBadRequest, "仅支持测试大语言模型的图片识别")
+			return
+		}
+		s.probeVision(w, r, item)
 		return
 	}
 	if item.Kind == KindEmbedding {
@@ -68,33 +79,12 @@ func (s *Service) probeModel(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
 	defer cancel()
-	transport := &http.Transport{
-		DialContext:       (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-		ForceAttemptHTTP2: true, TLSHandshakeTimeout: 5 * time.Second,
-		ResponseHeaderTimeout: time.Minute,
+	client, failure := s.probeClient(ctx, item)
+	if failure != "" {
+		modelError(r.Context(), w, http.StatusBadGateway, failure)
+		return
 	}
-	defer transport.CloseIdleConnections()
-	if item.ProxyID != "" {
-		if s.proxies == nil {
-			modelError(r.Context(), w, http.StatusBadGateway, "网络代理不可用")
-			return
-		}
-		raw, err := s.proxies.ProxyURL(ctx, item.ProxyID)
-		if err != nil {
-			modelError(r.Context(), w, http.StatusBadGateway, "网络代理不可用")
-			return
-		}
-		proxyURL, err := url.Parse(raw)
-		if err != nil || proxyURL.Hostname() == "" || !slices.Contains([]string{"http", "https", "socks5", "socks5h"}, proxyURL.Scheme) {
-			modelError(r.Context(), w, http.StatusBadGateway, "网络代理地址无效")
-			return
-		}
-		transport.Proxy = http.ProxyURL(proxyURL)
-	}
-	client := &http.Client{
-		Transport:     transport,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
+	defer client.CloseIdleConnections()
 	started := time.Now()
 	response, err := upstream.send(ctx, client)
 	if err == nil && stream {
@@ -144,6 +134,34 @@ func (s *Service) probeModel(w http.ResponseWriter, r *http.Request) {
 		result["first_text_ms"] = total
 	}
 	modelJSON(w, http.StatusOK, result)
+}
+
+// probeClient returns a client that honours the model's network proxy, or a
+// message describing why the proxy cannot be used.
+func (s *Service) probeClient(ctx context.Context, item Model) (*http.Client, string) {
+	transport := &http.Transport{
+		DialContext:       (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		ForceAttemptHTTP2: true, TLSHandshakeTimeout: 5 * time.Second,
+		ResponseHeaderTimeout: time.Minute,
+	}
+	if item.ProxyID != "" {
+		if s.proxies == nil {
+			return nil, "网络代理不可用"
+		}
+		raw, err := s.proxies.ProxyURL(ctx, item.ProxyID)
+		if err != nil {
+			return nil, "网络代理不可用"
+		}
+		proxyURL, err := url.Parse(raw)
+		if err != nil || proxyURL.Hostname() == "" || !slices.Contains([]string{"http", "https", "socks5", "socks5h"}, proxyURL.Scheme) {
+			return nil, "网络代理地址无效"
+		}
+		transport.Proxy = http.ProxyURL(proxyURL)
+	}
+	return &http.Client{
+		Transport:     transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}, ""
 }
 
 type probeUpstream struct {

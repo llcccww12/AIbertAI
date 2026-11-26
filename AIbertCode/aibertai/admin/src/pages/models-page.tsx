@@ -747,6 +747,47 @@ export function ModelsPage() {
     }
   }
 
+  // Sends a generated two-colour image through the model's configured
+  // protocol; a model whose upstream drops images on that protocol fails here.
+  const sendVisionTest = async () => {
+    const target = textModelToTest
+    if (!target || target.kind !== "text" || testSending) return
+    setTestSending(true)
+    setTestResponse("")
+    setTestError("")
+    setTestMetrics({})
+    try {
+      const response = await fetch(
+        `/api/admin/v1/models/${target.id}/probe`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ vision: true }),
+        }
+      )
+      const payload = await response.json().catch(() => null)
+      if (!response.ok) {
+        throw new Error(payload?.error?.message ?? "图片识别测试失败")
+      }
+      setTestMetrics({ output_mode: "buffered", total_ms: payload?.total_ms })
+      setTestResponse(
+        `期望回答：${payload?.vision_expected ?? "—"}\n模型回答：${payload?.content || "（空）"}`
+      )
+      if (!payload?.vision_passed) {
+        setTestError(
+          "图片识别未通过：模型没有正确描述测试图片。请确认上游在当前协议下支持图片输入，例如部分自部署服务只在 OpenAI Chat 协议下读取图片；否则请关闭该模型的图片识别。"
+        )
+      }
+    } catch (reason) {
+      setTestError(
+        reason instanceof Error ? reason.message : "图片识别测试失败"
+      )
+    } finally {
+      setTestSending(false)
+    }
+  }
+
   const exitSelection = () => {
     setSelecting(false)
     setSelectionMenuOpen(false)
@@ -2641,6 +2682,17 @@ export function ModelsPage() {
             >
               关闭
             </Button>
+            {textModelToTest?.kind === "text" &&
+              textModelToTest.supportsVision && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={testSending}
+                  onClick={() => void sendVisionTest()}
+                >
+                  测试图片识别
+                </Button>
+              )}
             <Button
               type="button"
               loading={testSending}
