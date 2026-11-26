@@ -28,7 +28,7 @@ func (h *relaySessionHost) recoverDSHPromptSession(ctx context.Context, id strin
 	live := h.live
 	live.mu.Lock()
 	row, ok := live.sessions[id]
-	if !ok || live.restarting || live.compacting[id] || live.activeTurns[id] != nil || row.ID != id || row.Engine != "dsh" || row.State == "running" || row.GoalRun != "" || !workspace && row.Goal != nil || len(row.Turns) == 0 {
+	if !ok || live.restarting || live.compacting[id] || live.activeTurns[id] != nil || row.ID != id || row.Engine != "dsh" || row.State == "running" || desktopGoalAdvancing(row.Goal) || !workspace && row.platformGoal() != nil || len(row.Turns) == 0 {
 		live.mu.Unlock()
 		return fail()
 	}
@@ -231,7 +231,7 @@ func dshRecoverablePromptFailure(code string) bool {
 }
 
 func dshPromptRecoveryAvailable(row acpSession) bool {
-	if row.Engine != "dsh" || row.State == "running" || row.GoalRun != "" || row.Goal != nil || len(row.Turns) == 0 {
+	if row.Engine != "dsh" || row.State == "running" || desktopGoalAdvancing(row.Goal) || row.platformGoal() != nil || len(row.Turns) == 0 {
 		return false
 	}
 	last := row.Turns[len(row.Turns)-1]
@@ -243,7 +243,7 @@ func dshRecoverableWorkspaceFailure(code string) bool {
 }
 
 func dshWorkspaceRecoveryAvailable(row acpSession) bool {
-	if row.Engine != "dsh" || row.State == "running" || row.GoalRun != "" || len(row.Turns) == 0 {
+	if row.Engine != "dsh" || row.State == "running" || desktopGoalAdvancing(row.Goal) || len(row.Turns) == 0 {
 		return false
 	}
 	last := row.Turns[len(row.Turns)-1]

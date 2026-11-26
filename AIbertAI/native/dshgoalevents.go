@@ -185,9 +185,15 @@ func (l *acpLive) adoptDSHGoalEvent(sessionID string, raw json.RawMessage) error
 	if !ok || row.Engine != "dsh" {
 		return errors.New("goal_not_found")
 	}
-	// A platform goal owns this session; its own observer records every event.
-	if row.Goal != nil && !row.Goal.Observed {
-		return nil
+	// A platform goal keeps this session while it can still be resumed or is
+	// running. Once it finished or was cleared the platform no longer drives
+	// it, and a goal the model opens afterwards must still be visible.
+	if platform := row.platformGoal(); platform != nil {
+		switch platform.Status {
+		case "completed", "complete", "cleared":
+		default:
+			return nil
+		}
 	}
 	current := row.Goal
 	if current != nil && current.DSHGoalID == id {
@@ -197,7 +203,10 @@ func (l *acpLive) adoptDSHGoalEvent(sessionID string, raw json.RawMessage) error
 		if e.Event.Seq <= current.DSHEventSeq {
 			return nil
 		}
-	} else if d.Operation != "create" {
+	} else if d.Operation != "create" && current != nil {
+		// A later event for a goal this record is not mirroring says nothing
+		// about the goal it holds. With nothing mirrored the event is still the
+		// best evidence available, so a dropped create stays recoverable.
 		return nil
 	}
 	goal := desktopGoal{ID: strings.TrimPrefix(id, "goal-"), Generation: 1, Observed: true,
@@ -240,10 +249,15 @@ func (l *acpLive) adoptDSHGoalEvent(sessionID string, raw json.RawMessage) error
 	if d.Rounds > goal.RoundsStarted {
 		goal.RoundsStarted = d.Rounds
 	}
+	if current != nil {
+		// The window merges goal state by state_version alone, never by goal id.
+		// A second goal must therefore start above the record it replaces, or
+		// every update for it is discarded and the old goal stays on screen.
+		goal.Version = current.Version
+	}
 	if current != nil && current.DSHGoalID == id {
 		goal.RoundsStarted = max(goal.RoundsStarted, current.RoundsStarted)
 		goal.ActiveSeconds = current.ActiveSeconds
-		goal.Version = current.Version
 	}
 	goal.Version++
 	row.Goal = &goal

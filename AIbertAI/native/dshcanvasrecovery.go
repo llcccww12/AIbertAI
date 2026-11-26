@@ -284,7 +284,7 @@ func dshPendingCanvasWrite(turn acpTurn) bool {
 }
 
 func dshCanvasRecoveryAvailable(row acpSession) bool {
-	if row.Engine != "dsh" || row.State == "running" || row.GoalRun != "" || row.Goal != nil || len(row.Turns) == 0 {
+	if row.Engine != "dsh" || row.State == "running" || desktopGoalAdvancing(row.Goal) || row.platformGoal() != nil || len(row.Turns) == 0 {
 		return false
 	}
 	last := row.Turns[len(row.Turns)-1]

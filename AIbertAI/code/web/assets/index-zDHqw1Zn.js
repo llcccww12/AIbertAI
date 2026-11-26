@@ -35461,6 +35461,7 @@ const BYe = {
     goal_session_busy: "goal.errors.session_busy",
     dsh_goal_control_unavailable: "goal.errors.goal_control_unavailable",
     dsh_goal_clear_failed: "goal.errors.goal_clear_failed",
+    dsh_model_unsettled: "goal.errors.model_unsettled",
     goal_mode_unavailable: "goal.errors.goal_mode_unavailable",
     goal_exists: "goal.errors.goal_exists",
     invalid_limits: "goal.errors.invalid_limits",
@@ -114303,6 +114304,7 @@ const qwt = {
         session_busy: "会话正在处理其他操作，请稍后再试。",
         goal_control_unavailable: "这个目标由模型在 DSH 里创建，只能在这里清除，不能暂停或编辑。",
         goal_clear_failed: "没能清除 DSH 里的目标，请稍后再试。",
+        model_unsettled: "这一轮模型调用没能确认结果，已按 0 计量并保留记录，可以先核对工作区再继续。",
       },
       label: "目标",
       start: "设为目标",
@@ -114343,6 +114345,7 @@ const qwt = {
         runtime_error: "执行发生错误，目标尚未完成。",
         dsh_goal_clear_failed:
           "删除目标时 DSH 没有确认，已还原为暂停状态，可以再删一次。",
+        dsh_blocked: "DSH 认为这个目标暂时无法继续，需要在对话里处理挡住它的问题。",
         empty_response: "模型连续多轮没有返回有效内容，系统已停止自动推进。",
         execution_failure: "工具连续多轮执行失败，系统已停止自动推进。",
         permission_denied: "一项操作未获得授权，系统已停止自动推进。",
@@ -117398,6 +117401,8 @@ Start with the conclusion, then explain the reasoning.`,
         goal_control_unavailable:
           "The model created this goal in DSH. It can only be cleared here, not paused or edited.",
         goal_clear_failed: "The DSH goal could not be cleared. Try again shortly.",
+        model_unsettled:
+          "This model call could not be confirmed. It is recorded as uncharged; check the workspace before continuing.",
       },
       label: "Goal",
       start: "Set a goal",
@@ -117441,6 +117446,8 @@ Start with the conclusion, then explain the reasoning.`,
         runtime_error: "Execution failed before the goal was completed.",
         dsh_goal_clear_failed:
           "DSH did not confirm the deletion, so the goal is paused again. Try deleting it once more.",
+        dsh_blocked:
+          "DSH reports this goal cannot continue right now. Clear what blocks it in the chat.",
         empty_response:
           "The model returned no useful content for several turns, so automatic work stopped.",
         execution_failure:
@@ -157994,6 +158001,7 @@ const GF = new Intl.NumberFormat("en-US", {
     "usage_unknown",
     "runtime_error",
     "dsh_goal_clear_failed",
+    "dsh_blocked",
     "empty_response",
     "execution_failure",
     "permission_denied",
