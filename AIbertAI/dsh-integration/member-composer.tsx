@@ -88,7 +88,10 @@ export function MemberComposer({ storageKey, sessionId, member, rows, running, p
     setSending(true)
     setError('')
     try {
-      await interruptMember({ sessionId, memberId: member.id })
+      // The host answers "not accepted" without raising when that turn already
+      // ended or the runtime is gone; say so instead of doing nothing.
+      const receipt = await interruptMember({ sessionId, memberId: member.id })
+      if (receipt && receipt.accepted === false) throw new Error('member_not_running')
     } catch {
       if (mounted.current) setError(zh ? '未能停止成员，请重试。' : 'Could not stop the member. Try again.')
     } finally {
