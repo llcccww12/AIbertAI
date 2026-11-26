@@ -25149,7 +25149,7 @@ class MediaService {
       }
       await this.ensureImageProcessing();
       const dimensions = await imageDimensions(image.data);
-      return { source_path: checkpoint.sourcePath, ...(canvasCommandContext.getStore()?.expectedRevision !== void 0 ? { source_sha256: checkpoint.sha256 } : {}), mime_type: checkpoint.mimeType, bytes: checkpoint.bytes, model, provider_model: providerModel, ...dimensions, ..."revisedPrompt" in image && image.revisedPrompt ? { revised_prompt: image.revisedPrompt } : {}, ...task2 ? { task_id: task2.id } : {} };
+      return { source_path: checkpoint.sourcePath, source_sha256: checkpoint.sha256, mime_type: checkpoint.mimeType, bytes: checkpoint.bytes, model, provider_model: providerModel, ...dimensions, ..."revisedPrompt" in image && image.revisedPrompt ? { revised_prompt: image.revisedPrompt } : {}, ...task2 ? { task_id: task2.id } : {} };
     } catch (error) {
       const failure = imageCapabilityFailure(error);
       if (failure) throw new ImageCapabilityError({ ...failure, ...submitted === void 0 ? {} : { submitted }, ...task2 ? { submitted: true, task_id: task2.id } : {}, ...checkpoint ? { source_path: checkpoint.sourcePath } : {} }, error);

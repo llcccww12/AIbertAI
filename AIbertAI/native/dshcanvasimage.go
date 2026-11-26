@@ -36,14 +36,14 @@ func dshCanvasImageSource(raw json.RawMessage) (string, error) {
 }
 
 // Shared project folders can contain other sessions' files. Bind the exact source
-// and its bytes to the completed generation in this session's host journal.
+// and its bytes to a completed generation or edit in this session's host journal.
 func dshGeneratedImageDigest(journal, workspace *os.Root, row acpSession, source string) (string, error) {
 	if journal == nil || workspace == nil || !validUUID(row.ID) || row.ID != row.DSHSessionID || !dshGeneratedImagePath.MatchString(source) {
 		return "", errDSHCanvasImageSource
 	}
 	for _, turn := range row.Turns {
 		for _, run := range turn.ToolRuns {
-			if run.Pending || run.Report.Failed != 0 || run.DSHCallID == "" || run.Call == nil || run.Call.Function.Name != "media_generate_image" {
+			if run.Pending || run.Report.Failed != 0 || run.DSHCallID == "" || run.Call == nil || (run.Call.Function.Name != "media_generate_image" && run.Call.Function.Name != "media_edit_image") {
 				continue
 			}
 			var result struct {

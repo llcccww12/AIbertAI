@@ -16487,9 +16487,17 @@ function htmlResourcePath(entryPath, encodedRelativePath) {
   } catch {
     throw new Error(ErrorCode.invalidDeviceFileRef);
   }
-  if (parts.some((part) => !part || part === "." || part === ".." || /[\/\\\u0000-\u001f\u007f]/.test(part))) throw new Error(ErrorCode.invalidDeviceFileRef);
+  if (parts.some((part) => !part || part === "." || /[\/\\\u0000-\u001f\u007f]/.test(part))) throw new Error(ErrorCode.invalidDeviceFileRef);
   const relative = parts.join("/"), directory = node_path.posix.dirname(entryPath);
-  const path2 = directory === "." ? relative : directory + "/" + relative;
+  let path2 = directory === "." ? relative : directory + "/" + relative;
+  if (parts.includes("..")) {
+    // A design page may use any file of its task (templates, shared assets);
+    // other pages stay limited to their own folder, as before.
+    const task = /^((?:.*\/)?\.(?:aibertai|monkeyai)\/design\/[^/]+)\/artifacts\//.exec(entryPath);
+    const root = task ? task[1] : directory;
+    path2 = node_path.posix.normalize(path2);
+    if (root === "." || !path2.startsWith(root + "/")) throw new Error(ErrorCode.invalidDeviceFileRef);
+  }
   const contentType = types[node_path.posix.extname(relative).toLowerCase()];
   if (!contentType) throw new Error(ErrorCode.fileAccessDenied);
   return { path: path2, contentType };
@@ -17909,6 +17917,20 @@ function htmlPreviewPolicy(resources, rendering) {
   // Captures must match the canvas, which shows https images and video.
   return local.replace("frame-src 'none'", "frame-src about:").replace(/(img-src|media-src) ([^;]*)/g, "$1 $2 https:");
 }
+// Turns a resource path below the preview prefix back into an encoded path
+// relative to the page's folder; it may start with "../" segments.
+function pageRelativePath(pageSegments, requested) {
+  let parts;
+  try {
+    parts = requested.split("/").map((part) => decodeURIComponent(part));
+  } catch {
+    return void 0;
+  }
+  const folder = pageSegments.slice(0, -1);
+  let shared = 0;
+  while (shared < folder.length && shared < parts.length - 1 && folder[shared] === parts[shared]) shared++;
+  return [...folder.slice(shared).map(() => ".."), ...parts.slice(shared).map(encodeURIComponent)].join("/") || void 0;
+}
 class HtmlPreviewPages {
   pages = /* @__PURE__ */ new Map();
   create(ownerId, scope2, path2, content, maxBytes = MAX_HTML_PREVIEW_BYTES, resources, rendering = false) {
@@ -17920,8 +17942,11 @@ class HtmlPreviewPages {
     const externalPolicy = resources && !scope2.device && !rendering ? externalHtmlPreviewPolicy(content) : void 0;
     if (externalPolicy) resources = void 0;
     const version2 = node_crypto.randomUUID(), prefix = resources ? `${origin}/${version2}/` : void 0;
-    const url2 = prefix ? prefix + encodeURIComponent(node_path.posix.basename(path2)) : `${origin}/${version2}.html`;
-    this.pages.set(url2, { ...scope2, ownerId, content, prefix, resources, rendering, externalPolicy, abort: new AbortController() });
+    // Serve the page at its full path below the prefix so that "../" links
+    // from it still land below the prefix and reach the resource handler.
+    const segments = path2.split("/").filter(Boolean);
+    const url2 = prefix ? prefix + segments.map(encodeURIComponent).join("/") : `${origin}/${version2}.html`;
+    this.pages.set(url2, { ...scope2, ownerId, content, prefix, segments, resources, rendering, externalPolicy, abort: new AbortController() });
     return url2;
   }
   key(input) {
@@ -17946,7 +17971,8 @@ class HtmlPreviewPages {
       const target = this.key(request2.url);
       const source = [...this.pages.values()].find((value) => value.prefix && target.startsWith(value.prefix) && (accountId === void 0 || value.accountId === accountId));
       if (source?.resources && source.prefix && (request2.method === "GET" || request2.method === "HEAD")) {
-        const path2 = new URL(request2.url).pathname.slice(new URL(source.prefix).pathname.length);
+        const path2 = pageRelativePath(source.segments, new URL(request2.url).pathname.slice(new URL(source.prefix).pathname.length));
+        if (!path2) return new Response("Resource unavailable", { status: 404, headers: { "Cache-Control": "no-store", "Content-Type": "text/plain; charset=utf-8" } });
         return source.resources(path2, request2, AbortSignal.any([source.abort.signal, request2.signal])).catch(() => new Response("Resource unavailable", { status: 404, headers: { "Cache-Control": "no-store", "Content-Type": "text/plain; charset=utf-8" } }));
       }
       return new Response("Preview unavailable", { status: 404, headers });

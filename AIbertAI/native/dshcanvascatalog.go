@@ -31,7 +31,7 @@ func dshCanvasRestrictedCatalog(catalog []desktopDesignTool, canWrite bool, capa
 			tool.Description = "用当前会话的图片模型生成图片并保存到工作区，返回 source_path。生成前可用 media_get_image_model 查询所选模型支持的参数。"
 			if tool.Name == "canvas_create_image" {
 				required, optional = "source_path", "title"
-				tool.Description = "将本会话生成的图片作为新节点添加到画布。请原样使用 media_generate_image 返回的 source_path，可选填图片标题。"
+				tool.Description = "将本会话生成或编辑的图片作为新节点添加到画布。请原样使用 media_generate_image 或 media_edit_image 返回的 source_path，可选填图片标题。"
 				if schema.Properties[required] == nil {
 					continue
 				}
