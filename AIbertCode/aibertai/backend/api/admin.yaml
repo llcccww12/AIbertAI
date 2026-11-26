@@ -3016,7 +3016,7 @@ paths:
   /api/admin/v1/models/{modelID}/probe:
     post:
       summary: 使用已保存配置测试系统大语言模型或向量模型
-      description: 按模型协议、Base URL、已保存密钥和网络代理连接上游，不缓存、不跟随重定向。文本测试可用 Accept application/x-ndjson 启用逐段接收，按保存的流式策略请求。上游返回事件流时输出 start、delta、done 三种逐行 JSON 事件，否则返回 JSON 结果。向量测试仍返回维度、配置一致性、向量预览和 Token 用量。
+      description: 按模型协议、Base URL、已保存密钥和网络代理连接上游，不缓存、不跟随重定向。文本测试可用 Accept application/x-ndjson 启用逐段接收，按保存的流式策略请求。上游返回事件流时输出 start、delta、done 三种逐行 JSON 事件，否则返回 JSON 结果。向量测试仍返回维度、配置一致性、向量预览和 Token 用量。vision=true 时按已保存协议发送一张左右两色的测试图片，检查大语言模型能否说出两种颜色，用于发现上游在当前协议下忽略图片输入的情况。
       parameters:
         - {name: modelID, in: path, required: true, schema: {type: string, format: uuid}}
       requestBody:
@@ -3026,9 +3026,9 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [message]
               properties:
-                message: {type: string, minLength: 1, maxLength: 4000, description: 大语言模型的测试消息或向量模型的 embedding 输入。}
+                message: {type: string, minLength: 1, maxLength: 4000, description: 大语言模型的测试消息或向量模型的 embedding 输入。vision 为 false 时必填。}
+                vision: {type: boolean, description: 仅大语言模型。为 true 时忽略 message，改为图片识别测试，只返回完整 JSON。}
       responses:
         '200':
           description: 文本测试返回逐行 JSON 事件流或完整 JSON。向量测试返回完整 JSON。
@@ -3044,6 +3044,8 @@ paths:
                       output_mode: {type: string, enum: [buffered]}
                       first_text_ms: {type: integer, minimum: 0, description: 首段正文可用时间。非流式有效响应等于总耗时。}
                       total_ms: {type: integer, minimum: 0}
+                      vision_passed: {type: boolean, description: 仅图片识别测试。模型是否正确说出测试图片左右两半的颜色；上游拒绝图片时为 false。}
+                      vision_expected: {type: string, description: 仅图片识别测试。期望回答，例如 left=red, right=blue。}
                   - $ref: '#/components/schemas/EmbeddingProbeResult'
             application/x-ndjson:
               schema:
