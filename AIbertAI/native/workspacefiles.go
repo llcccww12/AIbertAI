@@ -386,6 +386,10 @@ func previewWorkspaceFile(root *os.Root, relative, requested string, size int64)
 	case "image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp":
 		return map[string]any{"path": requested, "kind": "image", "imageUrl": "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)}, nil
 	}
+	// Content sniffing never reports SVG; canvas pages use it for logos and icons.
+	if strings.EqualFold(filepath.Ext(relative), ".svg") && utf8.Valid(data) {
+		return map[string]any{"path": requested, "kind": "image", "imageUrl": "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString(data)}, nil
+	}
 	if !utf8.Valid(data) || strings.ContainsRune(string(data), 0) {
 		return unavailable("binary")
 	}

@@ -17182,6 +17182,8 @@ const ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
 const MAX_COMPOSITE_ERROR_LENGTH = 2e4;
 const COMMON_PATCH_KEYS = /* @__PURE__ */ new Set(["type", "x", "y", "width", "height", "zIndex", "title", "locked", "hidden", "groupId"]);
 const IMAGE_EXTENSIONS = /* @__PURE__ */ new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"]);
+// Pages may also ship their own web fonts next to their images.
+const ARTIFACT_ASSET_EXTENSIONS = /* @__PURE__ */ new Set([...IMAGE_EXTENSIONS, ".woff2", ".woff", ".ttf", ".otf"]);
 const VIDEO_EXTENSIONS = /* @__PURE__ */ new Set([".mp4", ".webm"]);
 const AUDIO_EXTENSIONS = /* @__PURE__ */ new Set([".mp3", ".wav", ".m4a"]);
 const MEDIA_PROJECT_EFFECT_KINDS = /* @__PURE__ */ new Set(["brightness", "contrast", "saturation", "warm", "cool", "vintage", "mono", "invert", "blur", "sharpen", "grain", "vignette", "glow", "motion-blur", "radial-blur", "chromatic", "shadow"]);
@@ -18222,7 +18224,10 @@ class CanvasStore {
     const source2 = node_fs.realpathSync(requested);
     if (!inside$2(workspace, source2)) fail$2("invalid_canvas_artifact_asset");
     const extension2 = require$$1$1.extname(source2).toLowerCase();
-    if (!IMAGE_EXTENSIONS.has(extension2)) fail$2("invalid_canvas_artifact_asset");
+    if (!ARTIFACT_ASSET_EXTENSIONS.has(extension2)) fail$2("invalid_canvas_artifact_asset");
+    // DSH digests every artifact file and rejects any over 8 MiB, which would
+    // break every later canvas tool. Refuse the copy up front instead.
+    if (requestedStat.size > 8 * 1024 * 1024) fail$2("canvas_artifact_asset_too_large");
     const artifact = this.createHtmlArtifact(input, nodeId);
     const assets = require$$1$1.join(artifact, "assets");
     ensureDirectory(assets);
@@ -21131,7 +21136,7 @@ class DesignCanvasService {
       if (node.type !== "html") throw new CanvasError("canvas_node_type_mismatch");
       if (node.locked) throw new CanvasError("canvas_node_locked");
       const absolute = this.canvases.htmlArtifactAsset(location, nodeId, assetPath);
-      return require$$1$1.relative(location.workspace, absolute).split(require$$1$1.sep).join("/");
+      return require$$1$1.relative(node_fs.realpathSync(location.workspace), absolute).split(require$$1$1.sep).join("/");
     });
   }
   async replaceHtmlImage(sessionId, nodeId, assetPath, sourcePath) {
@@ -23106,7 +23111,7 @@ const CANVAS_TOOLS = [
   { name: "design_await_style_choice", description: "等待用户选择或跳过设计风格；选择完成后读取返回的工作区相对路径 stylePath，并在同一轮继续。", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
   { name: "canvas_create_html", description: CREATE_HTML_DESCRIPTION + CREATE_SLIDE_DESCRIPTION, inputSchema: { type: "object", properties: { title: { type: "string" }, x: { type: "number" }, y: { type: "number" }, width: { type: "number", exclusiveMinimum: 0 }, height: { type: "number", exclusiveMinimum: 0 }, pass_through: { type: "boolean" }, slide_index: { type: "integer", minimum: 1, description: "演示文稿页序，从 1 开始且唯一。传入后画布按页码横向排页，该画布即可按此页序导出 PPTX；普通网页原型与海报请省略。" }, style_source: { type: "string", enum: ["inherited"], description: "仅用于 edit-existing-deck，表示页面继承源 PPTX 的已验证 DESIGN.md。" } }, additionalProperties: false } },
   { name: "canvas_create_text", description: "创建可编辑的备忘、剧本或分镜文本节点。已有选中文本时用 canvas_update_node 原位修改，不新建副本。content 使用 Markdown；新建分镜等下游文稿时传 source_node_id，自动沿用来源文本的尺寸和字号并记录正文快照，避免固定小卡片在缩放后不可读；传 text_role=storyboard 可在同一次创建中原子保存本镜正文、角色与来源，按镜增量写回，不先写整份工作稿。传 source_node_id 时应省略 x/y，由 Host 在来源右侧按固定三列网格排列；placement_node_id 可指定当前视觉设定等触发文稿，来源关联仍由 source_node_id 决定。", inputSchema: { type: "object", properties: { title: { type: "string" }, content: { type: "string", maxLength: 2e4 }, text_role: { type: "string", enum: [...textRoles], description: "本次创建的文稿角色，默认 note。分镜传 storyboard，与正文和来源一起原子保存。" }, source_node_id: { type: "string", description: "来源文本节点 ID。未显式指定的宽高及文字样式继承来源，并记录 sourceNodeId/sourceContent。" }, placement_node_id: placementNodeSchema, x: { type: "number" }, y: { type: "number" }, width: { type: "number", exclusiveMinimum: 0 }, height: { type: "number", exclusiveMinimum: 0 } }, anyOf: [{ required: ["source_node_id"] }, { required: ["x", "y"] }], additionalProperties: false } },
-  { name: "canvas_add_artifact_asset", description: "把工作区内已有图片安全复制到指定 HTML Artifact，并返回可直接写入 HTML/CSS 的相对路径。", inputSchema: { type: "object", properties: { node_id: { type: "string" }, source_path: { type: "string" } }, required: ["node_id", "source_path"], additionalProperties: false } },
+  { name: "canvas_add_artifact_asset", description: "把工作区内已有图片或字体（.woff2/.woff/.ttf/.otf）安全复制到指定 HTML Artifact，并返回可直接写入 HTML/CSS 的相对路径。模板自带的字体不要复制，直接引用模板的 __catalog_fonts/fonts.css。", inputSchema: { type: "object", properties: { node_id: { type: "string" }, source_path: { type: "string" } }, required: ["node_id", "source_path"], additionalProperties: false } },
   { name: "canvas_commit_html", description: "验证 HTML 节点的 index.html 并提交到画布。" + HTML_ARTIFACT_SIZE_HINT, inputSchema: { type: "object", properties: { node_id: { type: "string" }, allow_duplicate: { type: "boolean", description: "仅当用户明确要求完全重复页面时设为 true。" } }, required: ["node_id"], additionalProperties: false } },
   { name: "canvas_prepare_pptx", description: "依据当前设计画布中按 slide_index 排序的 HTML 页面生成可编辑 PPTX 导出清单，返回 manifest_path 和页数；画布上没有页序页面时拒绝。", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
   { name: "canvas_capture_preview", description: "使用真实隔离 Renderer 截取节点。网页原型和 PPTX 不传 include_node_ids。backend=desktop（默认）使用客户端隔离窗口；backend=browser 使用设备上已安装的独立无头 Chrome/Edge（Win7 兼容版不支持），可在默认通道故障时对比截图，不会自动回到默认通道。include_node_ids 用于图片设计的多素材合成，支持独立底图、真实文字层、Logo、产品图或吉祥物等图片，无文字时不需要空 HTML 层；会创建标题为「合成海报」的独立图片节点；prototype 与 slide_deck 会话传入 include_node_ids 会被拒绝。layout_mode=current 保留当前坐标、旋转、翻转、裁剪和透明度；layout_mode=align 以图片容器为基准把所有层拉成相同尺寸，只适合同尺寸整层重叠；多个独立尺寸素材使用 current，不用 align 拉满小 Logo、产品图或吉祥物。同一组参数失败后最多重试一次；再次失败应报告错误并停止，不得连续盲目重试。", inputSchema: { type: "object", properties: { backend: { type: "string", enum: ["desktop", "browser"] }, node_id: { type: "string" }, include_node_ids: { type: "array", maxItems: 31, items: { type: "string" } }, layout_mode: { type: "string", enum: ["current", "align"] } }, required: ["node_id"], additionalProperties: false } },
@@ -53099,7 +53104,8 @@ function createPrivateCatalog(origin) {
           for (const field of ["preview_path", "output_path"]) {
             const path = result[field];
             if (typeof path !== "string" || !require$$1$1.isAbsolute(path)) continue;
-            const relative = require$$1$1.relative(cwd, path);
+            // Saved paths are resolved through symlinks (/tmp, /var, junctions).
+            const relative = require$$1$1.relative(node_fs.realpathSync(cwd), path);
             if (!relative || relative === ".." || relative.startsWith(".." + require$$1$1.sep) || require$$1$1.isAbsolute(relative)) {
               throw new Error("invalid_design_preview_path");
             }
@@ -53168,7 +53174,18 @@ parentPort.on("message", ({ data }) => {
     return;
   }
   if (message.type === "init-private-catalog") {
-    privateCatalog = createPrivateCatalog(message.origin);
+    // A bad origin must not kill the process: the host re-sends the same
+    // origin on every restart, which turned into a crash loop.
+    try {
+      privateCatalog = createPrivateCatalog(message.origin);
+    } catch (error) {
+      privateCatalog = null;
+      log(`private catalog unavailable for ${String(message.origin)}: ${reasonOf(error)}`);
+    }
+    return;
+  }
+  if (!privateCatalog && message.type === "private-catalog") {
+    parentPort.postMessage({ type: "private-catalog-result", id: message.id, error: "design_catalog_unavailable" });
     return;
   }
   if (privateCatalog) {

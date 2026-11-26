@@ -3240,6 +3240,7 @@ async function completeLogin(server, signal, onAuthorize) {
       signal.throwIfAborted();
       for (const sub of ["runtime", "packages"]) node_fs.mkdirSync(node_path.join(profileDir(id22), sub), { recursive: true });
       readAuth(id22, true);
+      setAsideUnreadableProfile(id22);
       return { profileDir: profileDir(id22), dataKey: getDataKey(id22) };
     }
   });
@@ -3292,6 +3293,29 @@ function hasEncryptedProfileData(accountId, root = profileDir(accountId)) {
     }
   }
   return false;
+}
+// Windows DPAPI is tied to the Windows user and is never "locked": a data key
+// it cannot open came from another user or machine (e.g. a reinstall over old
+// data) and will never open. On a fresh login, move that profile data aside
+// so the account can start over instead of failing with credentials_locked.
+function setAsideUnreadableProfile(accountId) {
+  if (process.platform !== "win32" || !isSecureStorageAvailable()) return;
+  const file2 = readAuth(accountId);
+  if (!file2?.dataKey || openString(file2.dataKey) !== null) return;
+  const root = profileDir(accountId);
+  const backup = node_path.join(root, `unreadable-${Date.now()}`);
+  node_fs.mkdirSync(backup, { recursive: true });
+  for (const relative of ["auth.json", ...encryptedProfileFiles]) {
+    const from = node_path.join(root, relative);
+    if (!node_fs.existsSync(from)) continue;
+    const to = node_path.join(backup, relative);
+    node_fs.mkdirSync(node_path.dirname(to), { recursive: true });
+    if (relative === "auth.json") node_fs.copyFileSync(from, to);
+    else node_fs.renameSync(from, to);
+  }
+  const { dataKey: _unreadable, ...rest } = file2;
+  writeAuth(accountId, rest);
+  console.warn(`[auth] profile data of ${accountId} cannot be decrypted by this Windows user; moved to ${backup}`);
 }
 function getDataKey(accountId) {
   requireSecureStorage();

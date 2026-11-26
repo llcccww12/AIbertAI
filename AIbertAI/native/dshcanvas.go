@@ -244,7 +244,7 @@ func (h *relaySessionHost) dshCanvasBridge(ctx context.Context, ws *websocket.Co
 				return nil, errors.New("dsh_canvas_request_invalid")
 			}
 		}
-		if req.Name == designSelectionTool && len(selection) != 0 {
+		if req.Name == designSelectionTool {
 			ids := make([]string, 0, len(selection))
 			for _, node := range selection {
 				ids = append(ids, node.ID)
