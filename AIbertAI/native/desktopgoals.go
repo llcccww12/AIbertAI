@@ -35,6 +35,10 @@ type desktopGoal struct {
 	DSHPhase       string                       `json:"dsh_phase,omitempty"`
 	RoundsStarted  int                          `json:"rounds_started,omitempty"`
 	RecentProgress string                       `json:"recent_progress,omitempty"`
+	// Observed marks a goal the model created on its own in DSH. DSH owns it:
+	// the record exists so the employee can see the goal, and every platform
+	// rule that treats a goal as owning the session must ignore it.
+	Observed bool `json:"dsh_observed,omitempty"`
 }
 
 // An admitted DSH invocation remains pending until its committed usage has
@@ -53,6 +57,23 @@ func (g *desktopGoal) hasPendingDSHInvocation() bool {
 		}
 	}
 	return false
+}
+
+// A goal owns the session only while it can advance on its own. A paused,
+// blocked or finished goal keeps its record so it can be resumed, but it must
+// not keep the user out of the session: GoalRun alone blocked every prompt.
+func desktopGoalAdvancing(goal *desktopGoal) bool {
+	return goal != nil && !goal.Observed && goal.Current && (goal.Status == "active" || goal.Status == "reconciling" || goal.Status == "clearing")
+}
+
+// platformGoal reports the goal this app created and drives. A goal the model
+// created in DSH is display-only, so every rule about who owns the session
+// must read through this accessor instead of row.Goal.
+func (s acpSession) platformGoal() *desktopGoal {
+	if s.Goal == nil || s.Goal.Observed {
+		return nil
+	}
+	return s.Goal
 }
 
 type desktopGoalUsage struct {
@@ -81,11 +102,30 @@ func (l *acpLive) saveGoalAction(raw json.RawMessage, background bool) (any, err
 	if p.Action == "get" || p.RequestID == row.LastGoalRequest {
 		return map[string]any{"goal": goalView(row), "background": background}, nil
 	}
-	if row.Engine == "dsh" && !background {
+	if row.Engine == "dsh" && !background && (goal == nil || !goal.Observed) {
 		return nil, errors.New("dsh_goal_control_unavailable")
 	}
-	if p.Action != "create" && (goal == nil || !goal.Current || p.ExpectedGoalID != goal.ID || p.ExpectedGeneration != goal.Generation) {
-		return nil, errors.New("stale_goal")
+	// The model's own DSH goal belongs to DSH, which has no platform-side pause
+	// or edit. Only dismissing the record is honest here; offering pause would
+	// show "paused" while the SDK kept advancing the goal.
+	observed := goal != nil && goal.Observed
+	if observed && p.Action != "clear" {
+		return nil, errors.New("dsh_goal_control_unavailable")
+	}
+	if p.Action != "create" {
+		switch {
+		case goal == nil:
+			return nil, errors.New("stale_goal")
+		case observed:
+			// Stopping a goal DSH owns is idempotent: the button may fire again
+			// after the record already moved on, and a second delete must not
+			// raise a red "the goal changed" warning.
+			if p.ExpectedGoalID != "" && p.ExpectedGoalID != goal.ID {
+				return nil, errors.New("stale_goal")
+			}
+		case !goal.Current || p.ExpectedGoalID != goal.ID || p.ExpectedGeneration != goal.Generation:
+			return nil, errors.New("stale_goal")
+		}
 	}
 	if row.Engine == "dsh" && goal != nil && p.Action == "edit" && (goal.Status == "reconciling" || goal.Status == "clearing" || goal.DSHPhase == "complete") {
 		return nil, errors.New("goal_session_busy")
@@ -188,7 +228,7 @@ func (l *acpLive) saveGoalAction(raw json.RawMessage, background bool) (any, err
 	if err := l.save(row); err != nil {
 		return nil, errors.New("session_write_failed")
 	}
-	if background && (p.Action == "pause" || p.Action == "clear") {
+	if (background || observed) && (p.Action == "pause" || p.Action == "clear") {
 		if cancel := l.activeTurns[row.ID]; cancel != nil {
 			cancel()
 		}
@@ -268,7 +308,7 @@ func (g *desktopGoalRun) stop(usage modelUsage) bool {
 }
 
 func settleDesktopGoal(row *acpSession, original *desktopGoal, turn acpTurn) {
-	if original == nil || original.Status != "active" || row.Goal == nil || row.Goal.ID != original.ID {
+	if original == nil || original.Observed || original.Status != "active" || row.Goal == nil || row.Goal.ID != original.ID {
 		return
 	}
 	next := *row.Goal

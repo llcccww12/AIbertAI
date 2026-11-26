@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const (
@@ -175,5 +176,106 @@ func TestDSHGatewayDialFailureIsProvenNonDispatch(t *testing.T) {
 	g.ServeHTTP(w, r)
 	if posts != 3 || w.Code != http.StatusBadGateway || g.pending == nil || g.pending.State != "rejected" || !dshTerminalModelFailure(g.pending.FailureCode) {
 		t.Fatalf("status=%d posts=%d pending=%+v", w.Code, posts, g.pending)
+	}
+}
+
+// An unsettled model call blocked the session until the process restarted.
+// After the release window it is archived as unsettled: charged nothing, still
+// available for a later receipt check, and no longer holding the next prompt.
+func TestDSHUnsettledModelCallReleasesAfterWindow(t *testing.T) {
+	g := pendingSettleGateway(t, http.StatusOK)
+	if _, err := g.abandonUnsettled(settleCall); err == nil {
+		t.Fatal("released a call that is still inside the window")
+	}
+	old := time.Now().Add(-2 * dshModelUnsettledRelease)
+	if err := os.Chtimes(filepath.Join(g.journal, "pending.json"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	code, err := g.abandonUnsettled(settleCall)
+	if err != nil || code != "dsh_model_unsettled" {
+		t.Fatalf("release=%q err=%v", code, err)
+	}
+	if g.pending != nil {
+		t.Fatal("released call still holds the session")
+	}
+	if _, err := os.Stat(filepath.Join(g.journal, "pending.json")); !os.IsNotExist(err) {
+		t.Fatalf("pending journal remains: %v", err)
+	}
+	if got := g.abandonedFailure(settleOperation); got != "dsh_model_unsettled" {
+		t.Fatalf("archived code %q", got)
+	}
+	if err := g.resetTurnState(); err != nil {
+		t.Fatalf("next turn still blocked: %v", err)
+	}
+}
+
+// Only a ledger receipt that proves the call succeeded may repair a record
+// left "dispatched" by builds that recorded delivery only at stream close.
+func committedRecoveryGateway(t *testing.T, receipt string) *dshLocalGateway {
+	t.Helper()
+	c, err := newBackendClient("https://gateway.test", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.http.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		w := httptest.NewRecorder()
+		if r.URL.Path == "/api/v1/sessions/"+settleSession+"/model-invocations/"+settleCall+"/receipt" {
+			fmt.Fprint(w, receipt)
+		}
+		return w.Result(), nil
+	})
+	gateway := &dshGateway{client: c, authorization: func(context.Context) (authorization, error) { return authorization{Access: "fixture"}, nil }}
+	journal := filepath.Join(t.TempDir(), "journal")
+	if err := os.MkdirAll(journal, 0700); err != nil {
+		t.Fatal(err)
+	}
+	record := dshLocalRecord{SessionID: settleSession, OperationID: settleOperation, CallID: settleCall, ModelID: settleModel,
+		Protocol: "openai_chat_completions", Body: []byte(`{}`), State: "dispatched", Status: http.StatusOK, Finish: "stop"}
+	data, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(journal, "pending.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	g, err := newDSHLocalGateway(gateway, settleSession, selectedModelConfig{ID: settleModel, Protocol: "openai_chat_completions"}, journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.requireInvocationID = true
+	return g
+}
+
+func TestDSHCommittedDeliveryRepairsDispatchedCall(t *testing.T) {
+	const tx = "44444444-4444-4444-8444-444444444444"
+	g := committedRecoveryGateway(t, fmt.Sprintf(`{"status":"settled","recorded":true,"result":"succeeded","transaction_id":%q}`, tx))
+	g.recoverCommittedDelivery(context.Background(), settleSession, settleCall, 7)
+	if g.pending == nil || g.pending.State != "delivered" || g.pending.Transaction != tx || g.pending.Finish != "stop" {
+		t.Fatalf("committed call not repaired: %+v", g.pending)
+	}
+	data, err := os.ReadFile(filepath.Join(g.journal, "pending.json"))
+	var saved dshLocalRecord
+	if err != nil || json.Unmarshal(data, &saved) != nil || saved.State != "delivered" || saved.Transaction != tx {
+		t.Fatalf("repaired record not durable: %s, %v", data, err)
+	}
+}
+
+func TestDSHCommittedDeliveryRequiresProof(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		receipt string
+	}{
+		{"failed result", `{"status":"settled","recorded":true,"result":"failed"}`},
+		{"no final status", `{"status":"pending","recorded":true,"result":"succeeded","transaction_id":"44444444-4444-4444-8444-444444444444"}`},
+		{"not recorded", `{"status":"settled","recorded":false,"result":"succeeded"}`},
+		{"missing", `{}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := committedRecoveryGateway(t, tc.receipt)
+			g.recoverCommittedDelivery(context.Background(), settleSession, settleCall, 7)
+			if g.pending == nil || g.pending.State != "dispatched" {
+				t.Fatalf("unproven call was delivered: %+v", g.pending)
+			}
+		})
 	}
 }

@@ -35458,6 +35458,9 @@ const BYe = {
       "settings.experts.avatar.runtimeUnsupported",
     expert_avatar_unavailable: "settings.experts.avatar.serverUnavailable",
     stale_goal: "goal.errors.stale_goal",
+    goal_session_busy: "goal.errors.session_busy",
+    dsh_goal_control_unavailable: "goal.errors.goal_control_unavailable",
+    dsh_goal_clear_failed: "goal.errors.goal_clear_failed",
     goal_mode_unavailable: "goal.errors.goal_mode_unavailable",
     goal_exists: "goal.errors.goal_exists",
     invalid_limits: "goal.errors.invalid_limits",
@@ -114298,6 +114301,8 @@ const qwt = {
         confirmation_required: "这个操作需要你明确确认。",
         goal_not_found: "没有找到当前目标，请重新打开会话。",
         session_busy: "会话正在处理其他操作，请稍后再试。",
+        goal_control_unavailable: "这个目标由模型在 DSH 里创建，只能在这里清除，不能暂停或编辑。",
+        goal_clear_failed: "没能清除 DSH 里的目标，请稍后再试。",
       },
       label: "目标",
       start: "设为目标",
@@ -114313,6 +114318,8 @@ const qwt = {
       details: "展开目标详情",
       collapse: "收起目标详情",
       elapsed: "累计活动时长",
+      rounds: "目标轮次",
+      roundsCount: "第 {{count}} 轮",
       tokenUsage: "目标 Token 用量",
       tokenBudget: "{{used}} / {{budget}}",
       tokensCompact: "{{value}} Token",
@@ -114334,6 +114341,8 @@ const qwt = {
         usage_unknown:
           "模型服务未返回完整用量，系统已停止自动推进，避免在用量不明时继续消耗。",
         runtime_error: "执行发生错误，目标尚未完成。",
+        dsh_goal_clear_failed:
+          "删除目标时 DSH 没有确认，已还原为暂停状态，可以再删一次。",
         empty_response: "模型连续多轮没有返回有效内容，系统已停止自动推进。",
         execution_failure: "工具连续多轮执行失败，系统已停止自动推进。",
         permission_denied: "一项操作未获得授权，系统已停止自动推进。",
@@ -117386,6 +117395,9 @@ Start with the conclusion, then explain the reasoning.`,
         goal_not_found: "No current goal was found. Reopen the chat.",
         session_busy:
           "The chat is handling another operation. Try again shortly.",
+        goal_control_unavailable:
+          "The model created this goal in DSH. It can only be cleared here, not paused or edited.",
+        goal_clear_failed: "The DSH goal could not be cleared. Try again shortly.",
       },
       label: "Goal",
       start: "Set a goal",
@@ -117401,6 +117413,8 @@ Start with the conclusion, then explain the reasoning.`,
       details: "Show goal details",
       collapse: "Hide goal details",
       elapsed: "Total active time",
+      rounds: "Goal rounds",
+      roundsCount: "Round {{count}}",
       tokenUsage: "Goal token usage",
       tokenBudget: "{{used}} / {{budget}}",
       tokensCompact: "{{value}} tokens",
@@ -117425,6 +117439,8 @@ Start with the conclusion, then explain the reasoning.`,
         usage_unknown:
           "The model service did not return complete usage. Automatic work stopped to avoid further spending with unknown usage.",
         runtime_error: "Execution failed before the goal was completed.",
+        dsh_goal_clear_failed:
+          "DSH did not confirm the deletion, so the goal is paused again. Try deleting it once more.",
         empty_response:
           "The model returned no useful content for several turns, so automatic work stopped.",
         execution_failure:
@@ -157977,6 +157993,7 @@ const GF = new Intl.NumberFormat("en-US", {
   E9t = new Set([
     "usage_unknown",
     "runtime_error",
+    "dsh_goal_clear_failed",
     "empty_response",
     "execution_failure",
     "permission_denied",
@@ -158104,6 +158121,12 @@ function T9t({ goal: e, disabled: t, onAction: n, pauseInComposer }) {
           l.jsxs("div", {
             className: "composer-goal-controls",
             children: [
+              e.rounds_started > 0 &&
+                l.jsx("span", {
+                  className: "composer-goal-rounds",
+                  title: r("goal.rounds"),
+                  children: r("goal.roundsCount", { count: e.rounds_started }),
+                }),
               !s &&
                 (M || E || T || I) &&
                 l.jsxs("span", {
@@ -158139,6 +158162,7 @@ function T9t({ goal: e, disabled: t, onAction: n, pauseInComposer }) {
                 children: [
                   d && l.jsx(Kn, { className: "size-3.5" }),
                   e.is_current &&
+                    !e.dsh_observed &&
                     l.jsx(Te, {
                       type: "button",
                       variant: "ghost",
@@ -158152,6 +158176,7 @@ function T9t({ goal: e, disabled: t, onAction: n, pauseInComposer }) {
                       children: l.jsx(ke, { icon: dk, size: 14 }),
                     }),
                   e.is_current &&
+                    !e.dsh_observed &&
                     e.status === "active" && !pauseInComposer &&
                     l.jsx(Te, {
                       type: "button",
@@ -158180,6 +158205,7 @@ function T9t({ goal: e, disabled: t, onAction: n, pauseInComposer }) {
                     }),
                   !s &&
                     S &&
+                    !e.dsh_observed &&
                     l.jsx(Te, {
                       type: "button",
                       className: "composer-goal-resume",

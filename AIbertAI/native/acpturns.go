@@ -210,8 +210,13 @@ func (l *acpLive) reserveTurn(id, op, clientID, prompt string, attachments []acp
 			l.trackTurn(id, cancel)
 			return session, n - 1, false, nil
 		}
-	} else if session.GoalRun != "" {
+	} else if desktopGoalAdvancing(session.Goal) {
 		return session, 0, false, errGoalSessionBusy
+	} else if session.GoalRun != "" {
+		// A paused or finished goal stays resumable, but it no longer owns the
+		// session. Releasing the attempt id lets the next resume take a fresh
+		// one instead of colliding with the turn the user starts now.
+		session.GoalRun = ""
 	}
 	if session.State == "running" || !background && queued == nil && l.queueWorkers[id] != nil {
 		return session, 0, false, errors.New("session_unavailable_for_prompt")
@@ -558,6 +563,16 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 							}
 						}
 						project := func(update map[string]any) error {
+							if update != nil && update["sessionUpdate"] == "goal_state" {
+								// A goal the model created itself belongs to DSH. Mirror
+								// it and tell the window, without touching this turn.
+								if raw, ok := update["goalEvent"].(json.RawMessage); ok && live.adoptDSHGoalEvent(id, raw) == nil {
+									if row, loadErr := live.load(id); loadErr == nil {
+										_ = notifyACPTurnState(ctx, ws, row, op, false)
+									}
+								}
+								return nil
+							}
 							live.mu.Lock()
 							current := live.sessions[id]
 							if turnCtx.Err() != nil && update != nil {
@@ -835,6 +850,12 @@ func acpTurnStatePayload(session acpSession, operation string, finished bool) ma
 	if finished {
 		state["executionId"] = nil
 		if reason := session.lastTurnFailure(); reason != "" {
+			// A goal that is still resumable did not fail the employee's work.
+			// The technical code stays on the turn for recovery; the window gets
+			// the neutral line instead of a red "the turn failed" message.
+			if session.Goal != nil && session.Goal.Current && !session.Goal.Observed {
+				reason = "session_turn_failed"
+			}
 			state["lastError"] = reason
 		} else {
 			state["lastError"] = ""

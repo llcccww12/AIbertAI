@@ -310,3 +310,42 @@ func TestDesktopGoalPausesWithUnconfirmedAction(t *testing.T) {
 		t.Fatal("started an unconfirmed action automatically")
 	}
 }
+
+// A paused goal is still resumable, but holding GoalRun made reserveTurn
+// reject every user prompt and left the queue worker waiting forever, which
+// the employee saw as a frozen conversation.
+func TestDesktopGoalPausedDoesNotBlockUserPrompt(t *testing.T) {
+	const server = "84ec3d37-ec01-4348-aa35-7e1007c6c731"
+	const machine = "c1207fc3-d5c2-4e26-a2f5-1c2dd0f49f65"
+	const id = "5f0c3a44-9cbd-4d21-9f0b-6f7d1a2b3c4d"
+	const sessionOp = "d9618877-384d-4ef6-8092-d78242d4b703"
+	const runOp = "bef35947-ef29-4cba-8dae-e3aebd029257"
+	const promptOp = "0a1b2c3d-4e5f-4a6b-8c9d-0e1f2a3b4c5d"
+	profile := t.TempDir()
+	cwd := filepath.Join(profile, "workspace")
+	now := time.Now().UTC()
+	live, err := openDesktopSessions(profile, server, machine, cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer live.store.Close()
+	if err := live.save(acpSession{
+		ID: id, Operation: sessionOp, Model: "6321dabc-2eae-4469-88cf-096d20414cee", CWD: cwd, Created: now, Updated: now, State: "idle",
+		GoalRun: runOp, Goal: &desktopGoal{ID: runOp, Objective: "Run a tool", Generation: 1, Current: true, Status: "paused", Reason: "usage_unknown", Uncertain: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := live.reserveTurn(id, promptOp, promptOp, "How is it going?", nil, nil, false, nil); err != nil {
+		t.Fatalf("paused goal blocked the user prompt: %v", err)
+	}
+	row, err := live.load(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.GoalRun != "" {
+		t.Fatalf("paused goal kept the session: GoalRun=%q", row.GoalRun)
+	}
+	if row.Goal == nil || row.Goal.Status != "paused" {
+		t.Fatalf("paused goal record was lost: %+v", row.Goal)
+	}
+}

@@ -354,7 +354,7 @@ func (h *relaySessionHost) runSessionQueue(ctx context.Context, ws *websocket.Co
 			live.mu.Unlock()
 			return initial, nil
 		}
-		if row.GoalRun != "" || row.State == "running" {
+		if desktopGoalAdvancing(row.Goal) || row.State == "running" {
 			wake := live.queueWorkers[id]
 			live.mu.Unlock()
 			// The goal owns the session. Acknowledge the persisted message before waiting.

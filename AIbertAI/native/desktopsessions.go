@@ -357,8 +357,8 @@ func (l *acpLive) restoreDesktopSessions() error {
 				continue
 			}
 		}
-		activeGoal := session.Goal != nil && session.Goal.Current && session.Goal.Status == "active"
-		if session.Engine == "dsh" && session.Goal != nil && session.Goal.Current && (activeGoal || session.State == "running" || session.Goal.Status == "reconciling") {
+		activeGoal := session.platformGoal() != nil && session.Goal.Current && session.Goal.Status == "active"
+		if session.Engine == "dsh" && session.platformGoal() != nil && session.Goal.Current && (activeGoal || session.State == "running" || session.Goal.Status == "reconciling") {
 			// DSH restores durable goal state disarmed. Do not re-arm it merely
 			// because the platform host restarted.
 			goal := *session.Goal

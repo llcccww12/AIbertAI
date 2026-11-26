@@ -39,9 +39,9 @@ func (h *relaySessionHost) recoverDSHPromptSession(ctx context.Context, id strin
 		}
 	}
 	last := row.Turns[len(row.Turns)-1]
-	native := workspace && row.Goal == nil && (dshNativeRecoveryCandidate(last) || dshUnexecutedBash(last))
-	modelFailure := workspace && row.Goal == nil && dshPendingModelFailure(last)
-	stoppedTools := !native && !modelFailure && row.Goal == nil && dshStoppedToolsCandidate(last)
+	native := workspace && row.platformGoal() == nil && (dshNativeRecoveryCandidate(last) || dshUnexecutedBash(last))
+	modelFailure := workspace && row.platformGoal() == nil && dshPendingModelFailure(last)
+	stoppedTools := !native && !modelFailure && row.platformGoal() == nil && dshStoppedToolsCandidate(last)
 	if !last.Failed || last.DSHReconciled || !last.Acked ||
 		workspace && !native && !stoppedTools && !modelFailure && !dshRecoverableWorkspaceFailure(last.FailureCode) ||
 		!workspace && !stoppedTools && (!dshRecoverablePromptFailure(last.FailureCode) || len(last.ToolRuns) != 0) {
@@ -247,7 +247,7 @@ func dshWorkspaceRecoveryAvailable(row acpSession) bool {
 		return false
 	}
 	last := row.Turns[len(row.Turns)-1]
-	if row.Goal == nil && (dshPendingModelFailure(last) || dshStoppedToolsCandidate(last) || dshNativeRecoveryCandidate(last) || dshUnexecutedBash(last)) {
+	if row.platformGoal() == nil && (dshPendingModelFailure(last) || dshStoppedToolsCandidate(last) || dshNativeRecoveryCandidate(last) || dshUnexecutedBash(last)) {
 		return true
 	}
 	if !last.Failed || (last.DSHReconciled || last.DSHUserReviewed) || !last.Acked || !dshRecoverableWorkspaceFailure(last.FailureCode) || len(last.ToolRuns) == 0 {
