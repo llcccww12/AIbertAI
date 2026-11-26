@@ -79,15 +79,15 @@ func (h *relaySessionHost) settleStuckDSHModelTurn(ctx context.Context, id strin
 			Seq   int64  `json:"seq"`
 		}
 		if err != nil || json.Unmarshal(raw, &receipt) != nil || receipt.State != "failed" || receipt.Seq <= 0 {
-			// The SDK says the reply reached it; that is not an unknown outcome.
-			// Leave it to the committed-delivery repair so it is never charged 0.
+			// The SDK says the reply reached it. Repair the journal from the
+			// ledger when it can be proven; when it cannot, this still must not
+			// block the session forever.
 			if receipt.State == "committed" {
-				return fail
+				local.recoverCommittedDelivery(ctx, detached.DSHSessionID, record.CallID, receipt.Seq)
 			}
 			// Neither the SDK nor the ledger could prove the outcome. Once the
 			// release window has passed, stop blocking the employee: archive the
-			// call as unsettled so it is charged nothing and can still be
-			// repaired later from its receipt.
+			// call as unsettled, charged nothing, with its receipt kept on disk.
 			if unsettled, abandonErr := local.abandonUnsettled(record.CallID); abandonErr == nil {
 				code = unsettled
 				return nil

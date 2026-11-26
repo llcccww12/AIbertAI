@@ -77,7 +77,7 @@ func (h *relaySessionHost) sessionAgentTeam(ctx context.Context, raw json.RawMes
 		return nil, errors.New("configuration_conflict")
 	}
 	row = current
-	if l.restarting || l.compacting[row.ID] || row.State == "running" || l.activeTurns[row.ID] != nil || row.GoalRun != "" || row.Goal != nil && row.Goal.Current && row.Goal.Status == "active" {
+	if l.restarting || l.compacting[row.ID] || row.State == "running" || l.activeTurns[row.ID] != nil || desktopGoalAdvancing(row.Goal) {
 		l.mu.Unlock()
 		if args.Enabled == nil && row.AgentTeamEnabled != nil {
 			mode.Enabled = *row.AgentTeamEnabled

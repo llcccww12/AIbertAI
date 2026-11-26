@@ -164,19 +164,32 @@ func (g *dshLocalGateway) recoverCommittedDelivery(ctx context.Context, session,
 	if err != nil {
 		return
 	}
-	g.mu.Lock()
-	current := g.pending
-	g.mu.Unlock()
-	if current == nil || !reflect.DeepEqual(*current, record) {
-		return
-	}
 	// Keep the ledger's transaction on the repaired record: it is the only
 	// proof the charge belongs to this call once the record leaves pending.
 	transaction := record.Transaction
 	if transaction == "" {
 		transaction = receipt.TransactionID
 	}
-	g.markDelivered(current, record.Finish, record.Status, transaction)
+	g.markDeliveredIfCurrent(record, record.Finish, record.Status, transaction)
+}
+
+// markDeliveredIfCurrent repairs delivery only while the journal still holds
+// this exact call. Another goroutine may have settled or archived it while the
+// ledger was being read, and rewriting pending.json then would resurrect a
+// call that is already accounted for.
+func (g *dshLocalGateway) markDeliveredIfCurrent(record dshLocalRecord, finish string, status int, transaction string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.pending == nil || g.pending.CallID != record.CallID || g.pending.State != record.State || !reflect.DeepEqual(*g.pending, record) {
+		return false
+	}
+	next := *g.pending
+	next.State, next.Finish, next.Status, next.Transaction = "delivered", finish, status, transaction
+	if err := g.writePending(&next); err != nil {
+		return false
+	}
+	*g.pending = next
+	return true
 }
 
 // An HTTP status describes the transport, not whether the model was charged.
