@@ -186,13 +186,17 @@ export default function NativeReply({ message, sessionId, toolCalls, streaming, 
   const t = useMemo(() => translate(labels[locale]), [locale])
   const markdown = useMemo(() => markdownLabels(t), [t])
   const [expanded, setExpanded] = useState(false)
-  useEffect(() => { if (searchSelection) setExpanded(true) }, [searchSelection])
+  // A failed or stopped turn opens by default so the employee can see what
+  // happened, but once they fold it away it must stay folded: the default must
+  // not keep flipping it back open on every render.
+  const [folded, setFolded] = useState<boolean | undefined>(undefined)
+  useEffect(() => { if (searchSelection) { setExpanded(true); setFolded(undefined) } }, [searchSelection])
   const interrupted = message.interrupted || message.dshStopAccountingPending
   const reason = interrupted ? 'interrupted'
     : message.dshFailed || parts.some(p => p.type === 'error') ? 'error' : 'completed'
   const closed = completed || message.endedAt !== undefined && !streaming
   const teamT = useMemo(() => taskLabels(teamLabels[locale], locale, closed), [locale, closed])
-  const processOpen = !closed || reason !== 'completed' || expanded
+  const processOpen = folded ?? (!closed || reason !== 'completed' || expanded)
   const lastTool = parts.findLastIndex(part => part.type === 'tool_call')
   const processPart = (part, index) => part.type === 'thought' || part.type === 'tool_call'
     || part.type === 'text' && index < lastTool
@@ -259,7 +263,7 @@ export default function NativeReply({ message, sessionId, toolCalls, streaming, 
         node={{ location: { kind: 'turn', turn }, data: { turn: message.id,
           messageCount: partsOfType('text'), toolCallCount: partsOfType('tool_call'),
           subagentCount: parts.filter(p => toolCalls[p.toolCallId]?.name?.startsWith('subagent')).length } }}
-        turnProcess={{ foldable: true, hasContent: hasProcess, open: processOpen, setOpen: setExpanded }} t={t} />}
+        turnProcess={{ foldable: true, hasContent: hasProcess, open: processOpen, setOpen: setFolded }} t={t} />}
       {parts.map((part, index) => <Fragment key={part.toolCallId ?? index}>
         {injectionRows(index)}{memberNotices.get(index)}{renderPart(part, index)}
       </Fragment>)}
