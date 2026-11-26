@@ -17066,6 +17066,10 @@ function htmlAssetSegments(content) {
       const location = node.sourceCodeLocation?.attrs?.[attribute.name];
       if (location && (css || source2 || poster)) segments.push({ start: location.startOffset, end: location.endOffset, value: attribute.value, attribute: attribute.name, css });
     }
+    if (node.tagName === "link" && node.attrs.some((attr) => attr.name === "rel" && /(?:^|\s)stylesheet(?:\s|$)/i.test(attr.value))) {
+      const href = node.attrs.find((attr) => attr.name === "href"), location = node.sourceCodeLocation;
+      if (href && location) segments.push({ start: location.startOffset, end: location.endOffset, value: href.value, stylesheet: true });
+    }
     if (node.tagName === "style") for (const child of node.childNodes) {
       const location = child.sourceCodeLocation;
       if (child.nodeName === "#text" && location) segments.push({ start: location.startOffset, end: location.endOffset, value: content.slice(location.startOffset, location.endOffset), css: true });
@@ -17096,6 +17100,44 @@ function artifactAsset(entryPath, reference) {
     return void 0;
   }
 }
+// A url() inside a linked stylesheet is relative to the stylesheet. Rewrite it
+// relative to the page so artifactAsset applies the same task-root check.
+function stylesheetReference(entryPath, sheetPath, reference) {
+  if (!reference || reference.startsWith("#") || reference.startsWith("/") || /^[a-z][a-z0-9+.-]*:/i.test(reference)) return void 0;
+  try {
+    const target = new URL(reference, `https://artifact.invalid/${sheetPath.replace(/^\/+/, "")}`).pathname;
+    const base = new URL(`https://artifact.invalid/${entryPath.replace(/^\/+/, "")}`).pathname;
+    return require$$1$1.posix.relative(require$$1$1.posix.dirname(base), target) || void 0;
+  } catch {
+    return void 0;
+  }
+}
+// Canvas pages and captures render in srcdoc frames, which can only load
+// inline styles and data: fonts. Inline linked stylesheets and their assets.
+async function inlineStylesheets(entryPath, segments, read) {
+  const sheets = /* @__PURE__ */ new Map();
+  await Promise.all([...new Set(segments.filter((segment) => segment.stylesheet).map((segment) => segment.value))].map(async (href) => {
+    const sheetPath = artifactAsset(entryPath, href);
+    if (!sheetPath) return;
+    const sheet = await read(sheetPath).catch(() => void 0);
+    if (sheet?.kind !== "text" || typeof sheet.content !== "string") return;
+    const urls = /* @__PURE__ */ new Map();
+    mapCssAssets(sheet.content, (reference) => {
+      urls.set(reference, void 0);
+      return void 0;
+    });
+    await Promise.all([...urls.keys()].map(async (reference) => {
+      const relative = stylesheetReference(entryPath, sheetPath, reference);
+      const path = relative && artifactAsset(entryPath, relative);
+      if (!path) return;
+      const asset = await read(path).catch(() => void 0);
+      const url = asset?.kind === "image" ? asset.imageUrl : asset?.fontUrl;
+      if (url) urls.set(reference, url);
+    }));
+    sheets.set(href, `<style>${mapCssAssets(sheet.content, (reference) => urls.get(reference)).replace(/<\/style/gi, "<\\/style")}</style>`);
+  }));
+  return sheets;
+}
 async function hydrateHtmlAssets(entryPath, content, read, link) {
   const segments = htmlAssetSegments(content);
   const references = /* @__PURE__ */ new Set();
@@ -17105,9 +17147,10 @@ async function hydrateHtmlAssets(entryPath, content, read, link) {
   };
   for (const segment of segments) {
     if (segment.css) mapCssAssets(segment.value, collect);
-    else collect(segment.value);
+    else if (!segment.stylesheet) collect(segment.value);
   }
   const hydrated = /* @__PURE__ */ new Map();
+  const sheets = await inlineStylesheets(entryPath, segments, read);
   await Promise.all([...references].map(async (reference) => {
     const path = artifactAsset(entryPath, reference);
     if (!path) return;
@@ -17117,13 +17160,14 @@ async function hydrateHtmlAssets(entryPath, content, read, link) {
       return void 0;
     });
     if (asset?.kind === "image" && asset.imageUrl) hydrated.set(reference, asset.imageUrl);
+    else if (asset?.fontUrl) hydrated.set(reference, asset.fontUrl);
     else if (isImage && asset?.kind === "unavailable" && asset.reason === "too_large" && link) ;
     else if (isImage) throw new Error(`图片资源不可用（${asset?.reason ?? "unavailable"}）：${path}`);
   }));
   const output = [];
   let cursor2 = 0;
   for (const segment of segments) {
-    const value = segment.css ? mapCssAssets(segment.value, (reference) => hydrated.get(reference)) : hydrated.get(segment.value);
+    const value = segment.stylesheet ? sheets.get(segment.value) : segment.css ? mapCssAssets(segment.value, (reference) => hydrated.get(reference)) : hydrated.get(segment.value);
     if (value === void 0 || value === segment.value || segment.start < cursor2) continue;
     output.push(content.slice(cursor2, segment.start), segment.attribute ? `${segment.attribute}="${attributeValue(value)}"` : value);
     cursor2 = segment.end;
@@ -18118,7 +18162,16 @@ function canonicalDesignPath(value) {
   return value.replace(/^\.monkeyai(?=[\\/]|$)/, ".aibertai");
 }
 function resolveDesignWorkspaceFile(workspace, sourcePath) {
-  const relative = require$$1$1.relative(workspace, require$$1$1.resolve(workspace, sourcePath));
+  let absolute = require$$1$1.resolve(workspace, sourcePath);
+  // Callers pass the resolved workspace; an absolute path through a symlink
+  // (/tmp -> /private/tmp) must be resolved the same way. The file itself is
+  // left unresolved so callers can still refuse symlinked files.
+  if (require$$1$1.isAbsolute(sourcePath)) {
+    try {
+      absolute = require$$1$1.join(node_fs.realpathSync(require$$1$1.dirname(absolute)), require$$1$1.basename(absolute));
+    } catch {}
+  }
+  const relative = require$$1$1.relative(workspace, absolute);
   return require$$1$1.resolve(workspace, canonicalDesignPath(relative));
 }
 class CanvasStore {
@@ -18165,13 +18218,14 @@ class CanvasStore {
     if (typeof sourcePath !== "string" || !sourcePath || sourcePath.includes("\0")) fail$2("invalid_canvas_image_source");
     const workspace = node_fs.realpathSync(input.workspace);
     const requested = resolveDesignWorkspaceFile(workspace, sourcePath);
-    if (!inside$2(workspace, requested)) fail$2("invalid_canvas_image_source");
-    const requestedStat = node_fs.lstatSync(requested);
-    if (requestedStat.isSymbolicLink() || !requestedStat.isFile()) fail$2("invalid_canvas_image_source");
+    if (!inside$2(workspace, requested)) fail$2("canvas_image_source_outside_workspace");
+    const requestedStat = node_fs.lstatSync(requested, { throwIfNoEntry: false });
+    if (!requestedStat) fail$2("canvas_image_source_missing");
+    if (requestedStat.isSymbolicLink() || !requestedStat.isFile()) fail$2("canvas_image_source_not_regular_file");
     const source2 = node_fs.realpathSync(requested);
-    if (!inside$2(workspace, source2)) fail$2("invalid_canvas_image_source");
+    if (!inside$2(workspace, source2)) fail$2("canvas_image_source_outside_workspace");
     const extension2 = require$$1$1.extname(source2).toLowerCase();
-    if (!IMAGE_EXTENSIONS.has(extension2)) fail$2("invalid_canvas_image_source");
+    if (!IMAGE_EXTENSIONS.has(extension2)) fail$2("canvas_image_source_unsupported_type");
     const root = this.root(input.workspace, input.canvasId);
     const name = `${require$$2.randomUUID()}${extension2}`;
     const destination = require$$1$1.join(root, "assets", "images", name);
@@ -18218,13 +18272,15 @@ class CanvasStore {
     if (typeof sourcePath !== "string" || !sourcePath || sourcePath.includes("\0")) fail$2("invalid_canvas_artifact_asset");
     const workspace = node_fs.realpathSync(input.workspace);
     const requested = resolveDesignWorkspaceFile(workspace, sourcePath);
-    if (!inside$2(workspace, requested) || !node_fs.existsSync(requested)) fail$2("invalid_canvas_artifact_asset");
-    const requestedStat = node_fs.lstatSync(requested);
-    if (requestedStat.isSymbolicLink() || !requestedStat.isFile()) fail$2("invalid_canvas_artifact_asset");
+    if (!inside$2(workspace, requested)) fail$2("canvas_artifact_asset_outside_workspace");
+    if (!node_fs.existsSync(requested)) fail$2("canvas_artifact_asset_missing");
+    const requestedStat = node_fs.lstatSync(requested, { throwIfNoEntry: false });
+    if (!requestedStat) fail$2("canvas_artifact_asset_missing");
+    if (requestedStat.isSymbolicLink() || !requestedStat.isFile()) fail$2("canvas_artifact_asset_not_regular_file");
     const source2 = node_fs.realpathSync(requested);
-    if (!inside$2(workspace, source2)) fail$2("invalid_canvas_artifact_asset");
+    if (!inside$2(workspace, source2)) fail$2("canvas_artifact_asset_outside_workspace");
     const extension2 = require$$1$1.extname(source2).toLowerCase();
-    if (!ARTIFACT_ASSET_EXTENSIONS.has(extension2)) fail$2("invalid_canvas_artifact_asset");
+    if (!ARTIFACT_ASSET_EXTENSIONS.has(extension2)) fail$2("canvas_artifact_asset_unsupported_type");
     // DSH digests every artifact file and rejects any over 8 MiB, which would
     // break every later canvas tool. Refuse the copy up front instead.
     if (requestedStat.size > 8 * 1024 * 1024) fail$2("canvas_artifact_asset_too_large");
@@ -25458,6 +25514,15 @@ function readWorkspacePreview(cwd, path) {
   if (extension2 === ".html" || extension2 === ".htm") {
     if (stat.size > MAX_HTML_BYTES) return unavailable("too_large");
     return { path, kind: "html", content: node_fs.readFileSync(real, "utf8") };
+  }
+  if (extension2 === ".css") {
+    if (stat.size > MAX_HTML_BYTES) return unavailable("too_large");
+    return { path, kind: "text", content: node_fs.readFileSync(real, "utf8") };
+  }
+  const font = { ".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf", ".otf": "font/otf" }[extension2];
+  if (font) {
+    if (stat.size > 4 * 1024 * 1024) return unavailable("too_large");
+    return { ...unavailable("binary"), fontUrl: `data:${font};base64,${node_fs.readFileSync(real).toString("base64")}` };
   }
   const type = IMAGE_TYPES[extension2];
   if (!type) return unavailable("binary");
@@ -52976,15 +53041,25 @@ function createPrivateCatalog(origin) {
         if (!CANVAS_TOOLS.some((definition) => definition.name === name)) throw new Error("invalid_design_model_tool");
         if (!saved) throw new Error("not_a_design_session");
         workspace.sessions.created(sessionId, cwd, saved);
-        const summary = (node) => ({
+        const summary = (node, textLimit = 1600) => ({
           id: node.id, type: node.type, title: node.title?.slice(0, 160),
           x: node.x, y: node.y, width: node.width, height: node.height,
-          ...(node.type === "text" ? { content: node.content?.slice(0, 1600), textRole: node.textRole } : {}),
+          ...(node.type === "text" ? { content: node.content?.slice(0, textLimit), textRole: node.textRole } : {}),
           ...(node.type === "html" ? {
             entry: node.entry, draft: Boolean(node.draft), empty: Boolean(node.empty), slideIndex: node.slideIndex,
             artifact_path: `${saved.localDesignPath}/${node.entry}`
           } : {})
         });
+        // Results over 48 KiB are refused by the host. Long CJK text nodes get
+        // there quickly, so shorten text excerpts until the summaries fit.
+        const summaries = (nodes) => {
+          for (const limit of [1600, 400, 120]) {
+            const list = nodes.map((node) => summary(node, limit));
+            if (limit === 120 || Buffer.byteLength(JSON.stringify(list)) <= 36 * 1024) {
+              return limit === 1600 ? { nodes: list } : { nodes: list, textTruncated: true };
+            }
+          }
+        };
         if (guarded && name === "canvas_create_image") {
           const location = await workspace.canvas.location(sessionId);
           const store = workspace.canvas.canvases;
@@ -53052,9 +53127,9 @@ function createPrivateCatalog(origin) {
                 const cached = node_fs.lstatSync(require$$1$1.join(folder, `${node.id}-${stamp}.png`), { throwIfNoEntry: false });
                 if (!cached || cached.isSymbolicLink() || !cached.isFile()) throw new Error("canvas_guard_selection_unsupported");
               }
-              return { nodes: nodes.slice(0, 20).map(summary), totalNodes: nodes.length };
+              return { ...summaries(nodes.slice(0, 20)), totalNodes: nodes.length };
             }
-            const result = { id: document.id, revision: document.revision ?? 0, nodes: document.nodes.slice(0, 25).map(summary), totalNodes: document.nodes.length };
+            const result = { id: document.id, revision: document.revision ?? 0, ...summaries(document.nodes.slice(0, 25)), totalNodes: document.nodes.length };
             if (saved.designType === "slide_deck") {
               const slides = document.nodes.filter((node) => node.type === "html" && node.slideIndex !== void 0 && !node.hidden);
               result.slideCount = slides.length;
@@ -53065,7 +53140,7 @@ function createPrivateCatalog(origin) {
         }
         if (name === "canvas_get_selection") {
           const selection = await workspace.canvas.getSelection(sessionId, { readRuntimeInput: false, nodeIds: input.node_ids });
-          return { nodes: selection.nodes.slice(0, 20).map(summary), totalNodes: selection.nodes.length };
+          return { ...summaries(selection.nodes.slice(0, 20)), totalNodes: selection.nodes.length };
         }
         if (name === "canvas_prepare_pptx") {
           const { manifestPath, slideCount } = await canvasCommandContext.run(
@@ -53091,7 +53166,7 @@ function createPrivateCatalog(origin) {
           const { id, revision, nodes } = document;
           result.revision = revision;
           if (name === "canvas_get_document" || name === "canvas_update_node" || name === "canvas_delete_node") {
-            result.document = { id, revision, nodes: nodes.slice(0, 25).map(summary), totalNodes: nodes.length };
+            result.document = { id, revision, ...summaries(nodes.slice(0, 25)), totalNodes: nodes.length };
             if (name === "canvas_get_document" && saved.designType === "slide_deck") {
               const slides = nodes.filter((node2) => node2.type === "html" && node2.slideIndex !== void 0 && !node2.hidden);
               result.document.slideCount = slides.length;

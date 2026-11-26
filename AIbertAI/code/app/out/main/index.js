@@ -17905,7 +17905,9 @@ function externalHtmlPreviewPolicy(content) {
 function htmlPreviewPolicy(resources, rendering) {
   const policy = resources ? RESOURCE_POLICY : HTML_PREVIEW_POLICY;
   const local = policy.replaceAll(" https:", "").replace(WORKSPACE_IMAGE_CSP_SOURCES, "http://127.0.0.1:*/_aibertai/workspace/file");
-  return rendering ? local.replace("frame-src 'none'", "frame-src about:") : local;
+  if (!rendering) return local;
+  // Captures must match the canvas, which shows https images and video.
+  return local.replace("frame-src 'none'", "frame-src about:").replace(/(img-src|media-src) ([^;]*)/g, "$1 $2 https:");
 }
 class HtmlPreviewPages {
   pages = /* @__PURE__ */ new Map();
