@@ -48,8 +48,14 @@ export default function EmployeeJobs({ sessionId, request, language }) {
         return () => { stop(); model.observeStopped(jobId) }
       },
       killJob: async (_, jobId) => {
-        const { result } = await request({ sessionId, action: 'kill', jobId })
-        return result === 'requested' || result === 'already-finished'
+        // A rejected request must answer, not vanish: the caller keeps the
+        // button disabled until this promise settles.
+        try {
+          const { result } = await request({ sessionId, action: 'kill', jobId })
+          return result === 'requested' || result === 'already-finished'
+        } catch {
+          return false
+        }
       },
     }
   }, [request, sessionId])

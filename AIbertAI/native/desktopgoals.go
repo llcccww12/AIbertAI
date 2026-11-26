@@ -220,7 +220,12 @@ func (l *acpLive) saveGoalAction(raw json.RawMessage, background bool) (any, err
 	default:
 		return nil, errors.New("invalid_goal_action")
 	}
-	if background && (p.Action == "create" || p.Action == "resume") && row.GoalRun == "" {
+	// A resumed goal must take a fresh attempt id. Keeping the id of the turn
+	// that failed makes the runtime's prompt look like a retry of that finished
+	// turn, which sends no model request at all: the goal shows active and never
+	// advances. Only hold on to the id while a turn is genuinely still running.
+	if background && (p.Action == "create" || p.Action == "resume") &&
+		(row.GoalRun == "" || p.Action == "resume" && l.activeTurns[row.ID] == nil) {
 		row.GoalRun = p.RequestID
 	}
 	next.Version++

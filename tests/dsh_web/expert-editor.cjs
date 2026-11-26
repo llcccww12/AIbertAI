@@ -14,7 +14,7 @@ async function run() {
   }));
   const expertName = '画布插件验收专家';
   const editor = page.locator('.expert-dialog');
-  const pluginsDefault = editor.getByRole('checkbox', { name: '使用 DSH 默认组合' });
+  const pluginsDefault = editor.getByRole('checkbox', { name: '使用默认组合' });
   const canvasDefault = editor.getByRole('checkbox', { name: '沿用专家默认画布工具' });
   const pluginsTab = editor.getByRole('tab', { name: /^插件/ });
   const canvasTab = editor.getByRole('tab', { name: /^画布/ });
@@ -49,7 +49,7 @@ async function run() {
     assert.equal(input.canvas_tools, null);
 
     await reopen();
-    assert.equal(await editor.getByRole('group', { name: 'DSH 会话插件' }).getByRole('checkbox').count(), 20);
+    assert.equal(await editor.getByRole('group', { name: '会话插件' }).getByRole('checkbox').count(), 20);
     const fs = editor.getByRole('checkbox', { name: /文件读写/ });
     await fs.click();
     assert.equal(await pluginsDefault.getAttribute('aria-checked'), 'false');

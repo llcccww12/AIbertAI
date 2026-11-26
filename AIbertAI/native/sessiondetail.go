@@ -61,10 +61,21 @@ func (h *relaySessionHost) sessionState(id string) (map[string]any, error) {
 func (l *acpLive) cancelTurn(id string) bool {
 	l.mu.Lock()
 	cancel := l.activeTurns[id]
-	l.mu.Unlock()
 	if cancel == nil {
-		return false
+		// A cancelled goal run may have left its turn unfinished. Nothing is
+		// running, so answer the stop key by closing that turn rather than
+		// reporting an unconfirmed stop for the rest of the session.
+		row, ok := l.sessions[id]
+		if !ok || row.State != "running" {
+			l.mu.Unlock()
+			return false
+		}
+		closed := l.closeInterruptedTurn(row)
+		err := l.save(closed)
+		l.mu.Unlock()
+		return err == nil
 	}
+	l.mu.Unlock()
 	cancel()
 	return true
 }
