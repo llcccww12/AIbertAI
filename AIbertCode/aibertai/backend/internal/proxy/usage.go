@@ -90,6 +90,12 @@ type usageCapture struct {
 	parseErrorOffset int64
 	parseEvent       string
 	eventType        string
+	// Chat Completions streams end at "data: [DONE]". Some upstreams keep
+	// the connection open long after it, which held the client and the
+	// usage record open with it; the stream is cut after [DONE]'s event.
+	line     []byte
+	sawDone  bool
+	finished bool
 }
 
 var _ io.ReadCloser = (*usageCapture)(nil)
@@ -566,7 +572,15 @@ func (c *usageCapture) Close() error {
 }
 
 func (c *usageCapture) Read(buffer []byte) (int, error) {
+	if c.finished {
+		return 0, io.EOF
+	}
 	n, err := c.src.Read(buffer)
+	if n > 0 && c.ctx.stream && c.ctx.path == "/v1/chat/completions" && (c.ctx.encoding == "" || strings.EqualFold(c.ctx.encoding, "identity")) {
+		if end := c.doneEnd(buffer[:n]); end >= 0 {
+			n, err, c.finished = end, io.EOF, true
+		}
+	}
 	if n > 0 && !c.copyFailed {
 		if _, writeErr := c.writer.Write(bytes.Clone(buffer[:n])); writeErr != nil {
 			c.copyFailed = true
@@ -581,6 +595,28 @@ func (c *usageCapture) Read(buffer []byte) (int, error) {
 		}
 	}
 	return n, err
+}
+
+// doneEnd returns the length of chunk up to and including the blank line that
+// ends the "data: [DONE]" event, or -1 while that event is not complete.
+func (c *usageCapture) doneEnd(chunk []byte) int {
+	for i, b := range chunk {
+		if b != '\n' {
+			if len(c.line) < 64 {
+				c.line = append(c.line, b)
+			}
+			continue
+		}
+		line := strings.TrimSpace(string(c.line))
+		c.line = c.line[:0]
+		if c.sawDone && line == "" {
+			return i + 1
+		}
+		if value, ok := strings.CutPrefix(line, "data:"); ok && strings.TrimSpace(value) == "[DONE]" {
+			c.sawDone = true
+		}
+	}
+	return -1
 }
 
 type openAIResponseEvent struct {
