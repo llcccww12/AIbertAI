@@ -116,9 +116,11 @@ for key in ("ElectronAsarIntegrity", "CFBundleURLTypes"):
 d.update(CFBundleExecutable="AIbertAI", CFBundleIdentifier=bundle_id,
          CFBundleName=name, CFBundleDisplayName=display,
          CFBundleIconFile="AIbertAI.icns")
+# The version the employee sees must match the update feed for both build
+# kinds; Electron's own 44.x would otherwise ship as the app version.
+version = json.loads(Path(package).read_text())["version"]
+d.update(CFBundleShortVersionString=version, CFBundleVersion=version)
 if release == "true":
-    version = json.loads(Path(package).read_text())["version"]
-    d.update(CFBundleShortVersionString=version, CFBundleVersion=version)
     for helper in (app / "Contents/Frameworks").glob("*.app/Contents/Info.plist"):
         info = plistlib.loads(helper.read_bytes())
         helper_name = helper.parents[1].stem
