@@ -17066,6 +17066,10 @@ function htmlAssetSegments(content) {
       const location = node.sourceCodeLocation?.attrs?.[attribute.name];
       if (location && (css || source2 || poster)) segments.push({ start: location.startOffset, end: location.endOffset, value: attribute.value, attribute: attribute.name, css });
     }
+    if (node.tagName === "link" && node.attrs.some((attr) => attr.name === "rel" && /(?:^|\s)stylesheet(?:\s|$)/i.test(attr.value))) {
+      const href = node.attrs.find((attr) => attr.name === "href"), location = node.sourceCodeLocation;
+      if (href && location) segments.push({ start: location.startOffset, end: location.endOffset, value: href.value, stylesheet: true });
+    }
     if (node.tagName === "style") for (const child of node.childNodes) {
       const location = child.sourceCodeLocation;
       if (child.nodeName === "#text" && location) segments.push({ start: location.startOffset, end: location.endOffset, value: content.slice(location.startOffset, location.endOffset), css: true });
@@ -17096,6 +17100,44 @@ function artifactAsset(entryPath, reference) {
     return void 0;
   }
 }
+// A url() inside a linked stylesheet is relative to the stylesheet. Rewrite it
+// relative to the page so artifactAsset applies the same task-root check.
+function stylesheetReference(entryPath, sheetPath, reference) {
+  if (!reference || reference.startsWith("#") || reference.startsWith("/") || /^[a-z][a-z0-9+.-]*:/i.test(reference)) return void 0;
+  try {
+    const target = new URL(reference, `https://artifact.invalid/${sheetPath.replace(/^\/+/, "")}`).pathname;
+    const base = new URL(`https://artifact.invalid/${entryPath.replace(/^\/+/, "")}`).pathname;
+    return require$$1$1.posix.relative(require$$1$1.posix.dirname(base), target) || void 0;
+  } catch {
+    return void 0;
+  }
+}
+// Canvas pages and captures render in srcdoc frames, which can only load
+// inline styles and data: fonts. Inline linked stylesheets and their assets.
+async function inlineStylesheets(entryPath, segments, read) {
+  const sheets = /* @__PURE__ */ new Map();
+  await Promise.all([...new Set(segments.filter((segment) => segment.stylesheet).map((segment) => segment.value))].map(async (href) => {
+    const sheetPath = artifactAsset(entryPath, href);
+    if (!sheetPath) return;
+    const sheet = await read(sheetPath).catch(() => void 0);
+    if (sheet?.kind !== "text" || typeof sheet.content !== "string") return;
+    const urls = /* @__PURE__ */ new Map();
+    mapCssAssets(sheet.content, (reference) => {
+      urls.set(reference, void 0);
+      return void 0;
+    });
+    await Promise.all([...urls.keys()].map(async (reference) => {
+      const relative = stylesheetReference(entryPath, sheetPath, reference);
+      const path = relative && artifactAsset(entryPath, relative);
+      if (!path) return;
+      const asset = await read(path).catch(() => void 0);
+      const url = asset?.kind === "image" ? asset.imageUrl : asset?.fontUrl;
+      if (url) urls.set(reference, url);
+    }));
+    sheets.set(href, `<style>${mapCssAssets(sheet.content, (reference) => urls.get(reference)).replace(/<\/style/gi, "<\\/style")}</style>`);
+  }));
+  return sheets;
+}
 async function hydrateHtmlAssets(entryPath, content, read, link) {
   const segments = htmlAssetSegments(content);
   const references = /* @__PURE__ */ new Set();
@@ -17105,9 +17147,10 @@ async function hydrateHtmlAssets(entryPath, content, read, link) {
   };
   for (const segment of segments) {
     if (segment.css) mapCssAssets(segment.value, collect);
-    else collect(segment.value);
+    else if (!segment.stylesheet) collect(segment.value);
   }
   const hydrated = /* @__PURE__ */ new Map();
+  const sheets = await inlineStylesheets(entryPath, segments, read);
   await Promise.all([...references].map(async (reference) => {
     const path = artifactAsset(entryPath, reference);
     if (!path) return;
@@ -17117,13 +17160,14 @@ async function hydrateHtmlAssets(entryPath, content, read, link) {
       return void 0;
     });
     if (asset?.kind === "image" && asset.imageUrl) hydrated.set(reference, asset.imageUrl);
+    else if (asset?.fontUrl) hydrated.set(reference, asset.fontUrl);
     else if (isImage && asset?.kind === "unavailable" && asset.reason === "too_large" && link) ;
     else if (isImage) throw new Error(`图片资源不可用（${asset?.reason ?? "unavailable"}）：${path}`);
   }));
   const output = [];
   let cursor2 = 0;
   for (const segment of segments) {
-    const value = segment.css ? mapCssAssets(segment.value, (reference) => hydrated.get(reference)) : hydrated.get(segment.value);
+    const value = segment.stylesheet ? sheets.get(segment.value) : segment.css ? mapCssAssets(segment.value, (reference) => hydrated.get(reference)) : hydrated.get(segment.value);
     if (value === void 0 || value === segment.value || segment.start < cursor2) continue;
     output.push(content.slice(cursor2, segment.start), segment.attribute ? `${segment.attribute}="${attributeValue(value)}"` : value);
     cursor2 = segment.end;
@@ -17182,6 +17226,8 @@ const ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
 const MAX_COMPOSITE_ERROR_LENGTH = 2e4;
 const COMMON_PATCH_KEYS = /* @__PURE__ */ new Set(["type", "x", "y", "width", "height", "zIndex", "title", "locked", "hidden", "groupId"]);
 const IMAGE_EXTENSIONS = /* @__PURE__ */ new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"]);
+// Pages may also ship their own web fonts next to their images.
+const ARTIFACT_ASSET_EXTENSIONS = /* @__PURE__ */ new Set([...IMAGE_EXTENSIONS, ".woff2", ".woff", ".ttf", ".otf"]);
 const VIDEO_EXTENSIONS = /* @__PURE__ */ new Set([".mp4", ".webm"]);
 const AUDIO_EXTENSIONS = /* @__PURE__ */ new Set([".mp3", ".wav", ".m4a"]);
 const MEDIA_PROJECT_EFFECT_KINDS = /* @__PURE__ */ new Set(["brightness", "contrast", "saturation", "warm", "cool", "vintage", "mono", "invert", "blur", "sharpen", "grain", "vignette", "glow", "motion-blur", "radial-blur", "chromatic", "shadow"]);
@@ -18116,7 +18162,16 @@ function canonicalDesignPath(value) {
   return value.replace(/^\.monkeyai(?=[\\/]|$)/, ".aibertai");
 }
 function resolveDesignWorkspaceFile(workspace, sourcePath) {
-  const relative = require$$1$1.relative(workspace, require$$1$1.resolve(workspace, sourcePath));
+  let absolute = require$$1$1.resolve(workspace, sourcePath);
+  // Callers pass the resolved workspace; an absolute path through a symlink
+  // (/tmp -> /private/tmp) must be resolved the same way. The file itself is
+  // left unresolved so callers can still refuse symlinked files.
+  if (require$$1$1.isAbsolute(sourcePath)) {
+    try {
+      absolute = require$$1$1.join(node_fs.realpathSync(require$$1$1.dirname(absolute)), require$$1$1.basename(absolute));
+    } catch {}
+  }
+  const relative = require$$1$1.relative(workspace, absolute);
   return require$$1$1.resolve(workspace, canonicalDesignPath(relative));
 }
 class CanvasStore {
@@ -18163,13 +18218,14 @@ class CanvasStore {
     if (typeof sourcePath !== "string" || !sourcePath || sourcePath.includes("\0")) fail$2("invalid_canvas_image_source");
     const workspace = node_fs.realpathSync(input.workspace);
     const requested = resolveDesignWorkspaceFile(workspace, sourcePath);
-    if (!inside$2(workspace, requested)) fail$2("invalid_canvas_image_source");
-    const requestedStat = node_fs.lstatSync(requested);
-    if (requestedStat.isSymbolicLink() || !requestedStat.isFile()) fail$2("invalid_canvas_image_source");
+    if (!inside$2(workspace, requested)) fail$2("canvas_image_source_outside_workspace");
+    const requestedStat = node_fs.lstatSync(requested, { throwIfNoEntry: false });
+    if (!requestedStat) fail$2("canvas_image_source_missing");
+    if (requestedStat.isSymbolicLink() || !requestedStat.isFile()) fail$2("canvas_image_source_not_regular_file");
     const source2 = node_fs.realpathSync(requested);
-    if (!inside$2(workspace, source2)) fail$2("invalid_canvas_image_source");
+    if (!inside$2(workspace, source2)) fail$2("canvas_image_source_outside_workspace");
     const extension2 = require$$1$1.extname(source2).toLowerCase();
-    if (!IMAGE_EXTENSIONS.has(extension2)) fail$2("invalid_canvas_image_source");
+    if (!IMAGE_EXTENSIONS.has(extension2)) fail$2("canvas_image_source_unsupported_type");
     const root = this.root(input.workspace, input.canvasId);
     const name = `${require$$2.randomUUID()}${extension2}`;
     const destination = require$$1$1.join(root, "assets", "images", name);
@@ -18216,13 +18272,18 @@ class CanvasStore {
     if (typeof sourcePath !== "string" || !sourcePath || sourcePath.includes("\0")) fail$2("invalid_canvas_artifact_asset");
     const workspace = node_fs.realpathSync(input.workspace);
     const requested = resolveDesignWorkspaceFile(workspace, sourcePath);
-    if (!inside$2(workspace, requested) || !node_fs.existsSync(requested)) fail$2("invalid_canvas_artifact_asset");
-    const requestedStat = node_fs.lstatSync(requested);
-    if (requestedStat.isSymbolicLink() || !requestedStat.isFile()) fail$2("invalid_canvas_artifact_asset");
+    if (!inside$2(workspace, requested)) fail$2("canvas_artifact_asset_outside_workspace");
+    if (!node_fs.existsSync(requested)) fail$2("canvas_artifact_asset_missing");
+    const requestedStat = node_fs.lstatSync(requested, { throwIfNoEntry: false });
+    if (!requestedStat) fail$2("canvas_artifact_asset_missing");
+    if (requestedStat.isSymbolicLink() || !requestedStat.isFile()) fail$2("canvas_artifact_asset_not_regular_file");
     const source2 = node_fs.realpathSync(requested);
-    if (!inside$2(workspace, source2)) fail$2("invalid_canvas_artifact_asset");
+    if (!inside$2(workspace, source2)) fail$2("canvas_artifact_asset_outside_workspace");
     const extension2 = require$$1$1.extname(source2).toLowerCase();
-    if (!IMAGE_EXTENSIONS.has(extension2)) fail$2("invalid_canvas_artifact_asset");
+    if (!ARTIFACT_ASSET_EXTENSIONS.has(extension2)) fail$2("canvas_artifact_asset_unsupported_type");
+    // DSH digests every artifact file and rejects any over 8 MiB, which would
+    // break every later canvas tool. Refuse the copy up front instead.
+    if (requestedStat.size > 8 * 1024 * 1024) fail$2("canvas_artifact_asset_too_large");
     const artifact = this.createHtmlArtifact(input, nodeId);
     const assets = require$$1$1.join(artifact, "assets");
     ensureDirectory(assets);
@@ -21131,7 +21192,7 @@ class DesignCanvasService {
       if (node.type !== "html") throw new CanvasError("canvas_node_type_mismatch");
       if (node.locked) throw new CanvasError("canvas_node_locked");
       const absolute = this.canvases.htmlArtifactAsset(location, nodeId, assetPath);
-      return require$$1$1.relative(location.workspace, absolute).split(require$$1$1.sep).join("/");
+      return require$$1$1.relative(node_fs.realpathSync(location.workspace), absolute).split(require$$1$1.sep).join("/");
     });
   }
   async replaceHtmlImage(sessionId, nodeId, assetPath, sourcePath) {
@@ -23106,7 +23167,7 @@ const CANVAS_TOOLS = [
   { name: "design_await_style_choice", description: "等待用户选择或跳过设计风格；选择完成后读取返回的工作区相对路径 stylePath，并在同一轮继续。", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
   { name: "canvas_create_html", description: CREATE_HTML_DESCRIPTION + CREATE_SLIDE_DESCRIPTION, inputSchema: { type: "object", properties: { title: { type: "string" }, x: { type: "number" }, y: { type: "number" }, width: { type: "number", exclusiveMinimum: 0 }, height: { type: "number", exclusiveMinimum: 0 }, pass_through: { type: "boolean" }, slide_index: { type: "integer", minimum: 1, description: "演示文稿页序，从 1 开始且唯一。传入后画布按页码横向排页，该画布即可按此页序导出 PPTX；普通网页原型与海报请省略。" }, style_source: { type: "string", enum: ["inherited"], description: "仅用于 edit-existing-deck，表示页面继承源 PPTX 的已验证 DESIGN.md。" } }, additionalProperties: false } },
   { name: "canvas_create_text", description: "创建可编辑的备忘、剧本或分镜文本节点。已有选中文本时用 canvas_update_node 原位修改，不新建副本。content 使用 Markdown；新建分镜等下游文稿时传 source_node_id，自动沿用来源文本的尺寸和字号并记录正文快照，避免固定小卡片在缩放后不可读；传 text_role=storyboard 可在同一次创建中原子保存本镜正文、角色与来源，按镜增量写回，不先写整份工作稿。传 source_node_id 时应省略 x/y，由 Host 在来源右侧按固定三列网格排列；placement_node_id 可指定当前视觉设定等触发文稿，来源关联仍由 source_node_id 决定。", inputSchema: { type: "object", properties: { title: { type: "string" }, content: { type: "string", maxLength: 2e4 }, text_role: { type: "string", enum: [...textRoles], description: "本次创建的文稿角色，默认 note。分镜传 storyboard，与正文和来源一起原子保存。" }, source_node_id: { type: "string", description: "来源文本节点 ID。未显式指定的宽高及文字样式继承来源，并记录 sourceNodeId/sourceContent。" }, placement_node_id: placementNodeSchema, x: { type: "number" }, y: { type: "number" }, width: { type: "number", exclusiveMinimum: 0 }, height: { type: "number", exclusiveMinimum: 0 } }, anyOf: [{ required: ["source_node_id"] }, { required: ["x", "y"] }], additionalProperties: false } },
-  { name: "canvas_add_artifact_asset", description: "把工作区内已有图片安全复制到指定 HTML Artifact，并返回可直接写入 HTML/CSS 的相对路径。", inputSchema: { type: "object", properties: { node_id: { type: "string" }, source_path: { type: "string" } }, required: ["node_id", "source_path"], additionalProperties: false } },
+  { name: "canvas_add_artifact_asset", description: "把工作区内已有图片或字体（.woff2/.woff/.ttf/.otf）安全复制到指定 HTML Artifact，并返回可直接写入 HTML/CSS 的相对路径。模板自带的字体不要复制，直接引用模板的 __catalog_fonts/fonts.css。", inputSchema: { type: "object", properties: { node_id: { type: "string" }, source_path: { type: "string" } }, required: ["node_id", "source_path"], additionalProperties: false } },
   { name: "canvas_commit_html", description: "验证 HTML 节点的 index.html 并提交到画布。" + HTML_ARTIFACT_SIZE_HINT, inputSchema: { type: "object", properties: { node_id: { type: "string" }, allow_duplicate: { type: "boolean", description: "仅当用户明确要求完全重复页面时设为 true。" } }, required: ["node_id"], additionalProperties: false } },
   { name: "canvas_prepare_pptx", description: "依据当前设计画布中按 slide_index 排序的 HTML 页面生成可编辑 PPTX 导出清单，返回 manifest_path 和页数；画布上没有页序页面时拒绝。", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
   { name: "canvas_capture_preview", description: "使用真实隔离 Renderer 截取节点。网页原型和 PPTX 不传 include_node_ids。backend=desktop（默认）使用客户端隔离窗口；backend=browser 使用设备上已安装的独立无头 Chrome/Edge（Win7 兼容版不支持），可在默认通道故障时对比截图，不会自动回到默认通道。include_node_ids 用于图片设计的多素材合成，支持独立底图、真实文字层、Logo、产品图或吉祥物等图片，无文字时不需要空 HTML 层；会创建标题为「合成海报」的独立图片节点；prototype 与 slide_deck 会话传入 include_node_ids 会被拒绝。layout_mode=current 保留当前坐标、旋转、翻转、裁剪和透明度；layout_mode=align 以图片容器为基准把所有层拉成相同尺寸，只适合同尺寸整层重叠；多个独立尺寸素材使用 current，不用 align 拉满小 Logo、产品图或吉祥物。同一组参数失败后最多重试一次；再次失败应报告错误并停止，不得连续盲目重试。", inputSchema: { type: "object", properties: { backend: { type: "string", enum: ["desktop", "browser"] }, node_id: { type: "string" }, include_node_ids: { type: "array", maxItems: 31, items: { type: "string" } }, layout_mode: { type: "string", enum: ["current", "align"] } }, required: ["node_id"], additionalProperties: false } },
@@ -25088,7 +25149,7 @@ class MediaService {
       }
       await this.ensureImageProcessing();
       const dimensions = await imageDimensions(image.data);
-      return { source_path: checkpoint.sourcePath, ...(canvasCommandContext.getStore()?.expectedRevision !== void 0 ? { source_sha256: checkpoint.sha256 } : {}), mime_type: checkpoint.mimeType, bytes: checkpoint.bytes, model, provider_model: providerModel, ...dimensions, ..."revisedPrompt" in image && image.revisedPrompt ? { revised_prompt: image.revisedPrompt } : {}, ...task2 ? { task_id: task2.id } : {} };
+      return { source_path: checkpoint.sourcePath, source_sha256: checkpoint.sha256, mime_type: checkpoint.mimeType, bytes: checkpoint.bytes, model, provider_model: providerModel, ...dimensions, ..."revisedPrompt" in image && image.revisedPrompt ? { revised_prompt: image.revisedPrompt } : {}, ...task2 ? { task_id: task2.id } : {} };
     } catch (error) {
       const failure = imageCapabilityFailure(error);
       if (failure) throw new ImageCapabilityError({ ...failure, ...submitted === void 0 ? {} : { submitted }, ...task2 ? { submitted: true, task_id: task2.id } : {}, ...checkpoint ? { source_path: checkpoint.sourcePath } : {} }, error);
@@ -25453,6 +25514,15 @@ function readWorkspacePreview(cwd, path) {
   if (extension2 === ".html" || extension2 === ".htm") {
     if (stat.size > MAX_HTML_BYTES) return unavailable("too_large");
     return { path, kind: "html", content: node_fs.readFileSync(real, "utf8") };
+  }
+  if (extension2 === ".css") {
+    if (stat.size > MAX_HTML_BYTES) return unavailable("too_large");
+    return { path, kind: "text", content: node_fs.readFileSync(real, "utf8") };
+  }
+  const font = { ".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf", ".otf": "font/otf" }[extension2];
+  if (font) {
+    if (stat.size > 4 * 1024 * 1024) return unavailable("too_large");
+    return { ...unavailable("binary"), fontUrl: `data:${font};base64,${node_fs.readFileSync(real).toString("base64")}` };
   }
   const type = IMAGE_TYPES[extension2];
   if (!type) return unavailable("binary");
@@ -52971,15 +53041,25 @@ function createPrivateCatalog(origin) {
         if (!CANVAS_TOOLS.some((definition) => definition.name === name)) throw new Error("invalid_design_model_tool");
         if (!saved) throw new Error("not_a_design_session");
         workspace.sessions.created(sessionId, cwd, saved);
-        const summary = (node) => ({
+        const summary = (node, textLimit = 1600) => ({
           id: node.id, type: node.type, title: node.title?.slice(0, 160),
           x: node.x, y: node.y, width: node.width, height: node.height,
-          ...(node.type === "text" ? { content: node.content?.slice(0, 1600), textRole: node.textRole } : {}),
+          ...(node.type === "text" ? { content: node.content?.slice(0, textLimit), textRole: node.textRole } : {}),
           ...(node.type === "html" ? {
             entry: node.entry, draft: Boolean(node.draft), empty: Boolean(node.empty), slideIndex: node.slideIndex,
             artifact_path: `${saved.localDesignPath}/${node.entry}`
           } : {})
         });
+        // Results over 48 KiB are refused by the host. Long CJK text nodes get
+        // there quickly, so shorten text excerpts until the summaries fit.
+        const summaries = (nodes) => {
+          for (const limit of [1600, 400, 120]) {
+            const list = nodes.map((node) => summary(node, limit));
+            if (limit === 120 || Buffer.byteLength(JSON.stringify(list)) <= 36 * 1024) {
+              return limit === 1600 ? { nodes: list } : { nodes: list, textTruncated: true };
+            }
+          }
+        };
         if (guarded && name === "canvas_create_image") {
           const location = await workspace.canvas.location(sessionId);
           const store = workspace.canvas.canvases;
@@ -53047,9 +53127,9 @@ function createPrivateCatalog(origin) {
                 const cached = node_fs.lstatSync(require$$1$1.join(folder, `${node.id}-${stamp}.png`), { throwIfNoEntry: false });
                 if (!cached || cached.isSymbolicLink() || !cached.isFile()) throw new Error("canvas_guard_selection_unsupported");
               }
-              return { nodes: nodes.slice(0, 20).map(summary), totalNodes: nodes.length };
+              return { ...summaries(nodes.slice(0, 20)), totalNodes: nodes.length };
             }
-            const result = { id: document.id, revision: document.revision ?? 0, nodes: document.nodes.slice(0, 25).map(summary), totalNodes: document.nodes.length };
+            const result = { id: document.id, revision: document.revision ?? 0, ...summaries(document.nodes.slice(0, 25)), totalNodes: document.nodes.length };
             if (saved.designType === "slide_deck") {
               const slides = document.nodes.filter((node) => node.type === "html" && node.slideIndex !== void 0 && !node.hidden);
               result.slideCount = slides.length;
@@ -53060,7 +53140,7 @@ function createPrivateCatalog(origin) {
         }
         if (name === "canvas_get_selection") {
           const selection = await workspace.canvas.getSelection(sessionId, { readRuntimeInput: false, nodeIds: input.node_ids });
-          return { nodes: selection.nodes.slice(0, 20).map(summary), totalNodes: selection.nodes.length };
+          return { ...summaries(selection.nodes.slice(0, 20)), totalNodes: selection.nodes.length };
         }
         if (name === "canvas_prepare_pptx") {
           const { manifestPath, slideCount } = await canvasCommandContext.run(
@@ -53086,7 +53166,7 @@ function createPrivateCatalog(origin) {
           const { id, revision, nodes } = document;
           result.revision = revision;
           if (name === "canvas_get_document" || name === "canvas_update_node" || name === "canvas_delete_node") {
-            result.document = { id, revision, nodes: nodes.slice(0, 25).map(summary), totalNodes: nodes.length };
+            result.document = { id, revision, ...summaries(nodes.slice(0, 25)), totalNodes: nodes.length };
             if (name === "canvas_get_document" && saved.designType === "slide_deck") {
               const slides = nodes.filter((node2) => node2.type === "html" && node2.slideIndex !== void 0 && !node2.hidden);
               result.document.slideCount = slides.length;
@@ -53099,7 +53179,8 @@ function createPrivateCatalog(origin) {
           for (const field of ["preview_path", "output_path"]) {
             const path = result[field];
             if (typeof path !== "string" || !require$$1$1.isAbsolute(path)) continue;
-            const relative = require$$1$1.relative(cwd, path);
+            // Saved paths are resolved through symlinks (/tmp, /var, junctions).
+            const relative = require$$1$1.relative(node_fs.realpathSync(cwd), path);
             if (!relative || relative === ".." || relative.startsWith(".." + require$$1$1.sep) || require$$1$1.isAbsolute(relative)) {
               throw new Error("invalid_design_preview_path");
             }
@@ -53168,7 +53249,18 @@ parentPort.on("message", ({ data }) => {
     return;
   }
   if (message.type === "init-private-catalog") {
-    privateCatalog = createPrivateCatalog(message.origin);
+    // A bad origin must not kill the process: the host re-sends the same
+    // origin on every restart, which turned into a crash loop.
+    try {
+      privateCatalog = createPrivateCatalog(message.origin);
+    } catch (error) {
+      privateCatalog = null;
+      log(`private catalog unavailable for ${String(message.origin)}: ${reasonOf(error)}`);
+    }
+    return;
+  }
+  if (!privateCatalog && message.type === "private-catalog") {
+    parentPort.postMessage({ type: "private-catalog-result", id: message.id, error: "design_catalog_unavailable" });
     return;
   }
   if (privateCatalog) {

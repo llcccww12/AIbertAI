@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 )
 
 func newUsageCaptureForTest(path string, stream bool, body string) *usageCapture {
@@ -266,5 +267,50 @@ func TestUsageCaptureUpstreamCloseDoesNotLogPrivateError(t *testing.T) {
 	text := logs.String()
 	if !strings.Contains(text, "close_upstream_response") || strings.Contains(text, "private-upstream-response") {
 		t.Fatalf("上游关闭日志不安全: %s", text)
+	}
+}
+
+// An upstream that keeps a Chat Completions stream open after [DONE] must not
+// hold the client or the usage record: the capture ends right after the
+// [DONE] event, and the shadow reader sees the whole stream up to it.
+func TestUsageCaptureEndsChatStreamAfterDone(t *testing.T) {
+	upstream, feed := io.Pipe()
+	go func() {
+		io.WriteString(feed, "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}\n\n")
+		io.WriteString(feed, "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":1}}\n\ndata: [DONE]\n")
+		io.WriteString(feed, "\n")
+		// Never closed: the upstream holds the connection open.
+	}()
+	defer feed.Close()
+	reader, writer := io.Pipe()
+	shadow := make(chan []byte, 1)
+	go func() {
+		data, _ := io.ReadAll(reader)
+		shadow <- data
+	}()
+	capture := &usageCapture{
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		src:    upstream,
+		ctx:    usageCaptureContext{ctx: context.Background(), path: "/v1/chat/completions", stream: true},
+		reader: reader, writer: writer,
+	}
+	done := make(chan []byte, 1)
+	go func() {
+		data, _ := io.ReadAll(capture)
+		done <- data
+	}()
+	select {
+	case data := <-done:
+		if !strings.HasSuffix(string(data), "data: [DONE]\n\n") {
+			t.Fatalf("client stream = %q", data)
+		}
+		if got := <-shadow; !bytes.Equal(got, data) {
+			t.Fatalf("usage reader saw %q", got)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("capture waited for the upstream to close after [DONE]")
+	}
+	if _, err := capture.Read(make([]byte, 8)); err != io.EOF {
+		t.Fatalf("read after [DONE] = %v", err)
 	}
 }

@@ -43,7 +43,7 @@ func (h *relaySessionHost) dshManualReviewLocked(id string, reserved bool) (dshS
 		return fail()
 	}
 	row, ok := l.sessions[id]
-	if !ok || l.restarting || l.compacting[id] && !reserved || l.activeTurns[id] != nil || row.Engine != "dsh" || row.State == "running" || row.GoalRun != "" || len(row.Turns) == 0 {
+	if !ok || l.restarting || l.compacting[id] && !reserved || l.activeTurns[id] != nil || row.Engine != "dsh" || row.State == "running" || desktopGoalAdvancing(row.Goal) || len(row.Turns) == 0 {
 		return fail()
 	}
 	last := row.Turns[len(row.Turns)-1]

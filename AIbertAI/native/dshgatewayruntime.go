@@ -51,7 +51,7 @@ func newDSHGatewayRuntime(installation dshInstalledRuntime, journalRoot string, 
 		var admission func(string) error
 		if admit, ok := ctx.Value(dshGoalAdmissionKey{}).(func(string) error); ok && admit != nil {
 			admission = admit
-		} else if session.Goal != nil && session.Goal.Current && session.Goal.Status == "active" {
+		} else if session.platformGoal() != nil && session.Goal.Current && session.Goal.Status == "active" {
 			return errors.New("dsh_goal_budget_unavailable")
 		}
 		local.mu.Lock()
@@ -103,7 +103,7 @@ func newDSHGatewayRuntime(installation dshInstalledRuntime, journalRoot string, 
 		local.requireInvocationID = true
 		if admit, ok := ctx.Value(dshGoalAdmissionKey{}).(func(string) error); ok && admit != nil {
 			local.admitGoalInvocation = admit
-		} else if session.Goal != nil && session.Goal.Current && session.Goal.Status == "active" {
+		} else if session.platformGoal() != nil && session.Goal.Current && session.Goal.Status == "active" {
 			return nil, "", "", nil, nil, errors.New("dsh_goal_budget_unavailable")
 		}
 		base, stop, err := local.Start()

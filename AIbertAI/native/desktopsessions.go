@@ -357,8 +357,19 @@ func (l *acpLive) restoreDesktopSessions() error {
 				continue
 			}
 		}
-		activeGoal := session.Goal != nil && session.Goal.Current && session.Goal.Status == "active"
-		if session.Engine == "dsh" && session.Goal != nil && session.Goal.Current && (activeGoal || session.State == "running" || session.Goal.Status == "reconciling") {
+		// A goal the model opened lives in DSH's own session state, which a
+		// platform restart does not restore. Do not show it as still running.
+		if session.Engine == "dsh" && session.Goal != nil && session.Goal.Observed && session.Goal.Current && session.Goal.Status == "active" {
+			goal := *session.Goal
+			goal.Status, goal.Reason = "paused", "host_restarted"
+			goal.Version++
+			session.Goal = &goal
+			if err := l.save(session); err != nil {
+				return err
+			}
+		}
+		activeGoal := session.platformGoal() != nil && session.Goal.Current && session.Goal.Status == "active"
+		if session.Engine == "dsh" && session.platformGoal() != nil && session.Goal.Current && (activeGoal || session.State == "running" || session.Goal.Status == "reconciling") {
 			// DSH restores durable goal state disarmed. Do not re-arm it merely
 			// because the platform host restarted.
 			goal := *session.Goal

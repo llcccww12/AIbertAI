@@ -237,7 +237,7 @@ func (h *relaySessionHost) dshPlatformCreateBridge(ctx context.Context, ws *webs
 // dshPlatformCreateHostTools offers the create tools to Standard conversations
 // on this device whose caller may manage the account's resources.
 func (h *relaySessionHost) dshPlatformCreateHostTools(ctx context.Context, ws *websocket.Conn, request *http.Request, session acpSession, turn *acpTurn) (*dshHostToolBridge, string) {
-	if session.ExpertID != "" || session.GoalRun != "" || ws == nil || h.local == nil || h.live == nil || h.live.client == nil || request == nil || h.acpScope(request.WithContext(ctx), "resources:manage") != nil {
+	if session.ExpertID != "" || desktopGoalAdvancing(session.Goal) || ws == nil || h.local == nil || h.live == nil || h.live.client == nil || request == nil || h.acpScope(request.WithContext(ctx), "resources:manage") != nil {
 		return nil, ""
 	}
 	return &dshHostToolBridge{Tools: dshPlatformCreateTools(), Handle: h.dshPlatformCreateBridge(ctx, ws, request, session, turn)}, dshPlatformCreateInstructions

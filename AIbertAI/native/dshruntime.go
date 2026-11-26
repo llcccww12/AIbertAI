@@ -1654,6 +1654,15 @@ func runDSHSessionWithProfile(ctx context.Context, cfg *dshRuntimeConfig, sessio
 			if json.Unmarshal(raw, &frame) == nil {
 				turn.recordDeliverables(frame.Event.Data, deliveryTurn)
 			}
+		case "goal/change":
+			// The model may create a goal of its own without going through the
+			// platform. Mirror it so the conversation can show it; the turn's host
+			// decides what to do with the event.
+			if project != nil {
+				if err := project(map[string]any{"sessionUpdate": "goal_state", "goalEvent": append(json.RawMessage(nil), raw...)}); err != nil {
+					return err
+				}
+			}
 		case "turn/start":
 			continuationStart = deliveryTurn != 0
 			if continuationStart {

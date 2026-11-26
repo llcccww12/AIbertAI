@@ -150,7 +150,7 @@ func dshStoppedModel(ctx context.Context, call func(context.Context, string, any
 }
 
 func (h *relaySessionHost) verifyStoppedTools(ctx context.Context, session acpSession, turn acpTurn) error {
-	if h.local == nil || h.live == nil || h.live.store == nil || h.live.store.Root == nil || session.Goal != nil || session.ID != session.DSHSessionID || !validUUID(session.ID) {
+	if h.local == nil || h.live == nil || h.live.store == nil || h.live.store.Root == nil || session.platformGoal() != nil || session.ID != session.DSHSessionID || !validUUID(session.ID) {
 		return errDSHCancelProof
 	}
 	check := func(ctx context.Context, p *dshProcess, local *dshLocalGateway) error {

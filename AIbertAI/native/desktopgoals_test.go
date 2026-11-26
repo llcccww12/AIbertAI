@@ -81,3 +81,29 @@ func TestDesktopGoalPersistsAndExecutesWithBudget(t *testing.T) {
 		t.Fatalf("goal exceeded budget: %s %d %v", g.outcome, calls, err)
 	}
 }
+
+// A goal that is still resumable did not fail the employee's work. The window
+// showed a red "the turn failed" line after a background goal turn even though
+// the goal kept going; report the neutral code the UI already knows.
+func TestResumableGoalReportsNeutralTurnFailure(t *testing.T) {
+	const id = "7c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f"
+	const op = "8d2e3f40-5b6c-4d7e-9f0a-1b2c3d4e5f60"
+	row := acpSession{ID: id, State: "error", Turns: []acpTurn{{Operation: op, Failed: true, FailureCode: "dsh_model_unsettled"}},
+		Goal: &desktopGoal{ID: op, Current: true, Status: "paused", Reason: "execution_failure"}}
+	if got := acpTurnStatePayload(row, op, true)["state"].(map[string]any)["lastError"]; got != "session_turn_failed" {
+		t.Fatalf("resumable goal surfaced %v", got)
+	}
+	// The technical code still drives recovery.
+	if row.Turns[0].FailureCode != "dsh_model_unsettled" {
+		t.Fatalf("turn lost its recovery code: %s", row.Turns[0].FailureCode)
+	}
+	row.Goal = nil
+	if got := acpTurnStatePayload(row, op, true)["state"].(map[string]any)["lastError"]; got != "dsh_model_unsettled" {
+		t.Fatalf("without a goal the technical code must survive: %v", got)
+	}
+	// A goal the model created in DSH is not ours to soften.
+	row.Goal = &desktopGoal{ID: op, Current: true, Status: "active", Observed: true}
+	if got := acpTurnStatePayload(row, op, true)["state"].(map[string]any)["lastError"]; got != "dsh_model_unsettled" {
+		t.Fatalf("observed goal softened a real failure: %v", got)
+	}
+}

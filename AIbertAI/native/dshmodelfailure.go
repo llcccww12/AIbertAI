@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -49,7 +50,7 @@ func dshPreflightStatus(err error) int {
 
 func dshTerminalModelFailure(code string) bool {
 	switch code {
-	case "dsh_model_stream_ended", "dsh_model_output_limit", "dsh_model_content_refused", "dsh_model_access_denied", "dsh_model_quota", "dsh_model_rate_limited", "dsh_model_request_rejected", "dsh_model_service_unavailable":
+	case "dsh_model_stream_ended", "dsh_model_output_limit", "dsh_model_content_refused", "dsh_model_access_denied", "dsh_model_quota", "dsh_model_rate_limited", "dsh_model_request_rejected", "dsh_model_service_unavailable", "dsh_model_unsettled":
 		return true
 	}
 	return false
@@ -140,9 +141,63 @@ func (g *dshLocalGateway) archivedFailure(operation, call, finish string) string
 	return ""
 }
 
+// recoverCommittedDelivery repairs a call left "dispatched" by builds that
+// recorded delivery only when the upstream closed: if the SDK committed the
+// reply and the platform ledger settled it as succeeded, the SDK did receive
+// a complete response. Without that receipt the record stays pending.
+func (g *dshLocalGateway) recoverCommittedDelivery(ctx context.Context, session, call string, seq int64) {
+	if !g.requireInvocationID || session != g.session || !validUUID(call) || seq <= 0 {
+		return
+	}
+	g.mu.Lock()
+	if !g.waitServedLocked(call) || g.pending == nil || g.pending.CallID != call || g.pending.State != "dispatched" || g.pending.Status < 200 || g.pending.Status >= 300 || g.pending.GatewayCode != "" {
+		g.mu.Unlock()
+		return
+	}
+	record := *g.pending
+	g.mu.Unlock()
+	check, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	receipt, err := g.verifyModelAccounting(check, record, func(result, _, status string, _ dshCancelledReceipt) bool {
+		return result == "succeeded" && dshFinalAccountStatus(status)
+	})
+	if err != nil {
+		return
+	}
+	// Keep the ledger's transaction on the repaired record: it is the only
+	// proof the charge belongs to this call once the record leaves pending.
+	transaction := record.Transaction
+	if transaction == "" {
+		transaction = receipt.TransactionID
+	}
+	g.markDeliveredIfCurrent(record, record.Finish, record.Status, transaction)
+}
+
+// markDeliveredIfCurrent repairs delivery only while the journal still holds
+// this exact call. Another goroutine may have settled or archived it while the
+// ledger was being read, and rewriting pending.json then would resurrect a
+// call that is already accounted for.
+func (g *dshLocalGateway) markDeliveredIfCurrent(record dshLocalRecord, finish string, status int, transaction string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.pending == nil || g.pending.CallID != record.CallID || g.pending.State != record.State || !reflect.DeepEqual(*g.pending, record) {
+		return false
+	}
+	next := *g.pending
+	next.State, next.Finish, next.Status, next.Transaction = "delivered", finish, status, transaction
+	if err := g.writePending(&next); err != nil {
+		return false
+	}
+	*g.pending = next
+	return true
+}
+
 // An HTTP status describes the transport, not whether the model was charged.
 // Require both the exact persisted SDK failure and the account's terminal record.
 func (g *dshLocalGateway) verifyModelSettlement(ctx context.Context, session, call, state string, seq int64) error {
+	if state == "committed" {
+		g.recoverCommittedDelivery(ctx, session, call, seq)
+	}
 	if state != "failed" || !g.requireInvocationID || session != g.session || !validUUID(call) || seq <= 0 {
 		return g.acceptSDKSettlement(session, call, state, seq)
 	}
@@ -303,6 +358,40 @@ func (g *dshLocalGateway) abandonFailed(call string) error {
 	}
 	*g.pending = next
 	return g.archivePendingLocked(call)
+}
+
+// dshModelUnsettledRelease bounds how long an unprovable model call may block
+// the session. The archived record stays on disk for later repair; the turn is
+// charged nothing, which is visible to the employee as an unknown result.
+const dshModelUnsettledRelease = 60 * time.Second
+
+// abandonUnsettled releases a call whose outcome neither the SDK nor the
+// platform ledger could prove within the release window. It only acts on a
+// record nothing is serving any more, so a live stream is never abandoned.
+func (g *dshLocalGateway) abandonUnsettled(call string) (string, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.waitServedLocked(call) {
+		return "", errors.New("dsh_model_outcome_unknown")
+	}
+	if g.pending == nil || g.pending.CallID != call || g.pending.State != "dispatched" {
+		return "", errors.New("dsh_model_outcome_unknown")
+	}
+	info, err := os.Stat(filepath.Join(g.journal, "pending.json"))
+	if err != nil || time.Since(info.ModTime()) < dshModelUnsettledRelease {
+		return "", errors.New("dsh_model_outcome_unknown")
+	}
+	next := *g.pending
+	next.State, next.Unverified = "rejected", true
+	next.FailureCode = "dsh_model_unsettled"
+	if err := g.writePending(&next); err != nil {
+		return "", err
+	}
+	*g.pending = next
+	if err := g.archivePendingLocked(call); err != nil {
+		return "", err
+	}
+	return next.FailureCode, nil
 }
 
 // abandonedFailure returns the code of an unverified failure archived for the

@@ -314,7 +314,7 @@ func (h *relaySessionHost) handleQueue(ctx context.Context, ws *websocket.Conn, 
 		live.mu.Unlock()
 		return nil, errors.New("session_write_failed")
 	}
-	if p.Action == "sendNow" && row.GoalRun == "" {
+	if p.Action == "sendNow" && !desktopGoalAdvancing(row.Goal) {
 		if cancel := live.activeTurns[row.ID]; cancel != nil {
 			cancel()
 		}
@@ -331,7 +331,7 @@ func (h *relaySessionHost) handleQueue(ctx context.Context, ws *websocket.Conn, 
 
 // claimQueue is called with the live session lock held.
 func (l *acpLive) claimQueue(row acpSession) bool {
-	if l.restarting || l.queueWorkers[row.ID] != nil || row.State == "running" && row.GoalRun == "" || row.Queue.Paused || len(row.Queue.Messages) == 0 || row.Queue.Messages[0].editID != "" {
+	if l.restarting || l.queueWorkers[row.ID] != nil || row.State == "running" && !desktopGoalAdvancing(row.Goal) || row.Queue.Paused || len(row.Queue.Messages) == 0 || row.Queue.Messages[0].editID != "" {
 		return false
 	}
 	if l.queueWorkers == nil {
@@ -354,7 +354,7 @@ func (h *relaySessionHost) runSessionQueue(ctx context.Context, ws *websocket.Co
 			live.mu.Unlock()
 			return initial, nil
 		}
-		if row.GoalRun != "" || row.State == "running" {
+		if desktopGoalAdvancing(row.Goal) || row.State == "running" {
 			wake := live.queueWorkers[id]
 			live.mu.Unlock()
 			// The goal owns the session. Acknowledge the persisted message before waiting.
