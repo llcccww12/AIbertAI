@@ -134,6 +134,10 @@ export default function EmployeeFiles(pane) {
   const [searchShown, setSearchShown] = useState(Boolean(query))
   const [showHidden, setShowHidden] = useState(readShowHidden)
   const toggleHidden = () => setShowHidden(value => { saveShowHidden(!value); return !value })
+  // A file opened from the chat often lives under .claude, .github or .vscode.
+  // Leaving the tree closed there makes it look like the file is not in the
+  // workspace at all, so show hidden entries whenever the selection needs them.
+  const hiddenVisible = useMemo(() => showHidden || String(pane.selected ?? '').split(/[\\/]/).some(part => part.startsWith('.')), [showHidden, pane.selected])
   const input = useRef(null)
   const commands = useRef(null)
   const focus = () => { setSearchShown(true); input.current?.focus() }
@@ -156,13 +160,13 @@ export default function EmployeeFiles(pane) {
       {pane.loading && !pane.directories['']?.loading && !pane.nodes.length && <p role="status">{translate('loading')}</p>}
       {pane.error && <div role="alert">{label('workspace.files.loadError')} <button type="button" onClick={pane.onRefresh}>{label('session.retry')}</button></div>}
       {(pane.nodes.length > 0 || pane.directories['']?.loading || pane.directories['']?.error) &&
-        <EmployeeTree nodes={pane.nodes} pane={pane} translate={translate} showHidden={showHidden} />}
-      {!showHidden && pane.nodes.length > 0 && pane.nodes.every(node => node.name.startsWith('.')) &&
+        <EmployeeTree nodes={pane.nodes} pane={pane} translate={translate} showHidden={hiddenVisible} />}
+      {!hiddenVisible && pane.nodes.length > 0 && pane.nodes.every(node => node.name.startsWith('.')) &&
         <p className="files-tree-empty" data-files-empty-hidden>{translate('emptyHidden')}</p>}
       {pagination(pane, '')}
       {pane.outsideNodes.length > 0 && <>
         <p className="files-tree-section">{label('workspace.fileTree.outside')}</p>
-        <EmployeeTree nodes={pane.outsideNodes} pane={pane} translate={translate} showHidden={showHidden} />
+        <EmployeeTree nodes={pane.outsideNodes} pane={pane} translate={translate} showHidden={hiddenVisible} />
       </>}
       {!pane.nodes.length && !pane.outsideNodes.length && !pane.loading && !pane.error && !pane.directories['']?.error &&
         <p className="files-tree-empty">{label(query ? 'workspace.fileTree.noResults' : fileScope === 'session' ? 'workspace.fileTree.noSessionChanges'
