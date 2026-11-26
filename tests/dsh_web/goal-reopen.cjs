@@ -76,7 +76,7 @@ async function run() {
     assert.equal(held.sessionId, initial.sessionId);
     assert.match(held.dshSessionId, /^[0-9a-f-]{36}$/);
     const liveClock = first.locator('[data-chat-running]');
-    const initialClock = await liveClock.getByText(/深度求索中，用时/).innerText();
+    const initialClock = await liveClock.getByText(/AIbert 正在思考，用时/).innerText();
     await first.waitForFunction(previous => {
       const clock = document.querySelector('[data-chat-running]');
       return clock && !clock.innerText.includes(previous);
@@ -99,7 +99,7 @@ async function run() {
     await delay(2200);
     const observing = await context.newPage();
     await observing.goto(url);
-    const restoredClock = await observing.locator('[data-chat-running]').getByText(/深度求索中，用时/).innerText();
+    const restoredClock = await observing.locator('[data-chat-running]').getByText(/AIbert 正在思考，用时/).innerText();
     const seconds = label => {
       const time = /用时\s*(?:(\d+)小时)?(?:(\d+)分)?(\d+)秒/.exec(label);
       assert(time, label);
