@@ -318,6 +318,12 @@ func goalView(row acpSession) *desktopGoal {
 	}
 	goal := *row.Goal
 	goal.Invocations = nil
+	// The window's goal vocabulary ends a goal as "complete". Sending
+	// "completed" left the state label untranslated and made the completion
+	// notification look like a goal that never finished.
+	if goal.Status == "completed" {
+		goal.Status = "complete"
+	}
 	if row.GoalRun != "" && row.State == "running" {
 		goal.ExecutionID = row.GoalRun
 	}

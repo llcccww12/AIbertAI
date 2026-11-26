@@ -139,7 +139,7 @@ func (h *relaySessionHost) dshCancelHistoryProof(ctx context.Context, p *dshProc
 }
 
 func (h *relaySessionHost) confirmStoppedDSHReply(ctx context.Context, session acpSession, turn *acpTurn) bool {
-	if h.local == nil || h.live.store == nil || h.live.store.Root == nil || session.Goal != nil {
+	if h.local == nil || h.live.store == nil || h.live.store.Root == nil || session.platformGoal() != nil {
 		return false
 	}
 	check, cancel := context.WithTimeout(ctx, 20*time.Second)

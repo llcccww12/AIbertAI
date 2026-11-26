@@ -136,3 +136,116 @@ func (l *acpLive) recordDSHGoalEvent(sessionID, goalID string, raw json.RawMessa
 	}
 	return nil
 }
+
+// adoptDSHGoalEvent records a goal the model created on its own during an
+// ordinary turn. DSH owns that goal and drives its rounds; the desktop only
+// mirrors the state so the conversation can show it. The mirror never takes
+// the session, so a prompt sent while it is active is still admitted.
+func (l *acpLive) adoptDSHGoalEvent(sessionID string, raw json.RawMessage) error {
+	var e struct {
+		SessionID string `json:"sessionId"`
+		Event     struct {
+			Type string `json:"type"`
+			Seq  int64  `json:"seq"`
+			Data struct {
+				Kind      string `json:"kind"`
+				Version   int    `json:"version"`
+				Operation string `json:"operation"`
+				Rounds    int    `json:"roundsStarted"`
+				Goal      struct {
+					ID        string `json:"id"`
+					Revision  int64  `json:"revision"`
+					Objective string `json:"objective"`
+					Phase     string `json:"phase"`
+				} `json:"goal"`
+				Cleared struct {
+					ID       string `json:"id"`
+					Revision int64  `json:"revision"`
+				} `json:"cleared"`
+			} `json:"data"`
+		} `json:"event"`
+	}
+	if json.Unmarshal(raw, &e) != nil || e.SessionID != sessionID || e.Event.Type != "goal/change" || e.Event.Seq < 0 {
+		return errors.New("dsh_invalid_goal_event")
+	}
+	d := e.Event.Data
+	if d.Kind != "goal/change" || d.Version != 1 || d.Rounds < 0 {
+		return errors.New("dsh_invalid_goal_event")
+	}
+	id, revision := d.Goal.ID, d.Goal.Revision
+	if d.Operation == "clear" {
+		id, revision = d.Cleared.ID, d.Cleared.Revision
+	}
+	if !strings.HasPrefix(id, "goal-") || !validUUID(strings.TrimPrefix(id, "goal-")) || revision < 1 {
+		return errors.New("dsh_invalid_goal_event")
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	row, ok := l.sessions[sessionID]
+	if !ok || row.Engine != "dsh" {
+		return errors.New("goal_not_found")
+	}
+	// A platform goal owns this session; its own observer records every event.
+	if row.Goal != nil && !row.Goal.Observed {
+		return nil
+	}
+	current := row.Goal
+	if current != nil && current.DSHGoalID == id {
+		// Duplicate and out-of-order events must not move the mirror back. A
+		// dismissed goal may still appear again: DSH keeps driving it, so hiding
+		// a later round would leave a running goal invisible.
+		if e.Event.Seq <= current.DSHEventSeq {
+			return nil
+		}
+	} else if d.Operation != "create" {
+		return nil
+	}
+	goal := desktopGoal{ID: strings.TrimPrefix(id, "goal-"), Generation: 1, Observed: true,
+		Limits: desktopGoalLimit{Tokens: l.settings.goalBudget()}}
+	switch d.Operation {
+	case "create", "edit", "resume":
+		if d.Goal.Phase != "active" {
+			return errors.New("dsh_invalid_goal_event")
+		}
+		goal.Current, goal.Status = true, "active"
+	case "pause":
+		if d.Goal.Phase != "paused" {
+			return errors.New("dsh_invalid_goal_event")
+		}
+		goal.Current, goal.Status, goal.Reason = true, "paused", "user_paused"
+	case "block":
+		if d.Goal.Phase != "blocked" {
+			return errors.New("dsh_invalid_goal_event")
+		}
+		goal.Current, goal.Status, goal.Reason = true, "blocked", "dsh_blocked"
+	case "complete":
+		if d.Goal.Phase != "complete" {
+			return errors.New("dsh_invalid_goal_event")
+		}
+		goal.Status = "completed"
+	case "clear":
+		goal.Status = "cleared"
+	default:
+		return errors.New("dsh_invalid_goal_event")
+	}
+	goal.Objective = d.Goal.Objective
+	if goal.Objective == "" && current != nil {
+		goal.Objective = current.Objective
+	}
+	goal.DSHGoalID, goal.DSHRevision, goal.DSHEventSeq = id, revision, e.Event.Seq
+	goal.DSHPhase = d.Goal.Phase
+	if d.Operation == "clear" {
+		goal.DSHPhase = "cleared"
+	}
+	if d.Rounds > goal.RoundsStarted {
+		goal.RoundsStarted = d.Rounds
+	}
+	if current != nil && current.DSHGoalID == id {
+		goal.RoundsStarted = max(goal.RoundsStarted, current.RoundsStarted)
+		goal.ActiveSeconds = current.ActiveSeconds
+		goal.Version = current.Version
+	}
+	goal.Version++
+	row.Goal = &goal
+	return l.save(row)
+}

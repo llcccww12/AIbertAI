@@ -33,7 +33,7 @@ func (h *relaySessionHost) settleStuckDSHModelTurn(ctx context.Context, id strin
 	}
 	live.mu.Lock()
 	row, ok := live.sessions[id]
-	if !ok || live.restarting || live.compacting[id] || live.activeTurns[id] != nil || row.Engine != "dsh" || row.State == "running" || row.GoalRun != "" || row.Goal != nil || len(row.Turns) == 0 || !dshStuckModelOnlyTurn(row.Turns[len(row.Turns)-1]) {
+	if !ok || live.restarting || live.compacting[id] || live.activeTurns[id] != nil || row.Engine != "dsh" || row.State == "running" || desktopGoalAdvancing(row.Goal) || len(row.Turns) == 0 || !dshStuckModelOnlyTurn(row.Turns[len(row.Turns)-1]) {
 		live.mu.Unlock()
 		return fail
 	}
@@ -79,6 +79,19 @@ func (h *relaySessionHost) settleStuckDSHModelTurn(ctx context.Context, id strin
 			Seq   int64  `json:"seq"`
 		}
 		if err != nil || json.Unmarshal(raw, &receipt) != nil || receipt.State != "failed" || receipt.Seq <= 0 {
+			// The SDK says the reply reached it; that is not an unknown outcome.
+			// Leave it to the committed-delivery repair so it is never charged 0.
+			if receipt.State == "committed" {
+				return fail
+			}
+			// Neither the SDK nor the ledger could prove the outcome. Once the
+			// release window has passed, stop blocking the employee: archive the
+			// call as unsettled so it is charged nothing and can still be
+			// repaired later from its receipt.
+			if unsettled, abandonErr := local.abandonUnsettled(record.CallID); abandonErr == nil {
+				code = unsettled
+				return nil
+			}
 			return fail
 		}
 		if err := local.acceptModelSettlement(ctx, detached.ID, record.CallID, receipt.State, receipt.Seq); err != nil {
