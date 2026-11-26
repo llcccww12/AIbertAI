@@ -27,3 +27,23 @@ func TestPreviewWorkspaceFileReturnsSVGAsImage(t *testing.T) {
 		t.Fatalf("svg preview = %v", result)
 	}
 }
+
+func TestPreviewWorkspaceFileOffersFontsAsDataURL(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.woff2"), []byte("wOF2\x00\x01"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	got, err := previewWorkspaceFile(root, "a.woff2", "a.woff2", 6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := got.(map[string]any)
+	if result["kind"] != "unavailable" || result["reason"] != "binary" || !strings.HasPrefix(result["fontUrl"].(string), "data:font/woff2;base64,") {
+		t.Fatalf("font preview = %v", result)
+	}
+}

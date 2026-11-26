@@ -197332,6 +197332,18 @@ function UPt(e) {
             css: i,
           });
       }
+      if (
+        r.tagName === "link" &&
+        r.attrs.some(
+          (s) => s.name === "rel" && /(?:^|\s)stylesheet(?:\s|$)/i.test(s.value),
+        )
+      ) {
+        const s = r.attrs.find((i) => i.name === "href"),
+          i = r.sourceCodeLocation;
+        s &&
+          i &&
+          t.push({ start: i.startOffset, end: i.endOffset, value: s.value, stylesheet: !0 });
+      }
       if (r.tagName === "style")
         for (const s of r.childNodes) {
           const i = s.sourceCodeLocation;
@@ -197379,14 +197391,61 @@ function qPt(e, t) {
       return;
     }
 }
+// A url() in a linked stylesheet is relative to the stylesheet; rewrite it
+// relative to the page so qPt applies the same task-root check.
+function zkSheetRef(e, sheet, ref) {
+  if (!ref || ref.startsWith("#") || ref.startsWith("/") || /^[a-z][a-z0-9+.-]*:/i.test(ref)) return;
+  try {
+    const target = new URL(ref, `https://artifact.invalid/${sheet.replace(/^\/+/, "")}`).pathname.split("/").slice(1),
+      base = new URL(`https://artifact.invalid/${e.replace(/^\/+/, "")}`).pathname.split("/").slice(1, -1);
+    let k = 0;
+    for (; k < base.length && k < target.length - 1 && base[k] === target[k]; k++);
+    return [...base.slice(k).map(() => ".."), ...target.slice(k)].join("/") || void 0;
+  } catch {
+    return;
+  }
+}
+// srcdoc frames only load inline styles and data: fonts, so inline linked
+// stylesheets together with the fonts and images they reference.
+async function zkSheets(e, s, n) {
+  const sheets = new Map();
+  await Promise.all(
+    [...new Set(s.filter((d) => d.stylesheet).map((d) => d.value))].map(async (href) => {
+      const sheet = qPt(e, href);
+      if (!sheet) return;
+      const p = await n(sheet).catch(() => {});
+      if (p?.kind !== "text" || typeof p.content != "string") return;
+      const urls = new Map();
+      Gpe(p.content, (d) => {
+        urls.set(d, void 0);
+      });
+      await Promise.all(
+        [...urls.keys()].map(async (d) => {
+          const rel = zkSheetRef(e, sheet, d),
+            f = rel && qPt(e, rel);
+          if (!f) return;
+          const m = await n(f).catch(() => {}),
+            url = m?.kind === "image" ? m.imageUrl : m?.fontUrl;
+          url && urls.set(d, url);
+        }),
+      );
+      sheets.set(
+        href,
+        `<style>${Gpe(p.content, (d) => urls.get(d)).replace(/<\/style/gi, "<\\/style")}</style>`,
+      );
+    }),
+  );
+  return sheets;
+}
 async function zk(e, t, n, r) {
   const s = UPt(t),
     i = new Set(),
     o = (d) => {
       i.add(d);
     };
-  for (const d of s) d.css ? Gpe(d.value, o) : o(d.value);
-  const a = new Map();
+  for (const d of s) d.stylesheet || (d.css ? Gpe(d.value, o) : o(d.value));
+  const a = new Map(),
+    sheets = await zkSheets(e, s, n);
   await Promise.all(
     [...i].map(async (d) => {
       const f = qPt(e, d);
@@ -197396,6 +197455,7 @@ async function zk(e, t, n, r) {
           if (h) throw new Error(`图片资源读取失败：${f}`, { cause: m });
         });
       if (p?.kind === "image" && p.imageUrl) a.set(d, p.imageUrl);
+      else if (p?.fontUrl) a.set(d, p.fontUrl);
       else if (
         h &&
         p?.kind === "unavailable" &&
@@ -197442,7 +197502,11 @@ async function zk(e, t, n, r) {
   const c = [];
   let u = 0;
   for (const d of s) {
-    const f = d.css ? Gpe(d.value, (h) => a.get(h)) : a.get(d.value);
+    const f = d.stylesheet
+      ? sheets.get(d.value)
+      : d.css
+        ? Gpe(d.value, (h) => a.get(h))
+        : a.get(d.value);
     f === void 0 ||
       f === d.value ||
       d.start < u ||
