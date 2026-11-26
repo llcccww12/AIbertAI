@@ -333,10 +333,13 @@ func (g *dshLocalGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	id := r.Header.Get("X-AIBERTAI-Invocation-ID")
 	// In-process teammates share their root's single durable billing journal.
 	// Queue live requests until the previous stream has finished delivering.
+	releaseGate := func() {}
 	if g.requireInvocationID {
 		select {
 		case g.dispatchGate <- struct{}{}:
-			defer func() { <-g.dispatchGate }()
+			var once sync.Once
+			releaseGate = func() { once.Do(func() { <-g.dispatchGate }) }
+			defer releaseGate()
 		case <-r.Context().Done():
 			return
 		}
@@ -503,16 +506,29 @@ func (g *dshLocalGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	buf := make([]byte, 32<<10)
 	complete := true
 	stream := dshStreamCompletion{protocol: g.protocol, valid: strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream")}
+	delivered := false
 	for {
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
 			stream.add(buf[:n])
-			if _, err = w.Write(buf[:n]); err != nil {
-				complete = false
-				break
+			if !delivered {
+				if _, err = w.Write(buf[:n]); err != nil {
+					complete = false
+					break
+				}
+				if f, ok := w.(http.Flusher); ok {
+					f.Flush()
+				}
 			}
-			if f, ok := w.(http.Flusher); ok {
-				f.Flush()
+		}
+		// The SDK settles a Chat Completions stream at [DONE] and reads no
+		// further, while some upstreams hold the connection open long after
+		// it. Record delivery once [DONE] reached the SDK, then keep draining
+		// so server-side billing still sees the whole stream.
+		if !delivered && g.protocol == "openai_chat_completions" && stream.done && stream.complete() && r.Context().Err() == nil {
+			delivered = g.markDelivered(record, stream.terminal, resp.StatusCode, transaction)
+			if delivered {
+				releaseGate()
 			}
 		}
 		if readErr != nil {
@@ -522,18 +538,25 @@ func (g *dshLocalGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	if !complete || !stream.complete() || resp.StatusCode < 200 || resp.StatusCode >= 300 || r.Context().Err() != nil {
+	if delivered || !complete || !stream.complete() || resp.StatusCode < 200 || resp.StatusCode >= 300 || r.Context().Err() != nil {
 		return
 	}
+	g.markDelivered(record, stream.terminal, resp.StatusCode, transaction)
+}
+
+// markDelivered durably records that the SDK received a complete response.
+func (g *dshLocalGateway) markDelivered(record *dshLocalRecord, finish string, status int, transaction string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	record.State = "delivered"
-	record.Finish = stream.terminal
-	record.Status = resp.StatusCode
+	record.Finish = finish
+	record.Status = status
 	record.Transaction = transaction
 	if err := g.writePending(record); err != nil {
 		record.State = "dispatched"
+		return false
 	}
+	return true
 }
 
 type dshPrefixedBody struct {
