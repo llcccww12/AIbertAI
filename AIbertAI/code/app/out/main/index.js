@@ -23083,7 +23083,7 @@ function readUpdatePreferences(value) {
     remindAt: typeof input.remindAt === "number" && Number.isFinite(input.remindAt) ? input.remindAt : void 0
   };
 }
-const RECENT_RELEASE_NOTES = 5;
+const RECENT_RELEASE_NOTES = 3;
 function releaseHistory(value, targetVersion) {
   const target = targetVersion && semver.valid(targetVersion);
   if (typeof value === "string") return target && value.trim() ? [{ version: target, note: value.trim() }] : [];
@@ -23139,7 +23139,9 @@ function createUpdateController(updater2, notify2, requiresElevation = false, op
     const notes = normalizeReleaseNotes(info.releaseNotes, { currentVersion: updater2.currentVersion?.version, targetVersion: info.version });
     const all = releaseHistory(info.releaseNotes, info.version);
     release = { version: info.version, releaseNotes: keep && notes === void 0 ? release.releaseNotes : notes };
-    if (!(keep && !all.length)) history = all;
+    // The settings page lists the last three versions; older entries stay in
+    // release-notes.json for the download page but are not worth scrolling past.
+    if (!(keep && !all.length)) history = all.slice(0, RECENT_RELEASE_NOTES);
   };
   const publish = (next) => {
     if (disposed) return;

@@ -328,7 +328,15 @@ func (l *acpLive) restoreDesktopSessions() error {
 			}
 			session, err := readDesktopSession(l.store.Root, id)
 			if err != nil {
-				return fmt.Errorf("恢复员工端会话 %s 失败: %w", id, err)
+				// One unreadable record must not keep every other conversation
+				// shut. Keep the file for repair, move it out of the way so the
+				// next start does not trip over it again, and carry on.
+				if renameErr := l.store.Rename(item.Name(), item.Name()+".corrupt-"+strconv.FormatInt(time.Now().Unix(), 10)); renameErr != nil {
+					fmt.Fprintln(os.Stderr, "员工端会话记录无法读取，且未能移开", item.Name(), err, renameErr)
+				} else {
+					fmt.Fprintln(os.Stderr, "已跳过无法读取的员工端会话记录，文件保留为 .corrupt 备份", item.Name(), err)
+				}
+				continue
 			}
 			if _, duplicate := l.operations[session.Operation]; duplicate {
 				return errors.New("duplicate_session_creation_operation")

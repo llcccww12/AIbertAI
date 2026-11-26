@@ -26,6 +26,16 @@ function project(sessionId, members) {
   return { byId, projectionsBySession }
 }
 
+// The catalog answers with internal codes; say what they mean instead.
+function memberErrorText(message: string, zh: boolean) {
+  const text = String(message)
+  if (text.includes('dsh_members_starting')) return zh ? '成员目录正在启动，请稍候。' : 'The agent catalog is starting. Try again shortly.'
+  if (text.includes('dsh_runtime_exited')) return zh ? '运行时已退出，正在重启。' : 'The runtime exited and is restarting.'
+  if (text.includes('dsh_member_unavailable')) return zh ? '这个成员当前不可用。' : 'This agent is not available right now.'
+  if (text.includes('invalid_dsh_members_response')) return zh ? '成员目录返回了无法识别的数据。' : 'The agent catalog returned something unexpected.'
+  return zh ? '读取成员目录失败，请重试。' : 'Could not load the agent catalog. Try again.'
+}
+
 export default function EmployeeMembers({ accountId, sessionId, request, promptMember, interruptMember, language, running = false, rootTitle, headerTarget }) {
   const storageKey = 'dsh.member.view.' + JSON.stringify([accountId, sessionId])
   const [selected, setSelected] = useState(() => {
@@ -149,7 +159,7 @@ export default function EmployeeMembers({ accountId, sessionId, request, promptM
         follow.current = box.scrollHeight - box.scrollTop - box.clientHeight < 40
       }}>
         <div className="dsh-member-messages" key={memberId}>
-          {error && <div role="alert">{error} <button type="button" onClick={refreshCatalog}>{zhCN ? '重试' : 'Retry'}</button></div>}
+          {error && <div role="alert">{memberErrorText(error, zhCN)} <button type="button" onClick={refreshCatalog}>{zhCN ? '重试' : 'Retry'}</button></div>}
           {!error && !rows.length && <p role="status">{result.loaded && result.memberId === memberId
             ? (zhCN ? '暂无执行记录' : 'No activity yet') : (zhCN ? '正在读取执行记录…' : 'Loading activity…')}</p>}
           <MemberTranscript rows={rows} language={language} running={result.caughtUp && result.live && member?.activity === 'running'} />
