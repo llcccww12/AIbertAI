@@ -187,6 +187,43 @@ func (s acpSession) modelHistory() []toolConversationMessage {
 	return messages
 }
 
+// closeInterruptedTurn closes a turn whose goroutine stopped without recording
+// an end: a paused or cleared goal cancels the run, and a dropped viewer leaves
+// it behind on purpose so a restart can pick it up. Nothing is driving it while
+// the app keeps running, so the session would otherwise show "running" with no
+// stop key and refuse every prompt until the next launch.
+func (l *acpLive) closeInterruptedTurn(session acpSession) acpSession {
+	n := len(session.Turns)
+	if n == 0 {
+		session.State = "idle"
+		return session
+	}
+	session.Turns = slices.Clone(session.Turns)
+	last := &session.Turns[n-1]
+	if !last.Ended.IsZero() {
+		session.State = completedState(*last)
+		return session
+	}
+	materializeGoalCheckpoint(last)
+	// The employee stopped this turn, or the window went away mid-reply. That is
+	// an interruption, not a failure: keep whatever the turn already recorded.
+	last.Interrupted = true
+	last.Ended = time.Now().UTC()
+	if last.Ended.Before(last.Started) {
+		last.Ended = last.Started
+	}
+	if session.Engine == "dsh" && dshPendingWrite(*last) {
+		last.FailureCode = "dsh_write_outcome_unknown"
+	} else if session.Engine == "dsh" && dshPendingCanvasWrite(*last) {
+		last.FailureCode = "dsh_canvas_outcome_unknown"
+	}
+	session.State, session.Updated = completedState(*last), last.Ended
+	if session.GoalRun == last.Operation {
+		session.GoalRun = ""
+	}
+	return session
+}
+
 func (l *acpLive) beginTurn(id, op, clientID, prompt string, attachments []acpAttachment, cancel context.CancelFunc) (acpSession, int, bool, error) {
 	return l.reserveTurn(id, op, clientID, prompt, attachments, cancel, false, nil)
 }
@@ -217,6 +254,16 @@ func (l *acpLive) reserveTurn(id, op, clientID, prompt string, attachments []acp
 		// session. Releasing the attempt id lets the next resume take a fresh
 		// one instead of colliding with the turn the user starts now.
 		session.GoalRun = ""
+	}
+	if session.State == "running" && l.activeTurns[id] == nil {
+		// Nothing is driving the turn any more; the finalize path above already
+		// deleted its cancel key and saved, all under this lock. Close what it
+		// left instead of refusing the prompt for the rest of the session.
+		session = l.closeInterruptedTurn(session)
+		if err := l.save(session); err != nil {
+			return session, 0, false, errors.New("session_write_failed")
+		}
+		l.sessions[id] = session
 	}
 	if session.State == "running" || !background && queued == nil && l.queueWorkers[id] != nil {
 		return session, 0, false, errors.New("session_unavailable_for_prompt")
