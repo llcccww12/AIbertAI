@@ -14,6 +14,10 @@ assert.match(js, /"chat\.deepDiving":"AIbert is thinking"/, 'en label');
 assert.match(js, /"chat\.deepDivingFor":"AIbert is thinking for \{duration\}"/, 'en clock');
 assert.doesNotMatch(js, /\\u6DF1\\u5EA6\\u6C42\\u7D22\\u4E2D/, 'zh copy still says 深度求索中');
 assert.doesNotMatch(js, /Deep diving/, 'en copy still says Deep diving');
+// No failure copy may name another provider: the model is the customer's own.
+assert.doesNotMatch(js, /DeepSeek/, 'failure copy still names DeepSeek');
+assert.match(js, /"message\.failure\.accountSignedOut":"Stopped because the account signed out\."/, 'signed-out copy');
+assert.match(js, /"message\.failure\.accountSignInRequired":"请先登录，并确认请求地址支持账号认证。"/, 'sign-in copy');
 // Team mode keeps its own sentence for the same clock (waiting for a member).
 assert.match(js, /"chat\.deepDiving":l,"chat\.deepDivingFor":l\+\(i==="zh"\?"\\uFF0C\\u672C\\u8F6E\\u5DF2\\u7528 \{duration\}":" \\xB7 \{duration\} elapsed this turn"\)/, 'team mode copy');
 
@@ -46,4 +50,12 @@ assert.match(css, /@media\(forced-colors:active\)\{\.ChatView_runningBloomPetals
 
 // The fallback stays readable for screen readers and keeps the live region.
 assert.match(js, /role:"status","aria-live":"polite"/, 'live region lost');
+
+// No shipped renderer may show another provider's name in copy.
+const renderers = path.join(dir, '..');
+for (const name of fs.readdirSync(renderers)) {
+  const bundle = path.join(renderers, name, 'files.js');
+  if (!fs.existsSync(bundle)) continue;
+  assert.doesNotMatch(fs.readFileSync(bundle, 'utf8'), /DeepSeek/, name + ' copy still names DeepSeek');
+}
 console.log('AIbert running indicator: own copy, own spark, breathing behind reduced-motion, forced-colors fallback present');
