@@ -637,7 +637,7 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 							}
 							current.Turns = slices.Clone(current.Turns)
 							current.Turns[index] = turn
-							saveErr := live.save(current)
+							saveErr := live.saveUpdate(current, update)
 							live.mu.Unlock()
 							if saveErr != nil {
 								return saveErr

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -44,6 +45,9 @@ type acpLive struct {
 	queueWorkers     map[string]chan struct{}
 	compacting       map[string]bool
 	restarting       bool
+	streamPending    map[string]acpSession
+	streamTimers     map[string]*time.Timer
+	streamSavedAt    map[string]time.Time
 }
 
 func (l *acpLive) authorization(ctx context.Context) (authorization, error) {
@@ -88,24 +92,72 @@ type acpSession struct {
 	archivedTurns        int
 }
 
+// 流式回调每来一段增量都会重写并 fsync 整份会话清单，长回复每秒几十次。
+// 这里按会话把落盘合并到最多每 200ms 一次：内存立刻更新，回合结束时走的
+// save 会强制写盘，崩溃最多丢掉最后 200ms 的增量。
+const desktopStreamingSaveInterval = 200 * time.Millisecond
+
+func (l *acpLive) saveUpdate(session acpSession, update map[string]any) error {
+	switch update["sessionUpdate"] {
+	case "agent_message_chunk", "agent_thought_chunk":
+		return l.saveStreaming(session)
+	}
+	return l.save(session)
+}
+
+func (l *acpLive) saveStreaming(session acpSession) error {
+	if l.store == nil {
+		return l.save(session)
+	}
+	l.sessions[session.ID] = session
+	now := time.Now()
+	if now.Sub(l.streamSavedAt[session.ID]) >= desktopStreamingSaveInterval {
+		if l.streamSavedAt == nil {
+			l.streamSavedAt = make(map[string]time.Time)
+		}
+		l.streamSavedAt[session.ID] = now
+		delete(l.streamPending, session.ID)
+		return l.writeSession(session)
+	}
+	if l.streamPending == nil {
+		l.streamPending = make(map[string]acpSession)
+	}
+	l.streamPending[session.ID] = session
+	if l.streamTimers[session.ID] != nil {
+		return nil
+	}
+	if l.streamTimers == nil {
+		l.streamTimers = make(map[string]*time.Timer)
+	}
+	id := session.ID
+	l.streamTimers[id] = time.AfterFunc(desktopStreamingSaveInterval, func() {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		delete(l.streamTimers, id)
+		pending, ok := l.streamPending[id]
+		if !ok {
+			return
+		}
+		delete(l.streamPending, id)
+		l.streamSavedAt[id] = time.Now()
+		if err := l.writeSession(pending); err != nil {
+			slog.Warn("会话增量落盘失败", "module", "acp", "operation", "saveStreaming", "session", id, "error", err)
+		}
+	})
+	return nil
+}
+
 // The verification host keeps new sessions in a separate directory. It never
 // changes the legacy runtime's on-disk log or session identifiers.
 func (l *acpLive) save(session acpSession) error {
 	if l.store != nil {
-		previous := l.sessions[session.ID].archivedTurns
-		archived, err := saveDesktopSession(l.store.Root, session, previous)
-		if err != nil {
-			return err
+		// 整块写盘之前先丢掉排队中的增量快照，否则更旧的内容随后会盖掉它。
+		delete(l.streamPending, session.ID)
+		if timer := l.streamTimers[session.ID]; timer != nil {
+			timer.Stop()
+			delete(l.streamTimers, session.ID)
 		}
-		session.archivedTurns = archived
-		l.sessions[session.ID] = session
-		if wake := l.queueWorkers[session.ID]; wake != nil {
-			select {
-			case wake <- struct{}{}:
-			default:
-			}
-		}
-		return nil
+		return l.writeSession(session)
 	}
 	file, err := os.CreateTemp(l.dir, "session-*.tmp")
 	if err != nil {
@@ -120,6 +172,23 @@ func (l *acpLive) save(session acpSession) error {
 		return err
 	}
 	l.sessions[session.ID] = session
+	return nil
+}
+
+func (l *acpLive) writeSession(session acpSession) error {
+	previous := l.sessions[session.ID].archivedTurns
+	archived, err := saveDesktopSession(l.store.Root, session, previous)
+	if err != nil {
+		return err
+	}
+	session.archivedTurns = archived
+	l.sessions[session.ID] = session
+	if wake := l.queueWorkers[session.ID]; wake != nil {
+		select {
+		case wake <- struct{}{}:
+		default:
+		}
+	}
 	return nil
 }
 
