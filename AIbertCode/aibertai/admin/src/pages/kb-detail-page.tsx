@@ -428,8 +428,8 @@ export default function KbDetailPage() {
           </div>
           <div className="min-w-0 space-y-1">
             <dt className="truncate text-muted-foreground">{t("pages.knowledgeBases.authorizedUsers")}</dt>
-            <dd className="truncate" title={getAuthorizationNames(selection(selectedKb.grants), t) || t("pages.knowledgeBases.noAuthorizedUsers")}>
-              {getAuthorizationNames(selection(selectedKb.grants), t) || t("pages.knowledgeBases.noAuthorizedUsers")}
+            <dd className="truncate" title={getAuthorizationNames(selection(selectedKb.grants), t, subjects.groups, subjects.members) || t("pages.knowledgeBases.noAuthorizedUsers")}>
+              {getAuthorizationNames(selection(selectedKb.grants), t, subjects.groups, subjects.members) || t("pages.knowledgeBases.noAuthorizedUsers")}
             </dd>
           </div>
           <div className="min-w-0 space-y-1">

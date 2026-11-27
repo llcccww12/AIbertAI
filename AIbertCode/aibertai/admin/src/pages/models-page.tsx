@@ -855,19 +855,23 @@ export function ModelsPage() {
 
   const applyBatchEnabled = async () => {
     if (batchEnabled === null || batchPending) return
-    const ids = [...selectedIds]
+    const selected = models.filter((model) => selectedIds.includes(model.id))
     setBatchPending(true)
     let succeeded = 0
-    let failed = 0
-    for (const id of ids) {
+    // 只报个数字，运营分不清是权限、校验还是网络问题，只能盲目重试。
+    // 和批量删除一致：把服务端给的原因带出来。
+    const failures: string[] = []
+    for (const model of selected) {
       try {
-        await api<ApiModel>(`/api/admin/v1/models/${id}/enabled`, {
+        await api<ApiModel>(`/api/admin/v1/models/${model.id}/enabled`, {
           method: "PATCH",
           body: JSON.stringify({ enabled: batchEnabled }),
         })
         succeeded += 1
-      } catch {
-        failed += 1
+      } catch (error) {
+        failures.push(
+          `${model.displayName}: ${error instanceof Error ? error.message : String(error)}`
+        )
       }
     }
     await remote.reload()
@@ -875,8 +879,9 @@ export function ModelsPage() {
     setBatchEnabled(null)
     exitSelection()
     showToast({
-      status: failed ? "error" : "success",
-      title: `成功 ${succeeded} 个，失败 ${failed} 个`,
+      status: failures.length ? "error" : "success",
+      title: `成功 ${succeeded} 个，失败 ${failures.length} 个`,
+      description: failures.length ? failures.slice(0, 3).join("；") : undefined,
     })
   }
 
@@ -889,7 +894,7 @@ export function ModelsPage() {
     )
     setBatchPending(true)
     let succeeded = 0
-    let failed = 0
+    const failures: string[] = []
     for (const model of selected) {
       const common = {
         model_id: model.modelId,
@@ -950,16 +955,19 @@ export function ModelsPage() {
           body: JSON.stringify(payload),
         })
         succeeded += 1
-      } catch {
-        failed += 1
+      } catch (error) {
+        failures.push(
+          `${model.displayName}: ${error instanceof Error ? error.message : String(error)}`
+        )
       }
     }
     await remote.reload()
     setBatchPending(false)
     exitSelection()
     showToast({
-      status: failed ? "error" : "success",
-      title: `成功 ${succeeded} 个，失败 ${failed} 个`,
+      status: failures.length ? "error" : "success",
+      title: `成功 ${succeeded} 个，失败 ${failures.length} 个`,
+      description: failures.length ? failures.slice(0, 3).join("；") : undefined,
     })
   }
 
