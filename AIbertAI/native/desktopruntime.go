@@ -269,6 +269,32 @@ func decorateLegacyAttachments(page *archivedHistory, archive legacySessionArchi
 	}
 }
 
+// 启动阶段任何一个只读调用碰上后端重启或 502，运行时就直接退出，用户看到的是
+// 「无法连接运行时」，只能等窗口端从头再走一遍。这几个调用重试几次再放弃。
+const startupAttempts = 3
+
+func retryStartup[T any](ctx context.Context, call func(context.Context) (T, error)) (T, error) {
+	for attempt := 1; ; attempt++ {
+		value, err := call(ctx)
+		if err == nil || attempt == startupAttempts {
+			return value, err
+		}
+		select {
+		case <-ctx.Done():
+			return value, err
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
+// retryStartupCall 给写入调用方变量的调用使用。
+func retryStartupCall(ctx context.Context, call func(context.Context) error) error {
+	_, err := retryStartup(ctx, func(ctx context.Context) (struct{}, error) {
+		return struct{}{}, call(ctx)
+	})
+	return err
+}
+
 func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out io.Writer) (err error) {
 	reader := bufio.NewReaderSize(in, 64<<10)
 	line, readErr := reader.ReadSlice('\n')
@@ -372,20 +398,27 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 		return fmt.Errorf("desktop authorization: %w", err)
 	}
 	var user account
-	if err := c.json(startup, http.MethodGet, "/api/v1/me", auth.Access, "", nil, &user); err != nil {
+	if err := retryStartupCall(startup, func(ctx context.Context) error {
+		return c.json(ctx, http.MethodGet, "/api/v1/me", auth.Access, "", nil, &user)
+	}); err != nil {
 		return err
 	}
 	if user.ID != init.UserID {
 		return errDesktopCredential
 	}
-	model, err := c.selectedModelConfig(startup, auth)
+	model, err := retryStartup(startup, func(ctx context.Context) (selectedModelConfig, error) {
+		return c.selectedModelConfig(ctx, auth)
+	})
 	if err != nil {
 		return err
 	}
 	modelLocked := modelID != ""
 	modelID = model.ID
-	serverID, _, err := c.relaySigningKeys(startup)
-	if err != nil {
+	var serverID string
+	if err := retryStartupCall(startup, func(ctx context.Context) (err error) {
+		serverID, _, err = c.relaySigningKeys(ctx)
+		return err
+	}); err != nil {
 		return fmt.Errorf("desktop server identity: %w", err)
 	}
 	device, err := desktopRelayDevice(init.DataKey, init.ServerURL, serverID, init.UserID)
@@ -478,19 +511,10 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 	}
 	// Right after the first browser authorization the model catalog failed
 	// once on Windows and the whole runtime exited; retry before giving up.
-	for attempt := 1; ; attempt++ {
-		_, err := host.employeeConfig(startup)
-		if err == nil {
-			break
-		}
-		if attempt == 3 {
-			return err
-		}
-		select {
-		case <-startup.Done():
-			return err
-		case <-time.After(2 * time.Second):
-		}
+	if _, err := retryStartup(startup, func(ctx context.Context) (any, error) {
+		return host.employeeConfig(ctx)
+	}); err != nil {
+		return err
 	}
 	importCtx, stopImport := context.WithTimeout(startup, 15*time.Second)
 	host.legacyImport = host.importLegacyResources(importCtx, auth, store.cipher)
