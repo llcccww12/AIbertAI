@@ -23493,22 +23493,94 @@ xattr -dr com.apple.quarantine "$app" 2>/dev/null
 [ "$run" = 1 ] && open "$app"
 exit 0
 `;
-const WINDOWS_REPLACE_SCRIPT = `
-param([int]$ProcessId, [string]$Zip, [string]$Dir, [string]$Exe, [int]$Run)
+const WINDOWS_REPLACE_SCRIPT = `param([int]$ProcessId, [string]$Zip, [string]$Dir, [string]$Exe, [int]$Run)
 $ErrorActionPreference = "Stop"
 $log = Join-Path $env:TEMP "aibertai-update.log"
+$progress = Join-Path $env:TEMP "aibertai-update-progress.json"
 Start-Transcript -Append -Path $log | Out-Null
 $exePath = Join-Path $Dir $Exe
 $marker = Join-Path (Split-Path -Parent $Dir) ".aibertai-updating"
+$script:form = $null
+$script:bar = $null
+$script:label = $null
+# 替换文件时应用已经退出，屏幕上什么都没有，用户不知道还要等多久。这里用脚本
+# 自带的进度窗报进展；窗口建不起来就退回原来的静默流程，界面问题不能弄坏更新。
+function Show-Progress([string]$message, [int]$percent) {
+  try {
+    [IO.File]::WriteAllText($progress, (@{state = "running"; message = $message; percent = $percent} | ConvertTo-Json -Compress))
+  } catch { }
+  try {
+    if (-not $script:form) {
+      Add-Type -AssemblyName System.Windows.Forms
+      Add-Type -AssemblyName System.Drawing
+      $script:form = New-Object System.Windows.Forms.Form
+      $script:form.Text = "AIbertAI 更新"
+      $script:form.Width = 430
+      $script:form.Height = 170
+      $script:form.StartPosition = "CenterScreen"
+      $script:form.FormBorderStyle = "FixedDialog"
+      $script:form.MaximizeBox = $false
+      $script:form.MinimizeBox = $false
+      $script:form.TopMost = $true
+      $script:label = New-Object System.Windows.Forms.Label
+      $script:label.SetBounds(20, 18, 380, 42)
+      $script:form.Controls.Add($script:label)
+      $script:bar = New-Object System.Windows.Forms.ProgressBar
+      $script:bar.SetBounds(20, 70, 380, 22)
+      $script:bar.Minimum = 0
+      $script:bar.Maximum = 100
+      $script:form.Controls.Add($script:bar)
+      $script:form.Show()
+    }
+    $script:label.Text = $message
+    if ($percent -lt 0) {
+      $script:bar.Style = "Marquee"
+      $script:bar.MarqueeAnimationSpeed = 30
+    } else {
+      $script:bar.Style = "Blocks"
+      $script:bar.Value = [Math]::Min(100, [Math]::Max(0, $percent))
+    }
+    [System.Windows.Forms.Application]::DoEvents()
+  } catch { }
+}
+function Close-Progress {
+  try {
+    if ($script:form) {
+      $script:bar.Style = "Blocks"
+      $script:bar.Value = 100
+      $script:label.Text = "更新完成，正在启动新版本…"
+      [System.Windows.Forms.Application]::DoEvents()
+      Start-Sleep -Milliseconds 1500
+      $script:form.Close()
+      $script:form = $null
+    }
+  } catch { }
+}
 function Resume-Old([string]$reason) {
   "FAILED: " + $reason | Out-File -Append -Encoding utf8 $log
+  try { [IO.File]::WriteAllText($progress, (@{state = "failed"; message = $reason; percent = 0} | ConvertTo-Json -Compress)) } catch { }
+  try {
+    if ($script:form) {
+      $script:bar.Visible = $false
+      $script:label.Text = "更新没有完成：" + $reason + "。点下面的按钮用旧版本继续。"
+      $button = New-Object System.Windows.Forms.Button
+      $button.Text = "打开旧版本"
+      $button.SetBounds(145, 95, 130, 30)
+      $script:form.Controls.Add($button)
+      $button.Add_Click({ $script:form.Close() })
+      while ($script:form.Visible) { [System.Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 100 }
+      $script:form = $null
+    }
+  } catch { }
   Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
   Start-Sleep -Milliseconds 500
   if (Test-Path -LiteralPath $exePath) { Start-Process -FilePath $exePath }
   exit 1
 }
 try {
+  Show-Progress "正在准备更新…" -1
   Wait-Process -Id $ProcessId -ErrorAction SilentlyContinue
+  Show-Progress "正在等待旧版本退出…" -1
   # 运行时和浏览器宿主是独立进程，主进程退出后仍在，会锁住安装目录里的文件。
   for ($i = 0; $i -lt 20; $i++) {
     $orphans = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
@@ -23518,6 +23590,7 @@ try {
     $orphans | ForEach-Object { try { $_.Kill() } catch { } }
     Start-Sleep -Milliseconds 500
   }
+  Show-Progress "正在解压新版…" 20
   $parent = Split-Path -Parent $Dir
   $stage = Join-Path $parent (".aibertai-update-" + [guid]::NewGuid().ToString("N"))
   Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -23527,6 +23600,7 @@ try {
   if (-not (Test-Path -LiteralPath (Join-Path $new.FullName "Resources\\app\\package.json"))) {
     Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue; Resume-Old "新版压缩包缺少应用文件"
   }
+  Show-Progress "正在替换文件…" 60
   $old = Join-Path $stage "previous"
   $moved = $false
   for ($i = 0; $i -lt 240; $i++) {
@@ -23541,6 +23615,7 @@ try {
   Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $Zip -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+  Show-Progress "正在启动新版…" 95
   if ($Run -eq 1) {
     # Windows 和 macOS 不同：这里要按新版目录里的文件启动。包名一改（例如从候选包
     # 换成 AIbertAI.exe），旧名字就不存在了，照旧名字启动会让更新装上了却不重开。
@@ -23550,8 +23625,9 @@ try {
       if ($exes.Count -eq 1) { $launch = $exes[0].FullName }
     }
     if (Test-Path -LiteralPath $launch) { Start-Process -FilePath $launch }
-    else { "FAILED: 新版里找不到可执行文件" | Out-File -Append -Encoding utf8 $log }
+    else { Resume-Old "新版里找不到可执行文件" }
   }
+  Close-Progress
 } catch {
   Resume-Old $_.Exception.Message
 } finally {
@@ -25907,8 +25983,22 @@ function updateInstallInProgress() {
   }
   return true;
 }
+// 替换脚本会写这个文件报进度。它还在动，就说明脚本自己的进度窗已经在屏幕上，
+// 此时再弹一个对话框只会盖住进度，直接让路。
+function updateProgressFresh() {
+  try {
+    const info = node_fs.statSync(node_path.join(electron.app.getPath("temp"), "aibertai-update-progress.json"));
+    return Date.now() - info.mtimeMs < 60 * 1000;
+  } catch {
+    return false;
+  }
+}
 function onReady() {
   if (updateInstallInProgress()) {
+    if (updateProgressFresh()) {
+      electron.app.quit();
+      return;
+    }
     const chinese = String(readPrefs().locale ?? electron.app.getLocale()).startsWith("zh");
     electron.dialog.showMessageBoxSync({
       type: "info",

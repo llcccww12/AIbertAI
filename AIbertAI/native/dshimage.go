@@ -49,7 +49,10 @@ func (h *relaySessionHost) prepareDSHImageInput(ctx context.Context, session, pr
 		}
 		if image {
 			if !vision {
-				return dshImageInput{}, false, errors.New("model_vision_unavailable")
+				// 当前模型看不了图。整轮直接失败会把会话卡死：之后每条消息都会撞在
+				// 同一张图上，用户只能退出重开。这里把图换成一句说明，让这轮照常进行。
+				blocks = append(blocks, map[string]string{"type": "text", "text": "\n\n[附件 " + file.Name + "：当前模型不支持图片，这张图没有发送。换成支持图片的模型后重新提问即可。]"})
+				continue
 			}
 			hasImage = true
 			blocks = append(blocks, map[string]string{"type": "image", "data": base64.StdEncoding.EncodeToString(data), "mimeType": mime, "name": file.Name})

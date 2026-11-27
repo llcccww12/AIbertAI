@@ -36,13 +36,10 @@ func newDSHGatewayRuntime(installation dshInstalledRuntime, journalRoot string, 
 			return selectedModelConfig{}, errors.New("invalid_dsh_gateway_model")
 		}
 		if !selected.SupportsVision {
+			// 只看这一轮有没有图。历史里有过图就整段拒绝，会让会话永久卡死：
+			// 之后每条消息都撞在同一张旧图上，用户只能退出重开。
 			if _, ok := ctx.Value(dshImageInputKey{}).(dshImageInput); ok {
 				return selectedModelConfig{}, errors.New("model_vision_unavailable")
-			}
-			for _, turn := range session.Turns {
-				if turn.DSHHasImages {
-					return selectedModelConfig{}, errors.New("model_vision_unavailable")
-				}
 			}
 		}
 		return selected, nil
@@ -88,11 +85,6 @@ func newDSHGatewayRuntime(installation dshInstalledRuntime, journalRoot string, 
 		if !selected.SupportsVision {
 			if _, ok := ctx.Value(dshImageInputKey{}).(dshImageInput); ok {
 				return nil, "", "", nil, nil, errors.New("model_vision_unavailable")
-			}
-			for _, turn := range session.Turns {
-				if turn.DSHHasImages {
-					return nil, "", "", nil, nil, errors.New("model_vision_unavailable")
-				}
 			}
 		}
 		journal := filepath.Join(journalRoot, session.ID)
