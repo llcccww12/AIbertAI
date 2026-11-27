@@ -70,6 +70,28 @@ async function statFile(file) {
   }
 }
 
+// 更新包有数百 MB，员工端靠 Content-Length 算下载进度、靠 Range 断点续传。
+// 只支持单段范围；无法满足时回 416，语法不认识时按整文件返回。
+function parseRange(header, size) {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(String(header ?? "").trim())
+  if (!match) return undefined
+  const [, first, last] = match
+  if (!first && !last) return undefined
+  let start
+  let end
+  if (!first) {
+    const suffix = Number(last)
+    if (suffix === 0) return null
+    start = Math.max(0, size - suffix)
+    end = size - 1
+  } else {
+    start = Number(first)
+    end = last ? Math.min(Number(last), size - 1) : size - 1
+  }
+  if (start > end || start >= size) return null
+  return { start, end }
+}
+
 async function serveStatic(req, res) {
   const pathname = decodeURIComponent(req.url.split("?")[0])
   let file = resolve(dist, "." + pathname)
@@ -84,20 +106,35 @@ async function serveStatic(req, res) {
   }
   if (!info?.isFile()) {
     file = resolve(dist, "index.html")
-    if (!(await statFile(file))?.isFile()) {
+    info = await statFile(file)
+    if (!info?.isFile()) {
       res.writeHead(404).end()
       return
     }
   }
-  res.writeHead(200, {
-    "Content-Type": mime[extname(file)] ?? "application/octet-stream",
+  const type = mime[extname(file)] ?? "application/octet-stream"
+  const size = info.size
+  const range = parseRange(req.headers.range, size)
+  if (range === null) {
+    res.writeHead(416, { "Content-Range": `bytes */${size}`, "Accept-Ranges": "bytes" }).end()
+    return
+  }
+  const start = range ? range.start : 0
+  const end = range ? range.end : size - 1
+  const length = size === 0 ? 0 : end - start + 1
+  const headers = {
+    "Content-Type": type,
     "Cache-Control": "no-cache",
-  })
-  if (req.method === "HEAD") {
+    "Accept-Ranges": "bytes",
+    "Content-Length": length,
+  }
+  if (range) headers["Content-Range"] = `bytes ${start}-${end}/${size}`
+  res.writeHead(range ? 206 : 200, headers)
+  if (req.method === "HEAD" || length === 0) {
     res.end()
     return
   }
-  const stream = createReadStream(file)
+  const stream = createReadStream(file, { start, end })
   res.on("close", () => stream.destroy())
   stream.on("error", () => res.destroy())
   stream.pipe(res)

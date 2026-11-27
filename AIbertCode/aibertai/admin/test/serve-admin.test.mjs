@@ -91,6 +91,70 @@ test("deployment entry serves the admin UI and proxies the device bridge", { tim
   }
 })
 
+// 员工端更新器按 Content-Length 算进度、按 Range 续传；缺了这两个头，数百 MB 的
+// 更新包进度会一直停在 0%，连接一断就得从头下。
+test("serves downloads with a length and byte ranges", { timeout: 10000 }, async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "aibert-admin-download-"))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  await mkdir(join(dir, "dist", "downloads"), { recursive: true })
+  await mkdir(join(dir, "scripts"))
+  await writeFile(join(dir, "dist", "index.html"), "<title>Test admin</title>")
+  const payload = Buffer.from("0123456789abcdefghij")
+  await writeFile(join(dir, "dist", "downloads", "pkg.zip"), payload)
+  const script = join(dir, "scripts", "serve-admin.mjs")
+  await copyFile(new URL("../scripts/serve-admin.mjs", import.meta.url), script)
+
+  const child = spawn(process.execPath, [script], {
+    env: {
+      ...process.env,
+      AIBERTAI_DEV_BACKEND_URL: "http://127.0.0.1:1",
+      ADMIN_LISTEN_HOST: "127.0.0.1",
+      ADMIN_LISTEN_PORT: "0",
+    },
+    stdio: ["ignore", "pipe", "inherit"],
+  })
+  t.after(async () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = once(child, "exit")
+      child.kill()
+      await exited
+    }
+  })
+  const lines = createInterface({ input: child.stdout })
+  const [line] = await once(lines, "line", { signal: t.signal })
+  lines.close()
+  const url = `http://127.0.0.1:${line.match(/:(\d+)$/)[1]}/downloads/pkg.zip`
+
+  const full = await fetch(url)
+  assert.equal(full.status, 200)
+  assert.equal(full.headers.get("content-length"), String(payload.length))
+  assert.equal(full.headers.get("accept-ranges"), "bytes")
+  assert.deepEqual(Buffer.from(await full.arrayBuffer()), payload)
+
+  const head = await fetch(url, { method: "HEAD" })
+  assert.equal(head.headers.get("content-length"), String(payload.length))
+  await head.arrayBuffer()
+
+  const part = await fetch(url, { headers: { Range: "bytes=4-7" } })
+  assert.equal(part.status, 206)
+  assert.equal(part.headers.get("content-range"), `bytes 4-7/${payload.length}`)
+  assert.equal(part.headers.get("content-length"), "4")
+  assert.equal(Buffer.from(await part.arrayBuffer()).toString(), "4567")
+
+  const rest = await fetch(url, { headers: { Range: "bytes=15-" } })
+  assert.equal(rest.status, 206)
+  assert.equal(Buffer.from(await rest.arrayBuffer()).toString(), "fghij")
+
+  const tail = await fetch(url, { headers: { Range: "bytes=-3" } })
+  assert.equal(tail.status, 206)
+  assert.equal(Buffer.from(await tail.arrayBuffer()).toString(), "hij")
+
+  const beyond = await fetch(url, { headers: { Range: "bytes=99-" } })
+  assert.equal(beyond.status, 416)
+  assert.equal(beyond.headers.get("content-range"), `bytes */${payload.length}`)
+  await beyond.arrayBuffer()
+})
+
 async function fetchRejectedUpgrade(url, headers) {
   const [response] = await once(http.get(url, { headers }), "response")
   const chunks = []
