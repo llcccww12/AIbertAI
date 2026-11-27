@@ -1,0 +1,78 @@
+name: Tests
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/tests.yml"
+      - "AIbertAI/native/**"
+      - "AIbertCode/aibertai/backend/**"
+      - "AIbertCode/aibertai/admin/**"
+  push:
+    branches: ["main", "20261122"]
+    paths:
+      - ".github/workflows/tests.yml"
+      - "AIbertAI/native/**"
+      - "AIbertCode/aibertai/backend/**"
+      - "AIbertCode/aibertai/admin/**"
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: AIbertCode/aibertai/backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: AIbertCode/aibertai/backend/go.mod
+          cache-dependency-path: AIbertCode/aibertai/backend/go.sum
+      - name: Build
+        run: go build ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -short ./...
+
+  native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: AIbertAI/native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: AIbertAI/native/go.mod
+          cache-dependency-path: AIbertAI/native/go.sum
+      - name: Build
+        run: go build ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -short ./...
+
+  admin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: AIbertCode/aibertai/admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: AIbertCode/aibertai/admin/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Build and type-check
+        run: npm run build
+      - name: Test
+        run: npm test
