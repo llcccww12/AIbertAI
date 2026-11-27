@@ -4,10 +4,15 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
+
+// dshPrepareProcess keeps DSH's own attributes; the job object below collects
+// the processes it starts instead of a process group.
+func dshPrepareProcess(*exec.Cmd) {}
 
 // dshProcessTree puts DSH in a kill-on-close job, so closing it also ends the
 // shells and servers DSH started. The returned func closes the job.

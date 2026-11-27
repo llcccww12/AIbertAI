@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -49,5 +50,30 @@ func TestDSHCloseDoesNotWaitForChildren(t *testing.T) {
 	p.close()
 	if elapsed := time.Since(started); elapsed > 4*time.Second {
 		t.Fatalf("close waited %v", elapsed)
+	}
+}
+
+// 只杀 DSH 本身会把它的子进程留成孤儿，继续占着端口和句柄。关闭后整组必须消失。
+func TestDSHCloseEndsProcessGroup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses process groups")
+	}
+	cmd := exec.Command("sh", "-c", "sleep 30 & sleep 30")
+	p, err := startDSH(t.Context(), cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := p.cmd.Process.Pid
+	p.close()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		err := syscall.Kill(-pid, 0)
+		if errors.Is(err, syscall.ESRCH) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("关闭后进程组 %d 仍然存在: %v", pid, err)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }

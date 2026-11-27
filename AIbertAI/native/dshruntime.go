@@ -152,6 +152,7 @@ type dshProcess struct {
 }
 
 func startDSH(ctx context.Context, cmd *exec.Cmd) (*dshProcess, error) {
+	dshPrepareProcess(cmd)
 	in, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
