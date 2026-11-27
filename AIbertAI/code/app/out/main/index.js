@@ -2799,6 +2799,42 @@ function nativeViewportDiagnostic(args) {
     obstruction
   }];
 }
+// 诊断面板要能自己说出「为什么连不上」：读日志尾部，挑出最近的失败行。
+// 昨夜的令牌过期就是这样查出来的——界面上只显示「任务执行出错」。
+function recentFailureLines(limit = 4) {
+  let file;
+  try {
+    file = currentLogFile();
+  } catch {
+    return [];
+  }
+  const tail = 128 * 1024;
+  let fd;
+  try {
+    fd = node_fs.openSync(file, "r");
+    const size = node_fs.fstatSync(fd).size;
+    const start = Math.max(0, size - tail);
+    const buffer = Buffer.alloc(size - start);
+    node_fs.readSync(fd, buffer, 0, buffer.length, start);
+    return buffer.toString("utf8").split("\n")
+      .filter((line) => /(HTTP 401|HTTP 403|exited with code|timed out|ERR_CONNECTION|not synced|unavailable|failed)/i.test(line))
+      .slice(-limit)
+      .map((line) => line.trim().slice(0, 240));
+  } catch {
+    return [];
+  } finally {
+    if (fd !== undefined) try {
+      node_fs.closeSync(fd);
+    } catch {
+    }
+  }
+}
+function diagnosticsSignIn() {
+  const account = currentAccount();
+  if (!account) return { state: "signedOut", server: null };
+  const expired = recentFailureLines(8).some((line) => /HTTP 40[13]/.test(line));
+  return { state: expired ? "expired" : "active", server: account.server?.url ?? null, userId: account.user?.id ?? null };
+}
 function setupDiagnosticsIpc(runtimeStatus2, platform2) {
   handle("diagnostics:acp-timeout", acpTimeoutDiagnostic, (event, diagnostic) => {
     writeLog("warn", "main", `[acp-timeout] ${JSON.stringify({ windowId: trustedWindow(event).id, ...diagnostic })}`);
@@ -2817,6 +2853,11 @@ function setupDiagnosticsIpc(runtimeStatus2, platform2) {
     chrome: process.versions.chrome,
     node: process.versions.node,
     runtime: runtimeStatus2(),
+    signIn: diagnosticsSignIn(),
+    lastExitCode: lastRuntimeExitCode,
+    lastExitAt: lastRuntimeExitAt,
+    restartFailures: restart$2.failures,
+    recentFailures: recentFailureLines(),
     packaged: electron.app.isPackaged,
     userDataDir: electron.app.getPath("userData"),
     arch: process.arch,
@@ -14714,6 +14755,8 @@ let transition = Promise.resolve();
 let stopping$2 = null;
 let quitting$1 = false;
 let restart$2 = initialRestartState();
+let lastRuntimeExitCode = null;
+let lastRuntimeExitAt = null;
 let backoff = null;
 let endpoint$2 = null;
 let activeAccountId = null;
@@ -14893,8 +14936,14 @@ async function start$2(account) {
     endpoint$2 = null;
     clearDeviceRemoteStatus();
     restart$2 = recordUnexpectedExit(restart$2, Date.now());
+    lastRuntimeExitCode = code;
+    lastRuntimeExitAt = new Date().toISOString();
     settleReadyWaiters$1(new Error(ErrorCode.runtimeExited));
     if (isCircuitOpen(restart$2, Date.now())) console.error(`[main] runtime exited ${restart$2.failures} times in a row; pausing restarts`);
+    // 首次安装后运行时可能自己退出（Windows 首次授权后取模型目录失败过一次）。
+    // 等账号变化才重试会让员工卡在「无法连接运行时」直到退出重登，这里按退避自动拉起；
+    // 连续失败由熔断器停下，不会无限重启。
+    void syncRuntimeToAccount();
   };
   proc.on("error", (error) => {
     console.error(`[main] runtime could not be started: ${error.message}`);

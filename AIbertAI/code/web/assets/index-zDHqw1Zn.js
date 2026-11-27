@@ -114234,6 +114234,15 @@ const qwt = {
       teamConfig: "团队配置",
       noTeam: "暂无团队配置",
       logsDir: "日志文件夹",
+      signIn: "登录状态",
+      signInActive: "正常",
+      signInExpired: "已过期，请重新登录",
+      signInHint: "退出账号后重新登录即可恢复",
+      signInSignedOut: "未登录",
+      lastFailure: "最近一次失败",
+      noFailure: "无",
+      runtimeRestarts: "引擎重启次数",
+      exitCode: "退出码",
     },
     storage: {
       hint: "账号、对话、工作区、技能包和浏览器数据都保存在这里。系统盘空间不足时，可以把数据迁到其他磁盘。",
@@ -117321,6 +117330,15 @@ Start with the conclusion, then explain the reasoning.`,
       teamConfig: "Team configuration",
       noTeam: "No team configuration available",
       logsDir: "Log folder",
+      signIn: "Sign-in state",
+      signInActive: "Active",
+      signInExpired: "Expired — sign in again",
+      signInHint: "Sign out and sign in to recover",
+      signInSignedOut: "Not signed in",
+      lastFailure: "Last failure",
+      noFailure: "None",
+      runtimeRestarts: "Engine restarts",
+      exitCode: "Exit code",
     },
     storage: {
       hint: "Accounts, conversations, workspaces, skill packages and browser data are stored here. If the system drive is running out of space, move the data to another drive.",
@@ -137352,7 +137370,10 @@ function x8t() {
         `hostname ${a?.hostname || "-"}`,
         `electron ${a?.electron ?? "-"} · chrome ${a?.chrome ?? "-"} · node ${a?.node ?? "-"}`,
         `runtime ${a?.runtime ?? "-"}`,
-        `server ${n?.serverUrl ?? "-"}`,
+        `signIn ${a?.signIn?.state ?? "-"}`,
+        `lastFailure ${[...(a?.recentFailures ?? [])].reverse()[0] ?? "-"}`,
+        `restarts ${a?.restartFailures ?? 0} exit ${a?.lastExitCode ?? "-"}`,
+        `server ${n?.serverUrl ?? a?.signIn?.server ?? "-"}`,
         `engine ${n?.engine ? `${n.engine.name} ${n.engine.version} (protocol ${n.engine.protocolVersion})` : "not running"}`,
         `team config ${r ? `${r.state} ${r.version ?? ""} fetched ${r.fetchedAt ?? "-"} (${r.error ?? "ok"})` : "none"}`,
         `engine bin ${n?.engineBin ?? "-"}`,
@@ -137492,7 +137513,50 @@ function x8t() {
                 label: e("settings.diagnostics.server"),
                 children: l.jsx("span", {
                   className: "break-all",
-                  children: n?.serverUrl ?? "-",
+                  children: n?.serverUrl ?? a?.signIn?.server ?? "-",
+                }),
+              }),
+              l.jsx(PF, {
+                label: e("settings.diagnostics.signIn"),
+                children: l.jsxs("span", {
+                  className:
+                    a?.signIn?.state === "expired"
+                      ? "text-red-600 dark:text-red-400"
+                      : void 0,
+                  children: [
+                    e(
+                      a?.signIn?.state === "expired"
+                        ? "settings.diagnostics.signInExpired"
+                        : a?.signIn?.state === "active"
+                          ? "settings.diagnostics.signInActive"
+                          : "settings.diagnostics.signInSignedOut",
+                    ),
+                    a?.signIn?.state === "expired" &&
+                      l.jsx("span", {
+                        className: "ml-2 text-xs text-muted-foreground",
+                        children: e("settings.diagnostics.signInHint"),
+                      }),
+                  ],
+                }),
+              }),
+              l.jsx(PF, {
+                label: e("settings.diagnostics.lastFailure"),
+                children: l.jsx("span", {
+                  className: "break-all font-mono text-xs",
+                  children:
+                    [...(a?.recentFailures ?? [])].reverse()[0] ??
+                    e("settings.diagnostics.noFailure"),
+                }),
+              }),
+              l.jsx(PF, {
+                label: e("settings.diagnostics.runtimeRestarts"),
+                children: l.jsxs("span", {
+                  children: [
+                    a?.restartFailures ?? 0,
+                    a?.lastExitCode !== null &&
+                      a?.lastExitCode !== void 0 &&
+                      ` · ${e("settings.diagnostics.exitCode")} ${a.lastExitCode}`,
+                  ],
                 }),
               }),
               l.jsx(PF, {
