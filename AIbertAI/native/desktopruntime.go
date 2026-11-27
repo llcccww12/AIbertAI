@@ -337,7 +337,10 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 	}
 	defer store.root.Close()
 	grant, err := store.load()
-	missingGrant := errors.Is(err, os.ErrNotExist)
+	// 读不出凭据（文件被截断、校验失败、换了账号）和「本来就没有凭据」一样处理：
+	// 走浏览器授权换一份新的。原来只有文件不存在或刷新被拒才重新登录，其余错误
+	// 直接让运行时退出，账号就再也起不来，连退出登录也救不回来。
+	missingGrant := err != nil
 	source := &desktopSourceAuth{client: c, store: store, grant: grant}
 	var auth authorization
 	if err == nil {

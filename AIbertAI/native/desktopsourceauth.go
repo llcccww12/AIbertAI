@@ -306,10 +306,11 @@ func desktopSourceLogout(ctx context.Context, profile, server, user string, in i
 		return nil
 	}
 	if err != nil {
-		return err
+		// 凭据已经读不出来（被截断、校验失败），本地直接清掉。
+		// 这里返回错误会让退出登录也失败，用户既退不出去也换不了账号。
+		return store.root.Remove(sourceGrantFilename)
 	}
-	if err := c.revoke(ctx, grant.Auth); err != nil {
-		return err
-	}
+	// 撤销是尽力而为：断网或后端 5xx 时也必须完成本地登出，否则账号被卡死。
+	_ = c.revoke(ctx, grant.Auth)
 	return store.root.Remove(sourceGrantFilename)
 }
