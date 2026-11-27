@@ -130,6 +130,12 @@ def excluded(relative, platform, arch, office):
             return "node-pty debug symbols"
     if package == "@koromix/koffi-win32-x64" and entry == "win32_x64/koffi.lib":
         return "Koffi import library"
+    # 这些说明文档的文件名很长，加上解压目录后会超过 Windows 的 260 字符上限，
+    # 资源管理器中解压会中途失败，缺文件又让 DSH 资源校验过不去、运行时长不起来。
+    # 只在 Windows 去掉：只有实验性 Inspector 的 Issues 面板读它们。
+    if platform == "win32" and package == "@deepseek-ai/dsh-experimental-inspector" \
+            and entry.startswith("lib/devtools/models/issues_manager/descriptions/"):
+        return "DevTools issue descriptions exceed the Windows path limit"
     return None
 
 
