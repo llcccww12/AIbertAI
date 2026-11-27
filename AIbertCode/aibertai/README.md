@@ -77,6 +77,25 @@ bash deploy/stack.sh up
 
 迁移已有平台前，备份并恢复 PostgreSQL、RustFS、运行时状态目录和部署私密配置。迁移时尽量保留统一域名和端口，以延续原设备身份。更换登录地址时，桌面端会按新地址重新注册设备。首次初始化数据库只能得到一个空团队。若曾使用手工部署的 5173 静态代理，切换到此入口前先为新实例选择独立监听端口，避免和正在运行的服务冲突。保持已有服务运行时，也可优先将代理换成仓库内的 `admin/scripts/serve-admin.mjs`。
 
+### 备份与发布目录清理
+
+数据库和对象存储都在 Docker 数据卷里，删容器就没了。`deploy/backup.sh` 用容器自带的 `pg_dump` 导出整库，再把对象存储的数据目录打成一个包，默认留在 `/root/AIbert-backups`，超过 14 天的自动轮换。脚本不写任何口令，恢复时用 `pg_restore` 和展开压缩包即可。
+
+```bash
+bash deploy/backup.sh            # 生成一份备份，并清理过期的
+bash deploy/backup.sh --list     # 只看现有备份
+crontab -l | { cat; echo '20 4 * * * bash /root/AIbert/AIbertCode/aibertai/deploy/backup.sh >> /root/AIbert-backups/backup.log 2>&1'; } | crontab -
+```
+
+备份和数据在同一块盘上，只防误删和升级失败，不防磁盘损坏。有条件时把 `BACKUP_DIR` 指到另一台机器挂载的目录上。
+
+发布目录里的 `stage-*` 是打包时的中间目录，发布完成后就没有用了，一个版本会占到 1 GiB。`deploy/prune-releases.sh` 默认只列出将要删除的内容，加 `--apply` 才真的删，安装包只保留最近三个版本。
+
+```bash
+bash deploy/prune-releases.sh            # 先看会删什么
+bash deploy/prune-releases.sh --apply    # 确认后执行
+```
+
 ### 升级默认资源桶
 
 新配置默认使用 `aibertai-resources`。Compose 的 `stack.sh up` 会在后端停服期间迁移旧默认桶。自定义桶保持原配置。手工运行后端时，先停止所有使用这两个桶的后端进程，保持 RustFS 运行，使用已配置 S3 环境变量的新版服务执行：
