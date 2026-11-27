@@ -2817,7 +2817,9 @@ function recentFailureLines(limit = 4) {
     const buffer = Buffer.alloc(size - start);
     node_fs.readSync(fd, buffer, 0, buffer.length, start);
     return buffer.toString("utf8").split("\n")
-      .filter((line) => /(HTTP 401|HTTP 403|exited with code|timed out|ERR_CONNECTION|not synced|unavailable|failed)/i.test(line))
+      // 运行时把真正的原因打在 stderr 上（资源清单校验、授权失败），只认 HTTP/退出码
+      // 会让「反复崩溃」永远查不出原因。这些关键字把原话也带进诊断页。
+      .filter((line) => /(HTTP 401|HTTP 403|exited with code|timed out|ERR_CONNECTION|not synced|unavailable|failed|dsh resources|refused to start|could not be started|desktop authorization)/i.test(line))
       .slice(-limit)
       .map((line) => line.trim().slice(0, 240));
   } catch {
@@ -23539,7 +23541,17 @@ try {
   Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $Zip -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
-  if ($Run -eq 1) { Start-Process -FilePath $exePath }
+  if ($Run -eq 1) {
+    # Windows 和 macOS 不同：这里要按新版目录里的文件启动。包名一改（例如从候选包
+    # 换成 AIbertAI.exe），旧名字就不存在了，照旧名字启动会让更新装上了却不重开。
+    $launch = Join-Path $Dir $Exe
+    if (-not (Test-Path -LiteralPath $launch)) {
+      $exes = @(Get-ChildItem -LiteralPath $Dir -Filter *.exe -File -ErrorAction SilentlyContinue)
+      if ($exes.Count -eq 1) { $launch = $exes[0].FullName }
+    }
+    if (Test-Path -LiteralPath $launch) { Start-Process -FilePath $launch }
+    else { "FAILED: 新版里找不到可执行文件" | Out-File -Append -Encoding utf8 $log }
+  }
 } catch {
   Resume-Old $_.Exception.Message
 } finally {

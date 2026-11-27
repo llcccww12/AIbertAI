@@ -58,7 +58,7 @@ macOS 构建使用本机的 Electron ARM64 和系统 DMG 工具，生成带临�
 
 用于包内联调时，在应用资源目录加入 `employee-source.json`，指定 `version: 1`。源码运行时放入 `bin/aibertai-native` 或 `bin/aibertai-native.exe`。包内可选的合成工具文件名为 `employee-acceptance.txt`。员工端从内置页面启动该二进制。
 
-安装包启动时校验包内运行时文件。客户登录时输入自己的后端地址，应用按账号保存并使用它。安装包无需为每个部署重新构建。运行时从该后端的授权目录选择第一个兼容文本模型。应用的集成允许正常访问第三方服务。打包脚本检查发包内容是否残留旧网关地址。
+安装包启动时校验包内运行时文件。客户登录时输入自己的后端地址，应用按账号保存并使用它。安装包无需为每个部署重新构建。运行时从该后端的授权目录选择第一个兼容文本模型。应用的集成允许正常访问第三方服务。打包脚本检查应用自己的前端资源（`app/out`、`web`、`browser-extension`）里是否残留旧网关地址；随包的 DSH 运行时和 `app/node_modules` 不在扫描范围内。
 
 使用 `build-employee-candidate.sh` 生成包含真实员工端界面的候选包。依次传入平台、合成文本文件或 `-`，以及输出目录。传入 `-` 时测试实际工作区。Windows 还需提供官方 Electron Windows x64 ZIP 及同目录的 `SHASUMS256.txt`。脚本输出 macOS DMG 或 Windows x64 便携 ZIP，以及 SHA-256 校验文件。回环后端地址适合在运行后端的同一台机器上验收。
 

@@ -294,6 +294,17 @@ if [[ $target == mac-arm64 ]]; then
 else
   ditto --norsrc -c -k --keepParent "$app" "$stage/$artifact"
   unzip -tq "$stage/$artifact"
+  # 员工用资源管理器解压。包内路径加上解压目录超过 260 字符会中途失败，缺文件又让
+  # 运行时的资源清单校验过不去、直接起不来，且现场只能看到「反复崩溃」。
+  # 在打包这一步拦下，比发出去再回滚便宜得多。
+  python3 - "$stage/$artifact" <<'PY'
+import sys, zipfile
+limit = 200
+longest = max((info.filename for info in zipfile.ZipFile(sys.argv[1]).infolist()), key=len)
+if len(longest) > limit:
+    raise SystemExit(f"Windows 包内最长路径 {len(longest)} 字符，超过 {limit} 的上限：\n  {longest}\n"
+                     "解压到稍深目录后总长会越过 Windows 的 260 字符上限，资源管理器会中途失败。")
+PY
 fi
 
 (cd "$stage" && shasum -a 256 "$artifact" > "$artifact.sha256")
@@ -324,6 +335,11 @@ with archive.open("rb") as f:
 sha512 = base64.b64encode(digest.digest()).decode()
 version = json.loads(package.read_text())["version"]
 size = archive.stat().st_size
+# 先确认更新日志有这一条，再写 feed：feed 是原地覆盖的固定文件名，写坏了没有回退版本。
+# 之前是写完才检查，漏一条就在最后一步失败，留下一个指向不存在文件的 latest*.yml。
+notes = json.loads(notes_file.read_text()) if notes_file.exists() else []
+if not any(entry.get("version") == version for entry in notes):
+    raise SystemExit(f"packaging/release-notes.json has no entry for {version}")
 channel.write_text(f"""version: {version}
 files:
   - url: {archive.name}
@@ -334,9 +350,6 @@ sha512: {sha512}
 releaseDate: '{datetime.now(timezone.utc).isoformat()}'
 """)
 # 应用内更新页展示的更新日志，来自 packaging/release-notes.json；JSON 写法同样是合法 YAML。
-notes = json.loads(notes_file.read_text()) if notes_file.exists() else []
-if not any(entry.get("version") == version for entry in notes):
-    raise SystemExit(f"packaging/release-notes.json has no entry for {version}")
 with channel.open("a") as out:
     out.write("releaseNotes: " + json.dumps(notes, ensure_ascii=False) + "\n")
 PY

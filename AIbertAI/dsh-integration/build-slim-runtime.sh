@@ -27,9 +27,17 @@ if [[ ! -f "$source/manifest.sha256" ]]; then
   exit 1
 fi
 python3 "$integration/manifest.py" verify "$source/resources" --manifest-sha256 "$(cat "$source/manifest.sha256")"
-if [[ -f "$destination/manifest.sha256" ]]; then
+# 缓存键只有补丁摘要，所以重建过 DSH 之后这里会误命中，把旧运行时当新运行时发出去。
+# 再绑一份源清单摘要：重建出了不同内容就必须重新派生。
+source_digest=$(cat "$source/manifest.sha256")
+if [[ -f "$destination/manifest.sha256" && -f "$destination/source-manifest.sha256" ]] &&
+    [[ "$(cat "$destination/source-manifest.sha256")" == "$source_digest" ]]; then
   python3 "$integration/manifest.py" verify "$destination/resources" --manifest-sha256 "$(cat "$destination/manifest.sha256")"
   exit 0
+fi
+if [[ -e "$destination" ]]; then
+  echo "Source runtime changed since the cached slim build; deriving it again." >&2
+  rm -rf -- "$destination"
 fi
 mkdir -p "$cache"
 stage=$(mktemp -d "$cache/.build.XXXXXXXX")
@@ -43,5 +51,6 @@ python3 "$integration/slim-runtime.py" "$stage/resources" --target "$target"
 python3 "$integration/manifest.py" create "$stage/resources" --patch "$patch" --lockfile "$stage/pnpm-lock.yaml" \
   --archive-sha256 a46ccc2890645d0a7f3b032eeadb988769893392da5dcd48a1bc4ce0e49ba3fc --target "$target" --node-version "$node_version" > "$stage/manifest.sha256"
 rm "$stage/pnpm-lock.yaml"
+printf '%s\n' "$source_digest" > "$stage/source-manifest.sha256"
 python3 -c 'import os, sys; os.rename(sys.argv[1], sys.argv[2])' "$stage" "$destination"
 echo "Slim $target DSH runtime ready at $destination ($(du -sh "$destination/resources" | cut -f1))"
