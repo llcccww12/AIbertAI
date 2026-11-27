@@ -253,7 +253,9 @@ func (p *Postgres) Update(ctx context.Context, user, machine, action string, ali
 			}
 			row, err = q.Rename(ctx, sqlc.RenameParams{UserID: user, MachineID: machine, Alias: alias})
 		case "revoke", "restore":
-			if old.KeyID != nil && action == "revoke" {
+			// 停用和恢复是对远程执行身份的同一个管理动作，权限必须一致：
+			// 只给恢复放行，等于把管理员停用的设备让任何持设备凭据的一方重新点亮。
+			if old.KeyID != nil {
 				principal, ok := identity.PrincipalFromContext(ctx)
 				if !ok || !principal.Has("device:manage") || p.auth == nil {
 					return old, executionFailure(403, "permission_denied")
