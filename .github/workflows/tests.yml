@@ -65,14 +65,17 @@ jobs:
         working-directory: AIbertCode/aibertai/admin
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: AIbertCode/aibertai/admin/package-lock.json
+          cache: pnpm
+          cache-dependency-path: AIbertCode/aibertai/admin/pnpm-lock.yaml
       - name: Install
-        run: npm ci
+        run: pnpm install --frozen-lockfile
       - name: Build and type-check
-        run: npm run build
+        run: pnpm run build
       - name: Test
-        run: npm test
+        run: pnpm test
