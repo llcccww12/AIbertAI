@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"aibertai.local/backend/internal/envconfig"
 	"aibertai.local/backend/internal/web"
 	"log/slog"
 	"net/http"
@@ -28,6 +29,59 @@ type Service struct {
 
 func NewService(pool *pgxpool.Pool, logger *slog.Logger) *Service {
 	return &Service{pool: pool, logger: logger}
+}
+
+// 审计表只增不减：没有保留窗口时，分页查询和备份都会随年份线性变慢变大。
+// 默认留一年，运维可以用 AIBERTAI_AUDIT_RETENTION_DAYS 调整，设 0 表示永不清理。
+const defaultAuditRetention = 365 * 24 * time.Hour
+
+func auditRetention() time.Duration {
+	raw := strings.TrimSpace(envconfig.Getenv("AIBERTAI_AUDIT_RETENTION_DAYS"))
+	if raw == "" {
+		return defaultAuditRetention
+	}
+	days, err := strconv.Atoi(raw)
+	if err != nil || days < 0 {
+		slog.Warn("审计保留天数配置无效，沿用默认值", "module", "audit", "operation", "auditRetention", "value", raw)
+		return defaultAuditRetention
+	}
+	return time.Duration(days) * 24 * time.Hour
+}
+
+// Purge 清理超过保留期的审计记录，返回删除行数。
+func (s *Service) Purge(ctx context.Context) (int64, error) {
+	retention := auditRetention()
+	if retention <= 0 {
+		return 0, nil
+	}
+	tag, err := s.pool.Exec(ctx, "DELETE FROM audits WHERE occurred_at < $1", time.Now().UTC().Add(-retention))
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// Run 每天清理一次过期审计记录，直到 ctx 结束。
+func (s *Service) Run(ctx context.Context) {
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+			deleted, err := s.Purge(ctx)
+			cancel()
+			if err != nil && ctx.Err() == nil {
+				logging.Event(ctx, s.logger, slog.LevelError, "audit.operation.error", "清理过期审计记录失败", "module", "audit", "operation", "Purge", "error", err)
+				continue
+			}
+			if deleted > 0 {
+				s.logger.Info("已清理过期审计记录", "module", "audit", "operation", "Purge", "deleted", deleted)
+			}
+		}
+	}
 }
 
 type Actor struct{ ID, Name, Email string }

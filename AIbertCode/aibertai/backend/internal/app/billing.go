@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"aibertai.local/backend/internal/apikey"
+	"aibertai.local/backend/internal/audit"
 	"aibertai.local/backend/internal/billing"
 	"aibertai.local/backend/internal/endpoint"
 	"aibertai.local/backend/internal/envimage"
@@ -44,6 +45,7 @@ type applicationHandler struct {
 	resourceImports   *resourceimport.Service
 	environmentImages *envimage.Service
 	environments      *environment.Service
+	audits            *audit.Service
 }
 type modelBilling struct{ service *billing.Service }
 type modelUsageRecorder struct{ models *model.Postgres }

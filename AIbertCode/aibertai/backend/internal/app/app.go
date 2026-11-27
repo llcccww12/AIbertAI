@@ -78,6 +78,7 @@ type App struct {
 	resourceImports   *resourceimport.Service
 	environmentImages *envimage.Service
 	environments      *environment.Service
+	audits            *audit.Service
 }
 
 type MemberWriters func(*pgxpool.Pool) (member.UserWriter, member.GroupWriter, error)
@@ -177,6 +178,7 @@ func newApp(ctx context.Context, cfg config.Config, logger *slog.Logger, factory
 		resourceImports:   handler.(*applicationHandler).resourceImports,
 		environmentImages: handler.(*applicationHandler).environmentImages,
 		environments:      handler.(*applicationHandler).environments,
+		audits:            handler.(*applicationHandler).audits,
 		database:          pool,
 		shutdownTimeout:   cfg.ShutdownTimeout,
 	}, nil
@@ -471,7 +473,7 @@ func newApplicationHandlerWithMembers(ctx context.Context, logger *slog.Logger, 
 		environmentImages.RegisterHost(router)
 	}
 	router.Mount("/", httpapi.New(logger, readiness{pool: pool, storage: storage, endpoints: endpoints}, admin, agent, auth))
-	return &applicationHandler{environments: environments, environmentImages: environmentImages, Handler: router, sessions: sessions, billing: charges, proxy: modelProxy, images: imageService, videos: videoService, inputs: imageInputs, endpoints: endpoints, relay: runtimeRelay, runtimeKeys: keys, feedback: feedbacks, connectors: connectors, knowledgeBases: knowledgeBases, resourceImports: resourceImports}, nil
+	return &applicationHandler{environments: environments, environmentImages: environmentImages, Handler: router, sessions: sessions, billing: charges, proxy: modelProxy, images: imageService, videos: videoService, inputs: imageInputs, endpoints: endpoints, relay: runtimeRelay, runtimeKeys: keys, feedback: feedbacks, connectors: connectors, knowledgeBases: knowledgeBases, resourceImports: resourceImports, audits: audits}, nil
 }
 
 type sessionAdapter struct{ service *sessionreporting.Service }
@@ -585,6 +587,13 @@ func (a *App) Run(ctx context.Context) error {
 			a.resourceImports.Run(workerCtx)
 		}
 	}()
+	auditPurgeDone := make(chan struct{})
+	go func() {
+		defer close(auditPurgeDone)
+		if a.audits != nil {
+			a.audits.Run(workerCtx)
+		}
+	}()
 	defer func() {
 		stopWorker()
 		<-workerDone
@@ -599,6 +608,7 @@ func (a *App) Run(ctx context.Context) error {
 		<-cleanupDone
 		<-feedbackCleanupDone
 		<-uploadCleanupDone
+		<-auditPurgeDone
 	}()
 
 	result := make(chan error, len(a.servers))
