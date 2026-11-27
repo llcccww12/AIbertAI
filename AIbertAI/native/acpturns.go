@@ -255,6 +255,12 @@ func (l *acpLive) reserveTurn(id, op, clientID, prompt string, attachments []acp
 		// one instead of colliding with the turn the user starts now.
 		session.GoalRun = ""
 	}
+	if n := len(session.Turns); session.State == "running" && n > 0 && !session.Turns[n-1].Ended.IsZero() {
+		// 回合已经结束（Ended 有值），会话状态却还停在 running：上一轮失败时收尾
+		// 没走完。不放行的话，这个会话之后每条消息都会被 session_unavailable_for_prompt
+		// 挡回去，用户只能开新会话。
+		session.State = "idle"
+	}
 	if session.State == "running" && l.activeTurns[id] == nil {
 		// Nothing is driving the turn any more; the finalize path above already
 		// deleted its cancel key and saved, all under this lock. Close what it
