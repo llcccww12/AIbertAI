@@ -14758,6 +14758,7 @@ let restart$2 = initialRestartState();
 let lastRuntimeExitCode = null;
 let lastRuntimeExitAt = null;
 let backoff = null;
+let restartTimer = null;
 let endpoint$2 = null;
 let activeAccountId = null;
 let webOrigin$1 = "";
@@ -14976,6 +14977,10 @@ function waitBackoff(ms) {
 }
 function stop() {
   if (stopping$2) return stopping$2;
+  if (restartTimer) {
+    clearTimeout(restartTimer);
+    restartTimer = null;
+  }
   clearDeviceRemoteStatus();
   capabilities?.disconnect();
   if (endpoint$2) onEndpoint(null);
@@ -15035,7 +15040,19 @@ function syncRuntimeToAccount() {
     await stop();
     if (quitting$1 || !currentAccount()) return;
     const delay = restartDelayMs(restart$2, Date.now());
-    if (delay === null) return;
+    if (delay === null) {
+      // 熔断只暂停冷却期内的时间窗，不是放弃。这里原来直接 return，
+      // 于是连崩 5 次的机器冷却结束后没人再叫醒它，界面永远停在「无法连接运行时」。
+      if (restartTimer) clearTimeout(restartTimer);
+      const wait = Math.max(0, (restart$2.lastExitAt ?? Date.now()) + RESTART_COOLDOWN_MS - Date.now());
+      console.log(`[main] runtime restarts paused after ${restart$2.failures} consecutive exit(s); retrying in ${wait}ms`);
+      restartTimer = setTimeout(() => {
+        restartTimer = null;
+        void syncRuntimeToAccount();
+      }, wait);
+      restartTimer.unref?.();
+      return;
+    }
     if (delay > 0) {
       console.log(`[main] runtime restart in ${delay}ms after ${restart$2.failures} consecutive exit(s)`);
       if (!await waitBackoff(delay)) return;
