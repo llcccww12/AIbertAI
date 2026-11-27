@@ -23450,10 +23450,12 @@ function createUpdateController(updater2, notify2, requiresElevation = false, op
 const MAC_REPLACE_SCRIPT = `
 pid=$1 zip=$2 app=$3 run=$4
 exec >>"\${TMPDIR:-/tmp}/aibertai-update.log" 2>&1
+marker="$(dirname "$app")/.aibertai-updating"
 staged=""
 fail() {
   echo "FAILED: $1"
   [ -n "$staged" ] && rm -rf "$staged"
+  rm -f "$marker"
   # 替换失败时把旧版重新打开，别让员工面对一个关掉的应用。
   [ -d "$app" ] && open "$app"
   exit 1
@@ -23478,8 +23480,10 @@ $ErrorActionPreference = "Stop"
 $log = Join-Path $env:TEMP "aibertai-update.log"
 Start-Transcript -Append -Path $log | Out-Null
 $exePath = Join-Path $Dir $Exe
+$marker = Join-Path (Split-Path -Parent $Dir) ".aibertai-updating"
 function Resume-Old([string]$reason) {
   "FAILED: " + $reason | Out-File -Append -Encoding utf8 $log
+  Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
   Start-Sleep -Milliseconds 500
   if (Test-Path -LiteralPath $exePath) { Start-Process -FilePath $exePath }
   exit 1
@@ -23517,6 +23521,7 @@ try {
   }
   Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $Zip -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
   if ($Run -eq 1) { Start-Process -FilePath $exePath }
 } catch {
   Resume-Old $_.Exception.Message
@@ -23569,6 +23574,13 @@ class ArchiveReplaceUpdater extends electronUpdater.BaseUpdater {
       node_fs.accessSync(node_path.dirname(target), node_fs.constants.W_OK);
     } catch {
       throw new Error(`没有写入 ${node_path.dirname(target)} 的权限，请从下载页手动安装新版。`);
+    }
+    // 解压几百兆再整目录移动，要好一阵；这段时间旧版还在磁盘上。
+    // 挂个标记，谁在这时启动就先拦住，不让它把目录锁住。
+    const marker = node_path.join(node_path.dirname(target), ".aibertai-updating");
+    try {
+      node_fs.writeFileSync(marker, String(Date.now()) + "\n");
+    } catch {
     }
     let child;
     if (process.platform === "darwin") {
@@ -23733,10 +23745,11 @@ function setupUpdater(onStatus = () => {
     savePreferences: (updates) => {
       writePrefsPatch({ updates });
     },
-    // 替换脚本要等进程退出；先走 before-quit，等待 runtime 收尾。
+    // 替换脚本自己会等进程退出（Wait-Process），所以这里先把它拉起来再退出应用。
+    // 以前 Windows 把安装延到 will-quit，退出流程被 before-quit 拦过一次之后就可能不再触发，
+    // 表现成「点重启并安装 → 应用关了 → 还是旧版本」。
     scheduleInstall: process.platform === "win32" ? (install) => {
-      pendingInstall = install;
-      electron.app.quit();
+      install();
     } : void 0
   });
   handle("update:status", none, () => controller2.getStatus());
@@ -25842,7 +25855,41 @@ if (startup.kind === "migrate") {
   void electron.app.whenReady().then(onReady);
   setupAppLinks(showMainWindow, { scheme: platform.appScheme, developmentScheme: platform.developmentAppScheme });
 }
+function updateInstallMarker() {
+  const appPath = process.platform === "darwin" ? node_path.resolve(process.execPath, "../../..") : node_path.dirname(process.execPath);
+  return node_path.join(node_path.dirname(appPath), ".aibertai-updating");
+}
+// 替换进行中启动会拿到旧版本，还会锁住安装目录把替换拖慢；这时先不启动。
+// 脚本崩溃留下的标记超过 15 分钟就不再拦，免得把人挡在应用外面。
+function updateInstallInProgress() {
+  const marker = updateInstallMarker();
+  let info;
+  try {
+    info = node_fs.statSync(marker);
+  } catch {
+    return false;
+  }
+  if (Date.now() - info.mtimeMs > 15 * 60 * 1000) {
+    try {
+      node_fs.rmSync(marker, { force: true });
+    } catch {
+    }
+    return false;
+  }
+  return true;
+}
 function onReady() {
+  if (updateInstallInProgress()) {
+    const chinese = String(readPrefs().locale ?? electron.app.getLocale()).startsWith("zh");
+    electron.dialog.showMessageBoxSync({
+      type: "info",
+      buttons: [chinese ? "好" : "OK"],
+      message: chinese ? "正在安装更新" : "Installing the update",
+      detail: chinese ? "文件替换完成后应用会自动重新打开，大约需要一两分钟。请不要从桌面重复启动。" : "The app will reopen on its own once the files are replaced, usually within a minute or two. Do not start it again from the desktop."
+    });
+    electron.app.quit();
+    return;
+  }
   const brandIcon = localBrandIcon();
   if (brandIcon && process.platform === "darwin") {
     electron.app.dock.setIcon(brandIcon);
