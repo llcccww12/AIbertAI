@@ -80,6 +80,9 @@ function downloadUrl(value: unknown) {
 export function ClientDownloads() {
   const { t } = useTranslation()
   const [links, setLinks] = useState<DownloadLinks>({})
+  // 还没拿到 downloads.json 之前不能断定「暂无安装包」，否则每次进页面都先闪一下
+  // 这句话再变成下载列表。
+  const [loading, setLoading] = useState(true)
   const hasDownloads = Object.values(links).some(downloadUrl)
 
   useEffect(() => {
@@ -95,6 +98,9 @@ export function ClientDownloads() {
         }
       })
       .catch(() => undefined)
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false)
+      })
     return () => controller.abort()
   }, [])
 

@@ -611,7 +611,11 @@ export function ModelsPage() {
         if (!active) return
         setVideoCapabilities(cap)
         setVideoCapabilitiesFailed(false)
-        setVideoModes([...cap.modes])
+        // 编辑已保存的模型时要沿用保存过的模式集合；接口返回的是这个模型的
+        // 全集，直接铺上去等于把用户关掉的模式又打开，保存一次就写回去了。
+        const saved =
+          formModel?.modelId === modelId ? formModel.videoConfig?.modes : undefined
+        setVideoModes(saved?.length ? [...saved] : [...cap.modes])
         setVideoResolutionChoices(
           videoOpenResolutions(
             cap,
