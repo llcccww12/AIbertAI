@@ -230,25 +230,28 @@ test("image settings automatically enable all supported options and preserve val
 
   assert.match(page, /api<ImageCapabilities>\(providerPath\)/)
   assert.doesNotMatch(page, /imageModelId|modelSpecific/)
-  assert.match(page, /const nextQualities = \[\.\.\.capability\.qualities\]/)
-  assert.match(
-    page,
-    /const nextAspectRatios = \[\.\.\.capability\.aspect_ratios\]/
-  )
+  // 编辑已有模型时沿用保存过的档位，新建时才铺开全集。
+  assert.match(page, /const nextQualities = savedConfig/)
+  assert.match(page, /const nextAspectRatios = savedConfig/)
   assert.match(page, /nextQualities\.includes\(savedConfig\.default_quality\)/)
   assert.match(
     page,
     /nextAspectRatios\.includes\(savedConfig\.default_aspect_ratio\)/
   )
+  assert.match(page, /<ImageCapabilitySelector/)
   assert.doesNotMatch(
     page,
-    /<ImageCapabilitySelector|handleQualitySelectionChange|handleAspectRatioSelectionChange/
+    /handleQualitySelectionChange|handleAspectRatioSelectionChange/
   )
   assert.doesNotMatch(
     page,
     /t\("pages\.models\.(defaultQuality|defaultAspectRatio)"\)/
   )
-  assert.match(page, /setVideoModes\(\[\.\.\.cap\.modes\]\)/)
+  // 编辑已有视频模型时沿用保存过的模式集合，新建时才铺开全集。
+  assert.match(
+    page,
+    /setVideoModes\(saved\?\.length \? \[\.\.\.saved\] : \[\.\.\.cap\.modes\]\)/
+  )
   assert.doesNotMatch(page, /<FieldLabel>开放模式<\/FieldLabel>/)
   assert.doesNotMatch(page, /<Separator className="my-1"/)
   assert.match(selector, /<ToggleGroup/)

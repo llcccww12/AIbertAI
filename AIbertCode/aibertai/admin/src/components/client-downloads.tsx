@@ -118,7 +118,7 @@ export function ClientDownloads() {
             {t("landing.downloads.description")}
           </p>
         </div>
-        {!hasDownloads && (
+        {!loading && !hasDownloads && (
           <p className="mt-6 text-center text-sm text-muted-foreground">
             {t("landing.downloads.unavailable")}
           </p>
