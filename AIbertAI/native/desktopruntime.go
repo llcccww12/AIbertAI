@@ -295,6 +295,26 @@ func retryStartupCall(ctx context.Context, call func(context.Context) error) err
 	return err
 }
 
+// 后端重启，或者访问令牌刚好过期，接口会直接返回 401。这时只重试没有用，
+// 手上还是同一份过期令牌；要强制换一份授权再试一次。否则整个运行时起不来，
+// 用户只能退出重装。
+func withAuthRetry(ctx context.Context, source *desktopSourceAuth, call func(context.Context, authorization) error) error {
+	auth, err := source.access(ctx)
+	if err != nil {
+		return err
+	}
+	err = call(ctx, auth)
+	var failure *backendHTTPError
+	if !errors.As(err, &failure) || failure.Status != http.StatusUnauthorized {
+		return err
+	}
+	refreshed, refreshErr := source.refreshForce(ctx)
+	if refreshErr != nil {
+		return err
+	}
+	return call(ctx, refreshed)
+}
+
 func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out io.Writer) (err error) {
 	reader := bufio.NewReaderSize(in, 64<<10)
 	line, readErr := reader.ReadSlice('\n')
@@ -399,7 +419,9 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 	}
 	var user account
 	if err := retryStartupCall(startup, func(ctx context.Context) error {
-		return c.json(ctx, http.MethodGet, "/api/v1/me", auth.Access, "", nil, &user)
+		return withAuthRetry(ctx, source, func(ctx context.Context, current authorization) error {
+			return c.json(ctx, http.MethodGet, "/api/v1/me", current.Access, "", nil, &user)
+		})
 	}); err != nil {
 		return err
 	}
@@ -407,7 +429,13 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 		return errDesktopCredential
 	}
 	model, err := retryStartup(startup, func(ctx context.Context) (selectedModelConfig, error) {
-		return c.selectedModelConfig(ctx, auth)
+		var selected selectedModelConfig
+		err := withAuthRetry(ctx, source, func(ctx context.Context, current authorization) error {
+			var callErr error
+			selected, callErr = c.selectedModelConfig(ctx, current)
+			return callErr
+		})
+		return selected, err
 	})
 	if err != nil {
 		return err
@@ -415,9 +443,12 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 	modelLocked := modelID != ""
 	modelID = model.ID
 	var serverID string
-	if err := retryStartupCall(startup, func(ctx context.Context) (err error) {
-		serverID, _, err = c.relaySigningKeys(ctx)
-		return err
+	if err := retryStartupCall(startup, func(ctx context.Context) error {
+		return withAuthRetry(ctx, source, func(ctx context.Context, _ authorization) error {
+			var err error
+			serverID, _, err = c.relaySigningKeys(ctx)
+			return err
+		})
 	}); err != nil {
 		return fmt.Errorf("desktop server identity: %w", err)
 	}
@@ -440,12 +471,9 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 		defer func() {
 			cleanup, cancelCleanup := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancelCleanup()
-			current, readErr := source.access(cleanup)
-			if readErr != nil {
-				err = errors.Join(err, readErr)
-				return
-			}
-			err = errors.Join(err, c.json(cleanup, http.MethodDelete, "/api/v1/api-keys/"+key.ID, current.Access, "", nil, nil))
+			err = errors.Join(err, withAuthRetry(cleanup, source, func(ctx context.Context, current authorization) error {
+				return c.json(ctx, http.MethodDelete, "/api/v1/api-keys/"+key.ID, current.Access, "", nil, nil)
+			}))
 		}()
 	}
 	if err != nil {

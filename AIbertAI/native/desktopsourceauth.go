@@ -147,6 +147,18 @@ func (s *desktopSourceAuth) access(ctx context.Context) (authorization, error) {
 	if time.Until(s.grant.Expires) > 2*time.Minute {
 		return s.grant.Auth, nil
 	}
+	return s.refreshLocked(ctx)
+}
+
+// refreshForce 不管还剩多久都换一份授权。后端重启或令牌被提前拒掉时，
+// 接口会直接返回 401，这时只有强制刷新能把请求救回来。
+func (s *desktopSourceAuth) refreshForce(ctx context.Context) (authorization, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.refreshLocked(ctx)
+}
+
+func (s *desktopSourceAuth) refreshLocked(ctx context.Context) (authorization, error) {
 	client := s.oauthClient
 	if client == "" {
 		client = clientID
