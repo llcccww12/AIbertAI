@@ -10,7 +10,6 @@ import (
 	"aibertai.local/backend/internal/web"
 	"log/slog"
 	"math/big"
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -120,12 +119,7 @@ func (s *Service) sendCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	code := fmt.Sprintf("%06d", number.Int64())
-	ip, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		slog.WarnContext(r.Context(), "操作失败", "module", "identity", "operation", "sendCode", "error", err)
-		ip = r.RemoteAddr
-	}
-	err = s.reserveCode(r.Context(), input, code, tokenHash(ip))
+	err = s.reserveCode(r.Context(), input, code, tokenHash(clientIP(r)))
 	if errors.Is(err, errCodeLimited) {
 		w.Header().Set("Retry-After", "30")
 		writeError(r.Context(), w, 429, "rate_limited", "发送过于频繁，请稍后重试")

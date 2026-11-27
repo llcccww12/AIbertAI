@@ -12,7 +12,6 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/url"
 	"slices"
@@ -61,12 +60,7 @@ func (s *Service) deviceLimit(r *http.Request, kind string, limit int) bool {
 	if !s.deviceEnabled() {
 		return false
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		slog.WarnContext(r.Context(), "操作失败", "module", "identity", "operation", "deviceLimit", "error", err)
-		host = r.RemoteAddr
-	}
-	key := kind + ":" + tokenHash(host)
+	key := kind + ":" + tokenHash(clientIP(r))
 	s.device.mu.Lock()
 	defer s.device.mu.Unlock()
 	now := s.now()
