@@ -23,16 +23,42 @@ type Service struct {
 	CRUD    *resource.CRUD
 	storage resource.Storage
 	store   *resource.Store
+	uploads chan struct{}
+	reads   chan struct{}
+}
+
+// 技能包整包读进内存再解压，单个包最多占 1.5 GiB。不限制并发时，几个登录
+// 用户同时上传就能把同时扛着网关和中继的实例打爆。上传串行到 2 个，读取放到
+// 4 个，排队超过请求时限就回 503 让客户端重试。
+const (
+	maxConcurrentSkillUploads = 2
+	maxConcurrentSkillReads   = 4
+)
+
+func (s *Service) acquire(ctx context.Context, slots chan struct{}) (func(), error) {
+	select {
+	case slots <- struct{}{}:
+		return func() { <-slots }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func NewService(store *resource.Store, storage resource.Storage) *Service {
-	s := &Service{store: store, storage: storage}
+	s := &Service{store: store, storage: storage,
+		uploads: make(chan struct{}, maxConcurrentSkillUploads),
+		reads:   make(chan struct{}, maxConcurrentSkillReads)}
 	s.CRUD = resource.NewCRUD(store, resource.Definition{Kind: "skill", Repository: func(q resource.Queryer) resource.Repository { return sqlc.New(q) }, Path: "/skills", Fields: []string{"name", "description", "package_file_name", "package_s3_key", "package_size_bytes", "package_sha256", "file_count", "enabled"}, UserFields: []string{"name", "description", "content", "tag_ids", "package_bytes"}, OverrideFields: []string{"name", "description"}, AllowImportedEnabled: true, Hidden: []string{"package_s3_key"}, Validate: s.validate, Decorate: s.decorate, Persist: s.tags, References: func(ctx context.Context, tx pgx.Tx, id string) ([]resource.Object, error) {
 		return resource.DecodeObjects(sqlc.New(tx).ListReferences(ctx, id))
 	}})
 	return s
 }
 func (s *Service) read(ctx context.Context, object resource.Object) (Package, error) {
+	release, err := s.acquire(ctx, s.reads)
+	if err != nil {
+		return Package{}, ctx.Err()
+	}
+	defer release()
 	r, err := s.storage.Get(ctx, object.String("package_s3_key"))
 	if err != nil {
 		return Package{}, err
@@ -187,6 +213,11 @@ func (s *Service) upload(w http.ResponseWriter, r *http.Request, personal bool) 
 			logging.Event(r.Context(), slog.Default(), slog.LevelError, "skill.operation.error", "关闭技能包上传文件失败", "module", "skill", "operation", "upload", "error", err)
 		}
 	}()
+	release, err := s.acquire(r.Context(), s.uploads)
+	if err != nil {
+		return
+	}
+	defer release()
 	b, err := io.ReadAll(io.LimitReader(f, MaxPackage+1))
 	if err != nil {
 		resource.Fail(r.Context(), w, err)
