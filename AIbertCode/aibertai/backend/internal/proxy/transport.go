@@ -34,6 +34,9 @@ func TransportFor(raw string) (*http.Transport, error) {
 		return nil, fmt.Errorf("系统代理配置无效")
 	}
 	transport := DirectTransport()
+	// 这里连的是管理员配置的网络代理，不是模型地址；还原默认拨号，
+	// 否则本机代理（127.0.0.1）会被出网校验拦掉。
+	transport.DialContext = nil
 	transport.Proxy = http.ProxyURL(address)
 	transport.OnProxyConnectResponse = func(_ context.Context, _ *url.URL, _ *http.Request, response *http.Response) error {
 		if response.StatusCode != http.StatusOK {

@@ -104,6 +104,8 @@ type Proxy struct {
 func DirectTransport() *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
+	// 出站目标可能是用户自建模型填的地址，连接前先按地址段放行。
+	transport.DialContext = dialUpstream
 	return transport
 }
 
