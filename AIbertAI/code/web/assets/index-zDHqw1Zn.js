@@ -276686,7 +276686,6 @@ function trn() {
           ref: te,
           className: "chat-body",
           children: [
-            l.jsx(Xjt, { sessionId: h.id, transcriptRef: te }),
             l.jsxs("div", {
               className: "chat-main",
               children: [
