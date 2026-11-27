@@ -23450,15 +23450,24 @@ function createUpdateController(updater2, notify2, requiresElevation = false, op
 const MAC_REPLACE_SCRIPT = `
 pid=$1 zip=$2 app=$3 run=$4
 exec >>"\${TMPDIR:-/tmp}/aibertai-update.log" 2>&1
+staged=""
+fail() {
+  echo "FAILED: $1"
+  [ -n "$staged" ] && rm -rf "$staged"
+  # 替换失败时把旧版重新打开，别让员工面对一个关掉的应用。
+  [ -d "$app" ] && open "$app"
+  exit 1
+}
 while kill -0 "$pid" 2>/dev/null; do sleep 0.5; done
-stage=$(mktemp -d "$(dirname "$app")/.aibertai-update.XXXXXX") || exit 1
-ditto -x -k "$zip" "$stage" || { rm -rf "$stage"; exit 1; }
-new=$(find "$stage" -maxdepth 1 -name '*.app' -type d | head -n 1)
-[ -n "$new" ] || { rm -rf "$stage"; exit 1; }
-old="$stage/previous.app"
-mv "$app" "$old" || { rm -rf "$stage"; exit 1; }
-if ! mv "$new" "$app"; then mv "$old" "$app"; rm -rf "$stage"; exit 1; fi
-rm -rf "$stage" "$zip"
+staged=$(mktemp -d "$(dirname "$app")/.aibertai-update.XXXXXX") || fail "无法创建临时目录"
+ditto -x -k "$zip" "$staged" || fail "解压失败"
+new=$(find "$staged" -maxdepth 1 -name '*.app' -type d | head -n 1)
+[ -n "$new" ] || fail "压缩包里没有应用"
+[ -f "$new/Contents/Resources/app/package.json" ] || fail "新版缺少应用文件"
+old="$staged/previous.app"
+mv "$app" "$old" || fail "无法移开旧版"
+if ! mv "$new" "$app"; then mv "$old" "$app"; fail "新版无法就位"; fi
+rm -rf "$staged" "$zip"
 xattr -dr com.apple.quarantine "$app" 2>/dev/null
 [ "$run" = 1 ] && open "$app"
 exit 0
@@ -23466,24 +23475,54 @@ exit 0
 const WINDOWS_REPLACE_SCRIPT = `
 param([int]$ProcessId, [string]$Zip, [string]$Dir, [string]$Exe, [int]$Run)
 $ErrorActionPreference = "Stop"
-Start-Transcript -Append -Path (Join-Path $env:TEMP "aibertai-update.log") | Out-Null
-Wait-Process -Id $ProcessId -ErrorAction SilentlyContinue
-$parent = Split-Path -Parent $Dir
-$stage = Join-Path $parent (".aibertai-update-" + [guid]::NewGuid().ToString("N"))
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-[IO.Compression.ZipFile]::ExtractToDirectory($Zip, $stage)
-$new = Get-ChildItem -LiteralPath $stage -Directory | Select-Object -First 1
-if (-not $new) { Remove-Item -LiteralPath $stage -Recurse -Force; exit 1 }
-$old = Join-Path $stage "previous"
-# 运行时子进程可能稍晚退出，目录被占用时重试。
-for ($i = 0; $i -lt 120; $i++) {
-  try { Move-Item -LiteralPath $Dir -Destination $old; break } catch { Start-Sleep -Milliseconds 500 }
+$log = Join-Path $env:TEMP "aibertai-update.log"
+Start-Transcript -Append -Path $log | Out-Null
+$exePath = Join-Path $Dir $Exe
+function Resume-Old([string]$reason) {
+  "FAILED: " + $reason | Out-File -Append -Encoding utf8 $log
+  Start-Sleep -Milliseconds 500
+  if (Test-Path -LiteralPath $exePath) { Start-Process -FilePath $exePath }
+  exit 1
 }
-if (-not (Test-Path -LiteralPath $old)) { Remove-Item -LiteralPath $stage -Recurse -Force; exit 1 }
-try { Move-Item -LiteralPath $new.FullName -Destination $Dir } catch { Move-Item -LiteralPath $old -Destination $Dir; Remove-Item -LiteralPath $stage -Recurse -Force; exit 1 }
-Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath $Zip -Force -ErrorAction SilentlyContinue
-if ($Run -eq 1) { Start-Process -FilePath (Join-Path $Dir $Exe) }
+try {
+  Wait-Process -Id $ProcessId -ErrorAction SilentlyContinue
+  # 运行时和浏览器宿主是独立进程，主进程退出后仍在，会锁住安装目录里的文件。
+  for ($i = 0; $i -lt 20; $i++) {
+    $orphans = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+      try { $_.Path -and $_.Path.StartsWith($Dir, "OrdinalIgnoreCase") } catch { $false }
+    })
+    if ($orphans.Count -eq 0) { break }
+    $orphans | ForEach-Object { try { $_.Kill() } catch { } }
+    Start-Sleep -Milliseconds 500
+  }
+  $parent = Split-Path -Parent $Dir
+  $stage = Join-Path $parent (".aibertai-update-" + [guid]::NewGuid().ToString("N"))
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  [IO.Compression.ZipFile]::ExtractToDirectory($Zip, $stage)
+  $new = Get-ChildItem -LiteralPath $stage -Directory | Select-Object -First 1
+  if (-not $new) { Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue; Resume-Old "压缩包结构不对" }
+  if (-not (Test-Path -LiteralPath (Join-Path $new.FullName "Resources\\app\\package.json"))) {
+    Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue; Resume-Old "新版压缩包缺少应用文件"
+  }
+  $old = Join-Path $stage "previous"
+  $moved = $false
+  for ($i = 0; $i -lt 240; $i++) {
+    try { Move-Item -LiteralPath $Dir -Destination $old -ErrorAction Stop; $moved = $true; break } catch { Start-Sleep -Milliseconds 500 }
+  }
+  if (-not $moved) { Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue; Resume-Old "安装目录被占用，无法替换" }
+  try { Move-Item -LiteralPath $new.FullName -Destination $Dir -ErrorAction Stop } catch {
+    Move-Item -LiteralPath $old -Destination $Dir -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+    Resume-Old "新版文件无法就位"
+  }
+  Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $Zip -Force -ErrorAction SilentlyContinue
+  if ($Run -eq 1) { Start-Process -FilePath $exePath }
+} catch {
+  Resume-Old $_.Exception.Message
+} finally {
+  try { Stop-Transcript | Out-Null } catch { }
+}
 `;
 class ArchiveReplaceUpdater extends electronUpdater.BaseUpdater {
   constructor() {
@@ -23570,8 +23609,33 @@ function aibertaiUpdateFeed(override, privateOrigin) {
   }
   return { provider: "generic", url: url.href, useMultipleRangeRequest: false };
 }
+// 替换成功后再启动，旧进程留下的「稍后提醒」还会指向同一个版本，
+// 让员工以为没装上。运行版本已经追上就把它清掉。
+function reconcileUpdatePrefs() {
+  try {
+    const updates = readPrefs().updates;
+    const remind = updates?.remindVersion;
+    if (!remind) return;
+    const parts = (value) => String(value).split(".").map((part) => Number(part) || 0);
+    const left = parts(remind);
+    const right = parts(electron.app.getVersion());
+    for (let i = 0; i < Math.max(left.length, right.length); i++) {
+      const a = left[i] ?? 0;
+      const b = right[i] ?? 0;
+      if (a === b) continue;
+      if (a > b) return;
+      break;
+    }
+    const next = { ...updates };
+    delete next.remindVersion;
+    delete next.remindAt;
+    writePrefsPatch({ updates: next });
+  } catch {
+  }
+}
 function setupUpdater(onStatus = () => {
 }, options2 = { override: process.env.AIBERTAI_UPDATE_URL }) {
+  reconcileUpdatePrefs();
   const preferences = readUpdatePreferences(readPrefs().updates);
   const broadcast = (status2) => {
     for (const win of liveWindows()) {
