@@ -162,7 +162,7 @@ func (h *relaySessionHost) localQuery(ctx context.Context, method string, raw js
 		return h.desktopBilling(ctx, method, raw)
 	case "_monkeyai/profile/avatar":
 		return h.desktopAvatar(ctx, raw)
-	case "_monkeyai/environments/list", "_monkeyai/environments/get", "_monkeyai/environments/operations", "_monkeyai/environments/change":
+	case "_monkeyai/environments/list", "_monkeyai/environments/get", "_monkeyai/environments/operations", "_monkeyai/environments/runtime", "_monkeyai/environments/change":
 		return h.desktopEnvironment(ctx, method, raw)
 	case "_monkeyai/preferences/model-thinking/set":
 		if err := h.live.saveDesktopSettings(method, raw); err != nil {

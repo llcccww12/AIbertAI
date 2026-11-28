@@ -764,7 +764,7 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 					"_monkeyai/session/tool_output", "_monkeyai/runtime/status",
 					"_monkeyai/preferences/model-thinking/set", "_monkeyai/resources/recipients", "_monkeyai/resources/share", "_monkeyai/users/search", "_monkeyai/groups/search",
 					"_monkeyai/drafts", "_monkeyai/draft/set",
-					"_monkeyai/environments/list", "_monkeyai/environments/get", "_monkeyai/environments/operations", "_monkeyai/environments/change",
+					"_monkeyai/environments/list", "_monkeyai/environments/get", "_monkeyai/environments/operations", "_monkeyai/environments/runtime", "_monkeyai/environments/change",
 					"_monkeyai/config/goals/set", "_monkeyai/config/display/set", "_monkeyai/billing/account", "_monkeyai/billing/entries",
 					"_monkeyai/profile/avatar":
 					if h.local == nil {

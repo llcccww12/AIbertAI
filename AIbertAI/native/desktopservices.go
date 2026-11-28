@@ -50,13 +50,16 @@ func (h *relaySessionHost) desktopEnvironment(ctx context.Context, method string
 	methodHTTP, path := http.MethodGet, "/api/v1/environments"
 	var body io.Reader
 	switch method {
-	case "_monkeyai/environments/get", "_monkeyai/environments/operations":
+	case "_monkeyai/environments/get", "_monkeyai/environments/operations", "_monkeyai/environments/runtime":
 		if !validUUID(input.ID) {
 			return failure("invalid_request", false)
 		}
 		path += "/" + input.ID
 		if method == "_monkeyai/environments/operations" {
 			path += "/operations"
+		}
+		if method == "_monkeyai/environments/runtime" {
+			path += "/runtime"
 		}
 	case "_monkeyai/environments/change":
 		if input.RequestKey == "" || len(input.RequestKey) > 128 {
@@ -74,6 +77,8 @@ func (h *relaySessionHost) desktopEnvironment(ctx context.Context, method string
 			switch input.Action {
 			case "start", "stop":
 				path += "/" + input.Action
+			case "upgrade_runtime":
+				path += "/runtime/upgrade"
 			case "delete":
 				methodHTTP = http.MethodDelete
 			default:

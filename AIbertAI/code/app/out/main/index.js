@@ -701,7 +701,7 @@ function isEnvironmentMutation(value) {
   const v = value;
   if (typeof v.request_key !== "string" || !ENVIRONMENT_REQUEST_KEY.test(v.request_key)) return false;
   if (v.action === "create") return isEnvironmentName(v.name);
-  return ["start", "stop", "delete"].includes(v.action) && typeof v.id === "string" && environmentUUID.test(v.id) && Number.isSafeInteger(v.generation) && v.generation > 0;
+  return ["start", "stop", "delete", "upgrade_runtime"].includes(v.action) && typeof v.id === "string" && environmentUUID.test(v.id) && Number.isSafeInteger(v.generation) && v.generation > 0;
 }
 class ImageCapabilityError extends CodedError {
   failure;
@@ -1253,12 +1253,13 @@ const AIBERTAI_METHODS = {
   profileAvatar: request("_monkeyai/profile/avatar", "上传或清除本人自定义头像；image 为压缩后的 base64", shape({ image: "string?", mime: "string?", clear: "boolean?" })),
   environmentsList: request("_monkeyai/environments/list", "当前账号的云电脑分页；不缓存", shape({ serverUrl: "string", userId: "string", page: "number", page_size: "number" })),
   environmentsGet: request("_monkeyai/environments/get", "云电脑目标、观察代次与连接就绪状态", shape({ serverUrl: "string", userId: "string", id: "string" })),
+  environmentsRuntime: request("_monkeyai/environments/runtime", "读取云电脑当前和可更新的运行时版本", shape({ serverUrl: "string", userId: "string", id: "string" })),
   environmentsOperations: request("_monkeyai/environments/operations", "云电脑操作记录分页", shape({ serverUrl: "string", userId: "string", id: "string", page: "number", page_size: "number" })),
   environmentsChange: request("_monkeyai/environments/change", "提交原始幂等键和目标代次；创建使用管理员默认规格", described(
-    { serverUrl: "string", userId: "string", action: ["create", "start", "stop", "delete"], name: "string?", id: "string?", generation: "number?", request_key: "string" },
+    { serverUrl: "string", userId: "string", action: ["create", "start", "stop", "delete", "upgrade_runtime"], name: "string?", id: "string?", generation: "number?", request_key: "string" },
     "创建名称非空且不超过 128 UTF-8 字节，无首尾空白或控制字符；变更 ID 为 UUID、generation 为正安全整数；request_key 为 1–128 个协议字符",
     (value) => {
-      const input = shape({ serverUrl: "string", userId: "string", action: ["create", "start", "stop", "delete"], name: "string?", id: "string?", generation: "number?", request_key: "string" })(value);
+      const input = shape({ serverUrl: "string", userId: "string", action: ["create", "start", "stop", "delete", "upgrade_runtime"], name: "string?", id: "string?", generation: "number?", request_key: "string" })(value);
       if (!isEnvironmentMutation(input)) throw new InvalidParams("invalid_environment_input");
       return input;
     }
@@ -1832,6 +1833,7 @@ const ACCOUNT_REQUEST_METHODS = [
   "_monkeyai/kb/documents/delete",
   "_monkeyai/environments/list",
   "_monkeyai/environments/get",
+  "_monkeyai/environments/runtime",
   "_monkeyai/environments/operations",
   "_monkeyai/environments/change",
   "_monkeyai/billing/account",

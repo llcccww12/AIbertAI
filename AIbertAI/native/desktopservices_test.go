@@ -50,6 +50,7 @@ func TestDesktopEnvironmentForwardsScopedOperations(t *testing.T) {
 	}
 	call("list", `"page":1,"page_size":20`)
 	call("get", `"id":"`+id+`"`)
+	call("runtime", `"id":"`+id+`"`)
 	call("operations", `"id":"`+id+`","page":2,"page_size":20`)
 	call("change", `"action":"create","name":"fixture","request_key":"stable-request-key"`)
 	result := call("change", `"action":"start","id":"`+id+`","generation":3,"request_key":"stable-request-key"`)
@@ -57,10 +58,11 @@ func TestDesktopEnvironmentForwardsScopedOperations(t *testing.T) {
 		t.Fatalf("conflict was lost: %v", result)
 	}
 	call("change", `"action":"stop","id":"`+id+`","generation":3,"request_key":"stable-request-key"`)
+	call("change", `"action":"upgrade_runtime","id":"`+id+`","generation":3,"request_key":"stable-request-key"`)
 	call("change", `"action":"delete","id":"`+id+`","generation":3,"request_key":"stable-request-key"`)
-	want := []string{"GET /api/v1/environments?page=1&page_size=20", "GET /api/v1/environments/" + id,
+	want := []string{"GET /api/v1/environments?page=1&page_size=20", "GET /api/v1/environments/" + id, "GET /api/v1/environments/" + id + "/runtime",
 		"GET /api/v1/environments/" + id + "/operations?page=2&page_size=20", "POST /api/v1/environments",
-		"POST /api/v1/environments/" + id + "/start", "POST /api/v1/environments/" + id + "/stop", "DELETE /api/v1/environments/" + id}
+		"POST /api/v1/environments/" + id + "/start", "POST /api/v1/environments/" + id + "/stop", "POST /api/v1/environments/" + id + "/runtime/upgrade", "DELETE /api/v1/environments/" + id}
 	if strings.Join(seen, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("unexpected dispatch: %v", seen)
 	}

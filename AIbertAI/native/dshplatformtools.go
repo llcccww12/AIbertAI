@@ -8,7 +8,9 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
@@ -16,13 +18,14 @@ import (
 
 const (
 	dshCreateSkillTool     = "create_platform_skill"
+	dshCreateRuleTool      = "create_platform_rule"
 	dshCreateConnectorTool = "create_platform_connector"
 	dshCreateLocalMCPTool  = "create_local_mcp"
 	dshListResourcesTool   = "list_platform_resources"
 	dshCreateExpertTool    = "create_platform_expert"
 )
 
-const dshPlatformCreateInstructions = "When the user asks you to create a reusable skill, connect a remote MCP service, or add a local MCP server, use create_platform_skill, create_platform_connector or create_local_mcp. Each call shows the user an approval card and saves the result to their account on the platform, where it is listed in Settings. Never put API keys, tokens or passwords in these calls: tell the user to add credentials in Settings → Connectors. A new skill is available to the skill tool right after it is saved; a new connector must be enabled in the conversation's connector menu and is available from the next message. When the user asks for an expert (a reusable assistant role), call list_platform_resources, create any missing skill first, then call create_platform_expert with a role prompt and the IDs of the skills and connectors that fit."
+const dshPlatformCreateInstructions = "When the user asks you to create a personal rule in Settings → Rules, use create_platform_rule with the rule name and full instructions. Use create_platform_skill for a reusable skill, create_platform_connector for a remote MCP service, or create_local_mcp for a local MCP server. Each call shows the user an approval card before saving. Never put API keys, tokens or passwords in these calls: tell the user to add credentials in Settings → Connectors. A new skill is available to the skill tool right after it is saved; a new connector must be enabled in the conversation's connector menu and is available from the next message. When the user asks for an expert (a reusable assistant role), call list_platform_resources, create any missing skill first, then call create_platform_expert with a role prompt and the IDs of the skills and connectors that fit."
 
 func dshPlatformCreateTools() []dshHostTool {
 	schema := func(s string) json.RawMessage { return json.RawMessage(s) }
@@ -30,6 +33,9 @@ func dshPlatformCreateTools() []dshHostTool {
 		{Name: dshCreateSkillTool, Title: "创建技能", Kind: "other", Category: "builtin",
 			Description: "Save a reusable skill (Markdown instructions) to the user's platform account. name: letters, digits, '-' or '_', at most 64 characters, starting with a letter or digit. description: when to use the skill, one or two sentences. content: the full Markdown instructions.",
 			InputSchema: schema(`{"type":"object","properties":{"name":{"type":"string","pattern":"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"},"description":{"type":"string","minLength":1,"maxLength":1024},"content":{"type":"string","minLength":1,"maxLength":131072}},"required":["name","description","content"],"additionalProperties":false}`)},
+		{Name: dshCreateRuleTool, Title: "创建规则", Kind: "other", Category: "builtin",
+			Description: "Create a personal rule in Settings → Rules after the user approves its name and full instructions. Use this when the user wants to save a rule to their account.",
+			InputSchema: schema(`{"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":200},"content":{"type":"string","minLength":1,"maxLength":32768}},"required":["name","content"],"additionalProperties":false}`)},
 		{Name: dshCreateConnectorTool, Title: "创建连接器", Kind: "other", Category: "builtin",
 			Description: "Save a remote MCP service (streamable HTTP) as a personal connector on the user's platform account. url must be the full http:// or https:// MCP endpoint. Credentials are added by the user in Settings, never here.",
 			InputSchema: schema(`{"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":200},"description":{"type":"string","maxLength":2000},"url":{"type":"string","minLength":1,"maxLength":2048}},"required":["name","url"],"additionalProperties":false}`)},
@@ -45,7 +51,7 @@ func dshPlatformCreateTools() []dshHostTool {
 	}
 }
 
-// dshPlatformCreateBridge saves skills and connectors only after the user
+// dshPlatformCreateBridge saves resources only after the user
 // approves the exact arguments of a pending, persisted call in this turn.
 func (h *relaySessionHost) dshPlatformCreateBridge(ctx context.Context, ws *websocket.Conn, request *http.Request, session acpSession, turn *acpTurn) func(json.RawMessage) (any, error) {
 	var mu sync.Mutex
@@ -138,6 +144,12 @@ func (h *relaySessionHost) dshPlatformCreateBridge(ctx context.Context, ws *webs
 				return nil, err
 			}
 			title, approval = "创建技能 "+input.Name, map[string]any{"name": input.Name, "description": input.Description, "content": input.Content}
+		case dshCreateRuleTool:
+			name := strings.TrimSpace(input.Name)
+			if name == "" || utf8.RuneCountInString(name) > 200 || strings.TrimSpace(input.Content) == "" || len(input.Content) > 32<<10 {
+				return nil, errors.New("rule_input_invalid")
+			}
+			title, approval = "创建规则 "+name, map[string]any{"name": name, "content": input.Content}
 		case dshCreateConnectorTool:
 			body, err := remoteConnectorInput(input.Name, input.Description, input.URL)
 			if err != nil {
@@ -204,6 +216,12 @@ func (h *relaySessionHost) dshPlatformCreateBridge(ctx context.Context, ws *webs
 		case dshCreateSkillTool:
 			_, err = h.createPlatformSkill(ctx, session.ID, input.Name, input.Description, input.Content)
 			output = "Saved skill " + input.Name + " to the user's account. It is listed in Settings → Skills and can be loaded now with the skill tool."
+		case dshCreateRuleTool:
+			var auth authorization
+			if auth, err = h.live.authorization(ctx); err == nil {
+				_, err = h.live.client.knowledgeChange(ctx, auth, knowledgeOperation{Verb: http.MethodPost, Path: "/api/v1/rules", Body: approval})
+			}
+			output = "Saved rule " + approval["name"].(string) + " to the user's account. It is listed in Settings → Rules."
 		case dshCreateConnectorTool:
 			var auth authorization
 			if auth, err = h.live.authorization(ctx); err == nil {
@@ -227,7 +245,7 @@ func (h *relaySessionHost) dshPlatformCreateBridge(ctx context.Context, ws *webs
 		if err = effect.complete(output); err != nil {
 			return nil, err
 		}
-		// Settings lists the account's skills, connectors and experts from
+		// Settings lists the account's resources from
 		// config, so reload it instead of waiting for the user to refresh.
 		_ = wsjson.Write(ctx, ws, map[string]any{"jsonrpc": "2.0", "method": "_monkeyai/config/changed", "params": map[string]any{}})
 		return map[string]any{"output": output}, nil

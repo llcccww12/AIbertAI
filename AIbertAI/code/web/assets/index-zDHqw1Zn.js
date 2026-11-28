@@ -27571,7 +27571,7 @@ function V9(e) {
     ? !1
     : t.action === "create"
       ? tH(t.name)
-      : ["start", "stop", "delete"].includes(t.action) &&
+      : ["start", "stop", "delete", "upgrade_runtime"].includes(t.action) &&
         typeof t.id == "string" &&
         HVe.test(t.id) &&
         Number.isSafeInteger(t.generation) &&
@@ -30377,6 +30377,11 @@ const kKe = md(
       "云电脑目标、观察代次与连接就绪状态",
       qt({ serverUrl: "string", userId: "string", id: "string" }),
     ),
+    environmentsRuntime: Vt(
+      "_monkeyai/environments/runtime",
+      "读取云电脑运行时版本",
+      qt({ serverUrl: "string", userId: "string", id: "string" }),
+    ),
     environmentsOperations: Vt(
       "_monkeyai/environments/operations",
       "云电脑操作记录分页",
@@ -30395,7 +30400,7 @@ const kKe = md(
         {
           serverUrl: "string",
           userId: "string",
-          action: ["create", "start", "stop", "delete"],
+          action: ["create", "start", "stop", "delete", "upgrade_runtime"],
           name: "string?",
           id: "string?",
           generation: "number?",
@@ -30406,7 +30411,7 @@ const kKe = md(
           const t = qt({
             serverUrl: "string",
             userId: "string",
-            action: ["create", "start", "stop", "delete"],
+            action: ["create", "start", "stop", "delete", "upgrade_runtime"],
             name: "string?",
             id: "string?",
             generation: "number?",
@@ -31321,6 +31326,7 @@ const DKe = [
   "_monkeyai/kb/documents/delete",
   "_monkeyai/environments/list",
   "_monkeyai/environments/get",
+  "_monkeyai/environments/runtime",
   "_monkeyai/environments/operations",
   "_monkeyai/environments/change",
   "_monkeyai/billing/account",
@@ -112178,7 +112184,12 @@ const qwt = {
     history: "操作记录",
     historyEmpty: "暂无操作记录",
     actions: { create: "创建", start: "启动", stop: "停止", delete: "删除" },
-    operationActions: { running: "启动", stopped: "停止", deleted: "删除" },
+    runtimeVersion: "运行时版本",
+    runtimeLatest: "可用版本 {{version}}",
+    runtimeStopToUpdate: "停止云电脑后可更新运行时",
+    runtimeUpdating: "正在更新至 {{version}}",
+    runtimeUpgrade: "更新运行时",
+    operationActions: { running: "启动", stopped: "停止", deleted: "删除", runtime_upgrade: "更新运行时" },
     states: {
       pending: "等待调度",
       preparing: "准备中",
@@ -112263,7 +112274,12 @@ const qwt = {
       stop: "Stop",
       delete: "Delete",
     },
-    operationActions: { running: "Start", stopped: "Stop", deleted: "Delete" },
+    runtimeVersion: "Runtime version",
+    runtimeLatest: "Version {{version}} available",
+    runtimeStopToUpdate: "Stop the cloud computer to update its runtime",
+    runtimeUpdating: "Updating to {{version}}",
+    runtimeUpgrade: "Update runtime",
+    operationActions: { running: "Start", stopped: "Stop", deleted: "Delete", runtime_upgrade: "Update runtime" },
     states: {
       pending: "Awaiting scheduling",
       preparing: "Preparing",
@@ -134926,6 +134942,7 @@ function GAt(e) {
       }
     },
     get: (i) => s(wi.environmentsGet.name, { id: i }),
+    runtime: (i) => s(wi.environmentsRuntime.name, { id: i }),
     operations: (i, o) =>
       s(wi.environmentsOperations.name, { id: i, page: o, page_size: w2 }),
     async pending() {
@@ -135180,12 +135197,13 @@ function KAt(e, t) {
     }
   );
 }
-function YAt({ initial: e, client: t, onClose: n }) {
+function YAt({ initial: e, client: t, onClose: n, state }) {
   const { t: r, i18n: s } = Xe(),
     [i, o] = y.useState(e),
     [a, c] = y.useState(null),
     [u, d] = y.useState(1),
-    [f, h] = y.useState("");
+    [f, h] = y.useState(""),
+    [runtime, setRuntime] = y.useState(null);
   y.useEffect(() => {
     let m = !1,
       g = lj,
@@ -135194,8 +135212,13 @@ function YAt({ initial: e, client: t, onClose: n }) {
     const v = async () => {
       let w = "";
       try {
-        const [C, S] = await Promise.all([t.get(e.id), t.operations(e.id, u)]);
+        const [C, S, version] = await Promise.all([
+          t.get(e.id),
+          t.operations(e.id, u),
+          t.runtime(e.id).catch(() => null),
+        ]);
         if (m) return;
+        setRuntime(version?.data ?? null);
         (C.data && o(C.data),
           S.data && c(S.data.items),
           (w = C.error?.code || S.error?.code || ""));
@@ -135215,7 +135238,7 @@ function YAt({ initial: e, client: t, onClose: n }) {
         ((m = !0), clearTimeout(b));
       }
     );
-  }, [t, e.id, u]);
+  }, [t, e.id, u, state.busy]);
   const p = "settings.cloudComputers.";
   return l.jsx(Gs, {
     open: !0,
@@ -135255,8 +135278,48 @@ function YAt({ initial: e, client: t, onClose: n }) {
                 ),
               }),
             }),
+            l.jsx("dt", {
+              className: "basis-1/2 text-muted-foreground",
+              children: r(`${p}runtimeVersion`),
+            }),
+            l.jsx("dd", { children: i.runtime_version || "—" }),
           ],
         }),
+        runtime?.operation?.status === "pending"
+          ? l.jsx("p", {
+              role: "status",
+              className: "text-sm text-muted-foreground",
+              children: r(`${p}runtimeUpdating`, { version: runtime.target_version }),
+            })
+          : runtime?.update_available && l.jsxs("div", {
+              className: "flex items-center justify-between gap-3 text-sm",
+              children: [
+                l.jsxs("div", {
+                  children: [
+                    r(`${p}runtimeLatest`, { version: runtime.latest_version }),
+                    !runtime.can_update && l.jsx("p", {
+                      className: "text-xs text-muted-foreground",
+                      children: i.desired === "running"
+                        ? r(`${p}runtimeStopToUpdate`)
+                        : runtime.reason,
+                    }),
+                  ],
+                }),
+                runtime.can_update && l.jsx(Te, {
+                  size: "sm",
+                  variant: "secondary",
+                  disabled: !state.canChange,
+                  onClick: () => {
+                    void state.change({
+                      action: "upgrade_runtime",
+                      id: i.id,
+                      generation: i.generation,
+                    });
+                  },
+                  children: r(`${p}runtimeUpgrade`),
+                }),
+              ],
+            }),
         i.reason &&
           l.jsx("p", {
             className: "text-sm text-destructive",
@@ -135300,7 +135363,7 @@ function YAt({ initial: e, client: t, onClose: n }) {
                           className: "flex justify-between gap-3",
                           children: [
                             l.jsx("span", {
-                              children: r(`${p}operationActions.${m.desired}`),
+                              children: r(`${p}operationActions.${m.kind === "runtime_upgrade" ? m.kind : m.desired}`),
                             }),
                             l.jsx("span", {
                               className: `text-xs ${m.status === "failed" ? "text-destructive" : "text-muted-foreground"}`,
@@ -135772,7 +135835,7 @@ function XAt({ state: e, creating: t, onCreatingChange: n }) {
             e.client &&
             l.jsx(
               YAt,
-              { initial: o, client: e.client, onClose: () => a(null) },
+              { initial: o, client: e.client, state: e, onClose: () => a(null) },
               o.id,
             ),
         ],
