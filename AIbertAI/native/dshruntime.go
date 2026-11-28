@@ -1317,10 +1317,17 @@ func runDSHSessionWithProfile(ctx context.Context, cfg *dshRuntimeConfig, sessio
 			}
 			if receipt.State == "failed" && receipt.Seq > 0 && validUUID(receipt.InvocationID) {
 				local.mu.Lock()
-				owned := local.pending != nil && local.pending.OperationID == operationID && local.pending.CallID == receipt.InvocationID && (local.pending.State == "rejected" || local.pending.Status >= 400 || local.pending.Finish == "content_filter")
+				current := local.requireInvocationID && local.operationID == operationID
+				pending := local.pending != nil && local.pending.CallID == receipt.InvocationID
+				owned := pending && local.pending.SessionID == session.ID && local.pending.OperationID == operationID
 				local.mu.Unlock()
-				if owned {
+				if current && owned {
 					return local.acceptModelSettlement(ctx, session.ID, receipt.InvocationID, receipt.State, receipt.Seq)
+				}
+				if current && !pending {
+					// A verified child attempt can end before dispatch. It must
+					// leave any sibling's pending accounting record alone.
+					return nil
 				}
 			}
 			if err := local.verifyTeamSettlement(receipt, operationID); err != nil {

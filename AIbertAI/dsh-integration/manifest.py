@@ -12,7 +12,7 @@ import sys
 
 SOURCE_COMMIT = "3f321d32bfe382212a8ed8785c1d47a5a300aa23"
 SOURCE_ARCHIVE_SHA256 = "a46ccc2890645d0a7f3b032eeadb988769893392da5dcd48a1bc4ce0e49ba3fc"
-PATCH_SHA256 = "177f2f6dd9f2dd1a42f64999af5a8f89fef00b128b7b9f72c0d316e7307a6a47"
+PATCH_SHA256 = "55d5f85229ab35420718bdbfdca4a84a328132548b73f7810bff9cd4d1d7901c"
 ENTRY = "app/apps/cli/lib/bin.js"
 MANIFEST = "manifest.json"
 HEX = re.compile(r"^[0-9a-f]{64}$")

@@ -11940,3 +11940,65 @@ diff --git a/packages/sdk/server/src/server.ts b/packages/sdk/server/src/server.
          || this.ctx.get('goals')?.get(agent)?.activation === 'armed') throw new Error('turn lease busy')
      }
    }
+diff --git a/packages/llm/llm-pi-ai/src/adapter.ts b/packages/llm/llm-pi-ai/src/adapter.ts
+--- a/packages/llm/llm-pi-ai/src/adapter.ts
++++ b/packages/llm/llm-pi-ai/src/adapter.ts
+@@ -283,6 +283,7 @@
+  */
+ export class PiAiAdapter extends LlmAdapter {
+   private snapshot: PiAiSnapshot | undefined
++  private aibertaiStreamTail = Promise.resolve()
+
+   constructor(private readonly config: PiAiAdapterOptions) {
+     super()
+@@ -404,6 +405,29 @@
+
+   stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+     return this.streamWithSnapshot(options, this.current())
++  }
++
++  private async acquireAibertaiStream(signal: AbortSignal | undefined): Promise<() => void> {
++    const previous = this.aibertaiStreamTail
++    const slot = Promise.withResolvers<void>()
++    // The desktop gateway can dispatch one call per session. Wait before the
++    // provider watchdog starts, even when several children request a model.
++    this.aibertaiStreamTail = previous.then(() => slot.promise)
++    const cancelled = Promise.withResolvers<never>()
++    const abortError = () => new LlmError('pi-ai request aborted by caller', 'ABORTED')
++    const onAbort = () => cancelled.reject(abortError())
++    try {
++      if (signal?.aborted) throw abortError()
++      signal?.addEventListener('abort', onAbort, { once: true })
++      await Promise.race([previous, cancelled.promise])
++      if (signal?.aborted) throw abortError()
++      return () => slot.resolve()
++    } catch (error) {
++      slot.resolve()
++      throw error
++    } finally {
++      signal?.removeEventListener('abort', onAbort)
++    }
+   }
+
+   private async * streamWithSnapshot(
+@@ -435,6 +459,9 @@
+       options.reasoningEffort ?? profile.reasoning,
+     )
+     const apiKey = await this.config.resolveApiKey(options.provider, profile)
++    const releaseSlot = options.provider === 'aibertai' && options.invocationId !== undefined
++      ? await this.acquireAibertaiStream(options.signal)
++      : undefined
+
+     const consumer = new AbortController()
+     const upstream = options.signal === undefined
+@@ -512,6 +539,7 @@
+       throw error
+     } finally {
+       consumer.abort('pi-ai stream consumer stopped')
+-    }
+-  }
+-}
++      releaseSlot?.()
++    }
++  }
++}

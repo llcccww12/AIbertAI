@@ -360,6 +360,10 @@ func (g *dshLocalGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		g.mu.Lock()
 	}
+	if r.Context().Err() != nil {
+		g.mu.Unlock()
+		return
+	}
 	if g.pending != nil {
 		g.mu.Unlock()
 		http.Error(w, "model call requires reconciliation", http.StatusConflict)

@@ -50855,7 +50855,7 @@ const zn = uc((e, t) => ({
       c = i.filter((u) => !u.groupId || !a.has(u.groupId)).map((u) => u.id);
     t().select(n, c, c.at(-1));
   },
-  importImage: async (n, r) => {
+  importImage: async (n, r, select = true) => {
     const s = await Jr("canvas_import_image", { sessionId: n, ...r }),
       i = s.document.nodes.filter((c) => s.nodeIds.includes(c.id)),
       o = {
@@ -50874,7 +50874,8 @@ const zn = uc((e, t) => ({
       future: { ...c.future, [n]: [] },
     }));
     const a = s.nodeIds.at(-1);
-    t().select(n, a ? [a] : [], a);
+    if (select) t().select(n, a ? [a] : [], a);
+    return a;
   },
   importVideo: async (n, r, s) => {
     const i = await Jr("canvas_import_video", { sessionId: n, ...r }),
@@ -211880,7 +211881,8 @@ function vzt({
     Me = mt.indexOf(Ct),
     It = Ne?.video_config?.prompt_max_characters ?? 2e3,
     Gt = Mme(u, f),
-    en = Gt.length > It,
+    promptLength = Array.from(Gt).length,
+    en = promptLength > It,
     un = Ne?.video_config?.prompt_required_when,
     Kt = un
       ? un.some((rt) =>
@@ -212794,7 +212796,7 @@ ${rt.content}`,
             l.jsx("textarea", {
               ref: M,
               "aria-label": "视频生成描述",
-              maxLength: It,
+              maxLength: Math.max(It, 2e4),
               rows: 6,
               placeholder: f.length
                 ? "补充说明（可选），如画面风格、镜头运动…"
@@ -212823,7 +212825,7 @@ ${rt.content}`,
                 }),
                 l.jsxs("span", {
                   title: "脚本附件与补充说明的总字数",
-                  children: [Gt.length, " / ", It],
+                  children: [promptLength, " / ", It],
                 }),
               ],
             }),
@@ -212859,7 +212861,7 @@ ${rt.content}`,
             role: "alert",
             children: [
               "脚本附件与补充说明共 ",
-              Gt.length,
+              promptLength,
               " 字，超过当前模型 ",
               It,
               " 字上限，请精简内容或移除附件。",
@@ -213240,6 +213242,7 @@ function Czt(e) {
 }
 function Szt({
   sessionId: e,
+  designPath,
   node: t,
   models: n = [],
   referenceImages = [],
@@ -213256,15 +213259,18 @@ function Szt({
     [v, w] = y.useState(""),
     [C, S] = y.useState(!1),
     [referenceNodeId, setReferenceNodeId] = y.useState(""),
+    [assetPicker, setAssetPicker] = y.useState(null),
+    promptInput = y.useRef(null),
     A = zn((Q) => Q.imageGenerationModels[e] ?? ""),
     _ = y.useRef(null),
     E = y.useRef(null),
     T = y.useRef(null),
     M = y.useRef(null),
-    I = y.useMemo(() => n.filter((Q) => Q.kind === "image" && Q.ready), [n]),
+    P = t.empty && !referenceNodeId ? "generate" : "edit",
+    I = y.useMemo(() => n.filter((Q) => Q.kind === "image" && Q.ready && (P !== "edit" || !Q.image_config?.operations || Q.image_config.operations.includes(P))), [n, P]),
     O = y.useMemo(
-      () => I.find((Q) => Q.id === A || Q.model === A) ?? (A ? void 0 : I[0]),
-      [I, A],
+      () => I.find((Q) => Q.id === A || Q.model === A) ?? (A && P !== "edit" ? void 0 : I[0]),
+      [I, A, P],
     ),
     N = I.length > 1 || (!O && I.length > 0),
     R = O?.display_name ?? "",
@@ -213285,10 +213291,10 @@ function Szt({
           : (W[0] ?? "")),
     [$, L] = K.split(":").map(Number),
     H = `${K && !g && Math.abs(Math.log(t.width / t.height / ($ / L))) > 0.015 ? "≈ " : ""}${K || "不可用"}`,
-    P = t.empty && !referenceNodeId ? "generate" : "edit",
     G = !B?.operations || B.operations.includes(P),
-    referenceMissing = !!referenceNodeId && !referenceImages.some((image) => image.id === referenceNodeId),
-    canSubmit = !!a.trim() && !!i && !u && !r && !s && !!O && G && !!K && !!F && !referenceMissing;
+    referenceImage = referenceNodeId ? referenceImages.find((image) => image.id === referenceNodeId) : t.empty ? void 0 : t,
+    referenceMissing = !!referenceNodeId && !referenceImage,
+    canSubmit = !!a.trim() && !!i && !u && !r && !s && !!O && G && !!K && !!F && !referenceMissing && !assetPicker;
   (y.useEffect(() => {
     b("");
   }, [t.id, t.width, t.height]),
@@ -213321,6 +213327,25 @@ function Szt({
       typeof navigator < "u" &&
         navigator.clipboard?.writeText &&
         navigator.clipboard.writeText(t.id).catch(() => {});
+    },
+    pickReference = async (asset, signal) => {
+      let id = asset.source?.id;
+      if (!id) {
+        const input = asset.file ? { dataUrl: await Ozt(asset.file, signal) } : { sourcePath: asset.path };
+        signal.throwIfAborted();
+        id = await zn.getState().importImage(e, { ...input, name: asset.title, x: t.x + t.width + 32, y: t.y }, false);
+      }
+      signal.throwIfAborted();
+      if (!id) throw new Error("无法添加参考图");
+      setReferenceNodeId(id);
+      if (assetPicker.mention) {
+        const { start, end, query } = assetPicker.mention;
+        c((value) => value.slice(start, end) === query ? value.slice(0, start) + value.slice(end) : value);
+        requestAnimationFrame(() => {
+          promptInput.current?.focus();
+          promptInput.current?.setSelectionRange(start, start);
+        });
+      }
     };
   return l.jsx("div", {
     className: "conversation-composer",
@@ -213352,19 +213377,39 @@ function Szt({
         l.jsxs("div", {
           className: "design-image-composer-body",
           children: [
-            l.jsxs("select", {
-              className: "design-image-reference",
-              "aria-label": "选择参考图片",
-              title: referenceImages.length ? "从画布选择参考图" : "可先把图片拖入画布，再选作参考图",
-              value: referenceNodeId,
-              disabled: s || r || u,
-              onChange: (event) => setReferenceNodeId(event.target.value),
+            l.jsxs("div", {
+              className: "design-image-reference-row",
               children: [
-                l.jsx("option", { value: "", children: t.empty ? "文生图 · 无参考图" : "图生图 · 当前图片" }),
-                referenceMissing && l.jsx("option", { value: referenceNodeId, disabled: true, children: "参考图已不可用" }),
-                ...referenceImages.map((image, index) =>
-                  l.jsx("option", { value: image.id, children: `参考图 ${index + 1} · ${image.title?.trim() || "图片"}` }, image.id),
-                ),
+                l.jsx(Te, {
+                  type: "button",
+                  variant: "outline",
+                  size: "icon-sm",
+                  title: "添加参考图",
+                  "aria-label": "添加参考图",
+                  "aria-haspopup": "dialog",
+                  disabled: s || r || u,
+                  onClick: () => setAssetPicker({}),
+                  children: l.jsx(Xn, { name: "plus", size: 16 }),
+                }),
+                referenceImage?.source && l.jsx("span", {
+                  className: "design-image-reference-cover",
+                  children: l.jsx(GS, { sessionId: e, kind: "image", path: `${designPath}/${referenceImage.source}` }),
+                }),
+                l.jsx("span", {
+                  className: "design-image-reference-label",
+                  role: "status",
+                  children: referenceMissing ? "参考图已不可用" : P === "generate" ? "文生图 · 无参考图" : `图生图 · ${referenceNodeId ? referenceImage.title?.trim() || "参考图" : "当前图片"}`,
+                }),
+                referenceNodeId && l.jsx(Te, {
+                  type: "button",
+                  variant: "ghost",
+                  size: "icon-sm",
+                  disabled: s || r || u,
+                  "aria-label": "移除参考图",
+                  title: "移除参考图",
+                  onClick: () => setReferenceNodeId(""),
+                  children: l.jsx(Xn, { name: "close", size: 14 }),
+                }),
               ],
             }),
             l.jsx(Te, {
@@ -213383,13 +213428,24 @@ function Szt({
               }),
             }),
             l.jsx("textarea", {
+              ref: promptInput,
               "aria-label": "图片生成描述",
               maxLength: 2e4,
               rows: 3,
-              placeholder: P === "edit" ? "描述想对参考图做哪些修改…" : "描述希望生成的图片…",
+              placeholder: P === "edit" ? "描述想对参考图做哪些修改…" : "描述希望生成的图片，输入 @ 引用素材…",
               value: a,
               disabled: s || r || u,
-              onChange: (Q) => c(Q.target.value),
+              onChange: (Q) => {
+                const { value, selectionStart: end } = Q.target;
+                c(value);
+                if (Q.nativeEvent.isComposing || Q.nativeEvent.inputType?.startsWith("delete")) return;
+                const mention = /(?:^|[\s，。；、：（【])([@＠])([^\s@＠]*)$/u.exec(value.slice(0, end));
+                if (mention && !assetPicker) {
+                  const query = mention[1] + mention[2];
+                  const start = end - query.length;
+                  if (a[start] !== mention[1]) setAssetPicker({ search: mention[2], mention: { start, end, query } });
+                }
+              },
               onKeyDown: IQ,
             }),
             l.jsxs("div", {
@@ -213571,7 +213627,7 @@ function Szt({
             }) : l.jsx("span", {
               className: "design-image-submit-status",
               role: "status",
-              children: "暂无可用的图片模型",
+              children: P === "edit" ? "暂无支持图生图的模型" : "暂无可用的图片模型",
             }),
             l.jsx("span", { className: "design-image-control-spacer" }),
             O && (!G || referenceMissing) && l.jsx("span", {
@@ -213602,6 +213658,16 @@ function Szt({
             }),
           ],
         }),
+        assetPicker && !s && !r && la.createPortal(l.jsx(qTe, {
+          sessionId: e,
+          designPath,
+          node: { projectKind: "video", tracks: [] },
+          sources: referenceImages.map((image) => ({ ...image, kind: "image", title: image.title?.trim() || "图片" })),
+          imageOnly: true,
+          initialSearch: assetPicker.search,
+          onSelectImage: pickReference,
+          onClose: () => setAssetPicker(null),
+        }), document.body),
       ],
     }),
   });
@@ -214770,6 +214836,8 @@ function qTe({
   sources: r,
   imageOnly: s,
   initialFiles: i,
+  initialSearch = "",
+  onSelectImage,
   onImport: o,
   onClose: a,
 }) {
@@ -214784,6 +214852,8 @@ function qTe({
     [T, M] = y.useState(!1),
     [I, O] = y.useState(""),
     [N, R] = y.useState(),
+    [assetSearch, setAssetSearch] = y.useState(initialSearch),
+    searchInput = y.useRef(null),
     B = y.useRef(void 0),
     q = y.useRef([]),
     F = y.useRef(null),
@@ -214791,7 +214861,7 @@ function qTe({
   (y.useEffect(() => {
     const ae = document.activeElement;
     return (
-      F.current?.focus(),
+      (searchInput.current ?? F.current)?.focus(),
       () => {
         (B.current?.abort(),
           q.current.forEach((pe) => URL.revokeObjectURL(pe)),
@@ -214863,7 +214933,7 @@ function qTe({
     z = new Set(K.map((ae) => ae.path)),
     H = [...K, ...L.filter((ae) => !z.has(ae.path)), ...b],
     P = (ae) => n.projectKind === "video" || ae.kind === "audio",
-    G = H.filter((ae) => (!s || ae.kind === "image") && (!d || P(ae))),
+    G = H.filter((ae) => (!s || ae.kind === "image") && (!d || P(ae)) && (!onSelectImage || ((!ae.path || !Rq(ae.path)) && ae.title.toLowerCase().includes(assetSearch.trim().toLowerCase())))),
     Z = $.filter((ae) => ae.kind === "directory"),
     J = (ae, pe, ue) =>
       g((me) => {
@@ -214885,8 +214955,8 @@ function qTe({
     },
     te = (ae) =>
       p((pe) => {
-        const ue = new Map(pe);
-        return (ue.has(ae.id) ? ue.delete(ae.id) : ue.set(ae.id, ae), ue);
+        const ue = new Map(onSelectImage ? [] : pe);
+        return (pe.has(ae.id) ? ue.delete(ae.id) : ue.set(ae.id, ae), ue);
       }),
     re = y.useCallback(
       (ae) => {
@@ -214900,6 +214970,8 @@ function qTe({
           try {
             Iq(me);
             const be = Ume(me.name);
+            if (onSelectImage && (be !== "image" || Rq(me.name)))
+              throw new Error("参考图只支持 PNG、JPG、WebP、GIF");
             if (s && be !== "image")
               throw new Error("图片面板只支持 PNG、JPG、WebP、GIF、SVG");
             if (n.projectKind === "audio" && be !== "audio")
@@ -214921,11 +214993,12 @@ function qTe({
               `${me.name}：${be instanceof Error ? be.message : "无法读取文件"}`,
             );
           }
+        if (onSelectImage && pe.length) setAssetSearch("");
         (v((me) => [...me, ...pe]),
-          p((me) => new Map([...me, ...pe.map((be) => [be.id, be])])),
+          p((me) => new Map(onSelectImage && pe.length ? [[pe[0].id, pe[0]]] : [...me, ...pe.map((be) => [be.id, be])])),
           O(ue.join("；")));
       },
-      [s, b, n.projectKind],
+      [s, b, n.projectKind, onSelectImage],
     ),
     se = y.useRef(!1);
   y.useEffect(() => {
@@ -214950,6 +215023,18 @@ function qTe({
       }
       const ue = new AbortController();
       ((B.current = ue), O(""), R({ done: 0, total: ae.length, title: "" }));
+      if (onSelectImage) {
+        try {
+          await onSelectImage(ae[0], ue.signal);
+          if (!ue.signal.aborted) a();
+        } catch (error) {
+          if (!ue.signal.aborted) O(error instanceof Error ? error.message : "无法添加参考图");
+        } finally {
+          B.current = void 0;
+          if (!ue.signal.aborted) R(void 0);
+        }
+        return;
+      }
       const me = [],
         be = [],
         Ce = [];
@@ -215043,7 +215128,7 @@ function qTe({
       className: "media-project-media-dialog",
       role: "dialog",
       "aria-modal": "true",
-      "aria-label": "添加媒体资源",
+      "aria-label": onSelectImage ? "选择参考图" : "添加媒体资源",
       onKeyDown: (ae) => {
         if (
           (ae.stopPropagation(),
@@ -215091,7 +215176,7 @@ function qTe({
                 }),
               ],
             }),
-            l.jsxs("button", {
+            !onSelectImage && l.jsxs("button", {
               type: "button",
               className: "media-project-media-available",
               "aria-label": "仅显示可用",
@@ -215117,6 +215202,15 @@ function qTe({
         l.jsxs("div", {
           className: "media-project-media-content",
           children: [
+            onSelectImage && l.jsx("input", {
+              ref: searchInput,
+              type: "search",
+              className: "design-image-asset-search",
+              "aria-label": "搜索图片素材",
+              placeholder: "搜索图片素材",
+              value: assetSearch,
+              onChange: (event) => setAssetSearch(event.target.value),
+            }),
             w &&
               l.jsxs("div", {
                 className: "media-project-media-breadcrumb",
@@ -215252,8 +215346,8 @@ function qTe({
           children: [
             l.jsxs("div", {
               children: [
-                l.jsxs("strong", { children: ["已选 ", h.size, " 项"] }),
-                l.jsx("small", {
+                l.jsxs("strong", { children: ["已选 ", h.size, onSelectImage ? " 张参考图" : " 项"] }),
+                !onSelectImage && l.jsx("small", {
                   children: Bzt.slice(1)
                     .filter((ae) => !s || ae.id === "image" || ae.id === "svg")
                     .map(
@@ -215289,7 +215383,7 @@ function qTe({
               onClick: () => {
                 le();
               },
-              children: N ? "正在导入…" : "确认",
+              children: N ? "正在导入…" : onSelectImage ? "引用图片" : "确认",
             }),
           ],
         }),
@@ -215297,8 +215391,8 @@ function qTe({
           ref: W,
           hidden: !0,
           type: "file",
-          multiple: !0,
-          accept: s
+          multiple: !onSelectImage,
+          accept: onSelectImage ? ".png,.jpg,.jpeg,.webp,.gif" : s
             ? ".png,.jpg,.jpeg,.webp,.gif,.svg"
             : n.projectKind === "audio"
               ? ".mp3,.wav,.m4a"
@@ -264077,6 +264171,7 @@ function ctn({
                   {
                     unavailable: Z,
                     sessionId: e,
+                    designPath: n,
                     node: nr,
                     models: r,
                     referenceImages: J?.nodes.filter((node) =>

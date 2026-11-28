@@ -18983,13 +18983,18 @@ class CanvasImageAssets {
   }
   async importImage(sessionId, input) {
     await this.context.location(sessionId);
-    if (!Number.isFinite(input.x) || !Number.isFinite(input.y) || input.name.length > 255 || input.dataUrl.length > 14 * 1024 * 1024) throw RequestError.invalidParams({ reason: "invalid_canvas_image_import" });
+    if (!Number.isFinite(input.x) || !Number.isFinite(input.y) || input.name.length > 255 || input.dataUrl.length > 14 * 1024 * 1024 || input.dataUrl && input.sourcePath !== void 0) throw RequestError.invalidParams({ reason: "invalid_canvas_image_import" });
     const sized = input.width === void 0 && input.height === void 0 ? void 0 : { width: Number(input.width), height: Number(input.height) };
     if (sized && (!Number.isFinite(sized.width) || !Number.isFinite(sized.height) || sized.width <= 0 || sized.height <= 0 || sized.width > 16384 || sized.height > 16384)) throw RequestError.invalidParams({ reason: "invalid_canvas_image_import" });
     const display = sized ? { width: Math.round(sized.width), height: Math.round(sized.height) } : void 0;
-    const match = /^data:image\/(png|jpeg|webp|gif);base64,([A-Za-z0-9+/]+={0,2})$/.exec(input.dataUrl);
-    if (!match) throw RequestError.invalidParams({ reason: "invalid_canvas_image_import" });
-    const bytes = Buffer.from(match[2], "base64");
+    let bytes;
+    if (input.sourcePath !== void 0) {
+      ({ data: bytes } = await new MediaArtifactStore(this.context.sessions).read(sessionId, input.sourcePath));
+    } else {
+      const match = /^data:image\/(png|jpeg|webp|gif);base64,([A-Za-z0-9+/]+={0,2})$/.exec(input.dataUrl);
+      if (!match) throw RequestError.invalidParams({ reason: "invalid_canvas_image_import" });
+      bytes = Buffer.from(match[2], "base64");
+    }
     if (!bytes.length || bytes.length > 10 * 1024 * 1024) throw RequestError.invalidParams({ reason: "canvas_image_too_large" });
     try {
       const metadata = await (await imageProcessing.require())(bytes, { limitInputPixels: 2e7 }).metadata();
@@ -23135,7 +23140,7 @@ const productionJobSchema = {
   }
 };
 const CANVAS_TOOLS = [
-  { name: "canvas_get_document", description: "读取当前设计会话的画布文档和全部节点。", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
+  { name: "canvas_get_document", description: "读取当前设计会话的画布文档和节点。图片节点返回的 source_path 可作为 media_edit_image 的参考图。", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
   {
     name: "canvas_production",
     description: "分镜创作、视频制作方案文稿与历史原任务查询。create_storyboards(root_id来源,operation_id,expected_source_content)创建独立分镜方案；想法来源先write完整script，经script_review真实采用后继续assets与分镜。prepare_video_plan(root_id,group_id,expected_revision)只登记该组方案文稿，按read.recovery.video_plan/next_action写完即停。plan只登记或删改分镜，jobs和sealed每次必传。write带expected_source_content，修改已保存正文带expected_content，变更带最新expected_revision；并发冲突重读。prepare_confirmation只支持duration和script_review，原样AskUserQuestion等待真实用户；Agent不得调用answer_confirmation或set_duration。来源变化只报告差异，不覆盖快照及下游。新图片或视频请求直接使用通用媒体工具，不创建旧视频操作，不增加逐段参数、首尾帧、费用确认或强制验收阶段。read历史记录不推进生成；resume_task(node_id)只恢复recovery.submitted_tasks中当前或归档版本的原请求，保留原任务ID和全部输入；unknown每次用户继续最多查一次，仍未知就停止，不新POST、不自动重试或重复计费。read不自动选择待查询任务，用户明确指定节点后才恢复。required_arguments仅提示待补字段，不是工具参数。",
@@ -25366,10 +25371,10 @@ const videoReferencesProperty = {
 const MEDIA_TOOLS = [
   { name: "media_generate_image", description: "根据 prompt 生成图片并保存到本地工作区。比例提问前、首次生成前及切换模型后先用 media_get_image_model 查询当前会话所选模型的能力，不套用网页推荐或其他模型的比例。返回的 source_path 用于 canvas_create_image；只有确实需要把图片嵌入 HTML Artifact 时才交给 canvas_add_artifact_asset，分层海报底图必须保持为独立图片节点。", inputSchema: { type: "object", properties: { prompt: { type: "string", minLength: 1, maxLength: 2e4 }, parameters: parametersProperty }, required: ["prompt"], additionalProperties: false } },
   { name: "media_get_image_model", annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true }, description: "只读查询当前会话实际选中的生图模型 model ID 和完整 image_config（画质、比例、默认值及 allowed_aspect_ratios 组合限制），不生成、不上传、不产生生成费用。比例提问前及切换模型后先查询，选项只能来自当前模型；已确定画质时按对应 allowed_aspect_ratios 收窄。使用场景不等于生成比例，不从网页或其他模型猜测。image_config 为 null 时能力未知，不编造比例选项。查询不接受 model，不替换用户当前选择。", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
-  { name: "media_generate_video", description: "通过指定或默认视频模型生成视频并保存到本地工作区。首次调用或换型号前先调用 media_get_video_model，按返回的 model ID 与 video_config 构造请求，不能把其他型号的参数套用到当前型号。mode 为 text_to_video 时不要传 references；image_to_video 传一个 first_frame；last_frame_to_video 传一个 last_frame；first_last_to_video 各传一个 first_frame 和 last_frame；reference_image_to_video 按当前型号能力传 reference_image、reference_audio 或 reference_video，合计最多 30 项，逐类数量与格式服从模型目录。返回 source_path、尺寸、时长与任务 ID。", inputSchema: { type: "object", properties: { model: { type: "string", minLength: 1, maxLength: 200, description: "模型目录中的视频模型 ID；省略时使用默认视频模型。" }, prompt: { type: "string", maxLength: 2e3, description: "是否可留空以当前型号和模式公布的 prompt_required_when 为准。" }, mode: { type: "string", enum: ["text_to_video", "image_to_video", "last_frame_to_video", "first_last_to_video", "reference_image_to_video"] }, references: videoReferencesProperty, parameters: videoParametersProperty }, required: ["prompt", "mode"], additionalProperties: false } },
-  { name: "media_get_video_model", annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true }, description: "只读查询指定或会话默认视频模型的 model ID、上游型号及完整 video_config（模式、参数、默认值、条件规则和参考素材限制），不生成视频、不上传素材、不产生生成费用。生成前及换型号后先查询；只传 params 声明的参数，未声明的 generate_audio/seed 即使为 false/0 也不能传。video_config 为 null 时能力未知，不猜测型号能力。", inputSchema: { type: "object", properties: { model: { type: "string", minLength: 1, maxLength: 200, description: "视频模型资源 ID；省略时解析当前会话默认模型。" } }, additionalProperties: false } },
+  { name: "media_generate_video", description: "通过指定或默认视频模型生成视频并保存到本地工作区。首次调用或换型号前先调用 media_get_video_model，按返回的 model ID 与 video_config 构造请求，不能把其他型号的参数套用到当前型号。mode 为 text_to_video 时不要传 references；image_to_video 传一个 first_frame；last_frame_to_video 传一个 last_frame；first_last_to_video 各传一个 first_frame 和 last_frame；reference_image_to_video 按当前型号能力传 reference_image、reference_audio 或 reference_video，合计最多 30 项，逐类数量与格式服从模型目录。返回 source_path、尺寸、时长与任务 ID。", inputSchema: { type: "object", properties: { model: { type: "string", minLength: 1, maxLength: 200, description: "模型目录中的视频模型 ID；省略时使用默认视频模型。" }, prompt: { type: "string", maxLength: 4e3, description: "提交长度按 media_get_video_model 返回的 video_config.prompt_max_characters 校验。是否可留空取决于 prompt_required_when。" }, mode: { type: "string", enum: ["text_to_video", "image_to_video", "last_frame_to_video", "first_last_to_video", "reference_image_to_video"] }, references: videoReferencesProperty, parameters: videoParametersProperty }, required: ["prompt", "mode"], additionalProperties: false } },
+  { name: "media_get_video_model", annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true }, description: "只读查询指定或会话默认视频模型的 model ID、上游型号及完整 video_config（模式、参数、默认值、条件规则、prompt_max_characters 和参考素材限制），不生成视频、不上传素材、不产生生成费用。生成前及换型号后先查询；只传 params 声明的参数，未声明的 generate_audio/seed 即使为 false/0 也不能传。video_config 为 null 时能力未知，不猜测型号能力。", inputSchema: { type: "object", properties: { model: { type: "string", minLength: 1, maxLength: 200, description: "视频模型资源 ID；省略时解析当前会话默认模型。" } }, additionalProperties: false } },
   { name: "media_generate_user_prompt", description: "只在当前用户消息本身就是完整目标 Logo 生图提示词、没有请求前缀或旧品牌风格参考时使用。媒体服务从当前轮用户消息读取原文并逐字生图；不接受 Agent 填写 prompt，不做改写。", inputSchema: { type: "object", properties: { parameters: parametersProperty }, additionalProperties: false } },
-  { name: "media_edit_image", description: "以工作区图片为参考执行图生图编辑，并将非破坏式结果保存为新图片。适合直接处理难以达到预期质量，或需要在保留原图意图的同时重建视觉结果的场景。", inputSchema: { type: "object", properties: { source_path: sourceProperty, prompt: { type: "string", minLength: 1, maxLength: 2e4 }, parameters: parametersProperty }, required: ["source_path", "prompt"], additionalProperties: false } },
+  { name: "media_edit_image", description: "以工作区图片为参考执行图生图编辑，并将非破坏式结果保存为新图片。先用 media_get_image_model 确认当前模型的 image_config.operations 包含 edit。参考图使用实际工作区路径，画布图片的 source_path 从 canvas_get_selection 或 canvas_get_document 获取，不能用节点 ID 或标题代替。", inputSchema: { type: "object", properties: { source_path: sourceProperty, prompt: { type: "string", minLength: 1, maxLength: 2e4 }, parameters: parametersProperty }, required: ["source_path", "prompt"], additionalProperties: false } },
   { name: "media_remove_background", description: "把源图主体抠成透明 PNG。已有透明通道或规则纯色背景会在本地快速处理；复杂背景以及指定 prompt 主体时，图像模型会先生成纯色色键，再由本地代码生成透明通道。", inputSchema: { type: "object", properties: { source_path: sourceProperty, prompt: { type: "string", minLength: 1, maxLength: 2e3 }, parameters: parametersProperty }, required: ["source_path"], additionalProperties: false } },
   { name: "media_extract_layers", description: "按照 Agent 提供的从底到顶元素清单拆分图层。通过黑白蒙版保留原图像素，输出透明 PNG，不负责识别或规划元素。", inputSchema: { type: "object", properties: { source_path: sourceProperty, layers: { type: "array", minItems: 1, maxItems: 10, items: { type: "object", properties: { name: { type: "string", minLength: 1, maxLength: 100 }, description: { type: "string", minLength: 1, maxLength: 1e3 }, kind: { type: "string", enum: ["background", "object", "text", "effect"] }, bounds: { type: "object", properties: { x: { type: "number", minimum: 0, maximum: 1 }, y: { type: "number", minimum: 0, maximum: 1 }, width: { type: "number", exclusiveMinimum: 0, maximum: 1 }, height: { type: "number", exclusiveMinimum: 0, maximum: 1 } }, required: ["x", "y", "width", "height"], additionalProperties: false } }, required: ["name", "description", "kind"], additionalProperties: false } }, parameters: parametersProperty }, required: ["source_path", "layers"], additionalProperties: false } },
   { name: "media_upscale_image", description: "调用高保真图片模型补充纹理和边缘细节，以 2K 或 4K 输出高清新图片；保持原图内容、构图和透明轮廓。", inputSchema: { type: "object", properties: { source_path: sourceProperty, scale: { type: "integer", enum: [2, 4] }, prompt: { type: "string", minLength: 1, maxLength: 2e3, description: "可选的细节增强要求；不会覆盖内容和结构保真约束。" }, parameters: parametersProperty }, required: ["source_path"], additionalProperties: false } },
@@ -26551,7 +26556,8 @@ function uiTools(options) {
     canvas_selected_sources: async (args) => (await canvas.selectedAttachmentSources(text(args.sessionId, "invalid_session_id"), args.nodeIds)).map((source22) => ({ name: source22.name, ...canvasCommandContext.getStore()?.remote ? { path: source22.relativePath } : { uri: require$$0.pathToFileURL(source22.path).href }, canvasNodeId: source22.canvasNodeId })),
     canvas_import_image: async (args) => {
       const sessionId = text(args.sessionId, "invalid_session_id");
-      const result = await canvas.importImage(sessionId, { ...nodeScope(args), name: String(args.name ?? ""), dataUrl: String(args.dataUrl ?? ""), x: Number(args.x), y: Number(args.y), width: args.width === void 0 ? void 0 : Number(args.width), height: args.height === void 0 ? void 0 : Number(args.height) });
+      const sourcePath = args.sourcePath === void 0 ? void 0 : text(args.sourcePath, "invalid_canvas_image_source");
+      const result = await canvas.importImage(sessionId, { ...nodeScope(args), name: String(args.name ?? ""), dataUrl: String(args.dataUrl ?? ""), sourcePath, x: Number(args.x), y: Number(args.y), width: args.width === void 0 ? void 0 : Number(args.width), height: args.height === void 0 ? void 0 : Number(args.height) });
       changed(sessionId, result);
       return { document: result.document, nodeIds: [result.node.id] };
     },
@@ -53046,6 +53052,7 @@ function createPrivateCatalog(origin) {
           id: node.id, type: node.type, title: node.title?.slice(0, 160),
           x: node.x, y: node.y, width: node.width, height: node.height,
           ...(node.type === "text" ? { content: node.content?.slice(0, textLimit), textRole: node.textRole } : {}),
+          ...(node.type === "image" && node.source && !node.empty && !node.hidden ? { source_path: `${saved.localDesignPath}/${node.source}` } : {}),
           ...(node.type === "html" ? {
             entry: node.entry, draft: Boolean(node.draft), empty: Boolean(node.empty), slideIndex: node.slideIndex,
             artifact_path: `${saved.localDesignPath}/${node.entry}`

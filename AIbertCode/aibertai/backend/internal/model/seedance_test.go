@@ -11,15 +11,19 @@ func TestSeedanceCapabilities(t *testing.T) {
 		modelID       string
 		maxSeconds    int64
 		maxReferences uint32
+		maxPrompt     uint32
 		resolutions   []string
 	}{
-		{"doubao-seedance-2-0-260128", 15, 9, []string{"480p", "720p", "1080p", "4k"}},
-		{"doubao-seedance-2-5-260628", 30, 30, []string{"480p", "720p", "1080p"}},
+		{"doubao-seedance-2-0-260128", 15, 9, 4000, []string{"480p", "720p", "1080p", "4k"}},
+		{"doubao-seedance-2-5-260628", 30, 30, 2000, []string{"480p", "720p", "1080p"}},
 	} {
 		t.Run(tc.modelID, func(t *testing.T) {
 			cap, err := VideoCapabilitiesFor(ProviderVolcengine, tc.modelID)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if cap.PromptMaxCharacters != tc.maxPrompt {
+				t.Fatalf("提示词上限: %d, 预期 %d", cap.PromptMaxCharacters, tc.maxPrompt)
 			}
 			max, err := VideoMaxDuration(cap)
 			if err != nil || max != tc.maxSeconds {

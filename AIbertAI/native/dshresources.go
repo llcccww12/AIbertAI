@@ -27,7 +27,7 @@ var dshDevelopmentResources string
 
 const dshSourceCommit = "3f321d32bfe382212a8ed8785c1d47a5a300aa23"
 const dshSourceArchiveSHA256 = "a46ccc2890645d0a7f3b032eeadb988769893392da5dcd48a1bc4ce0e49ba3fc"
-const dshPatchSHA256 = "177f2f6dd9f2dd1a42f64999af5a8f89fef00b128b7b9f72c0d316e7307a6a47"
+const dshPatchSHA256 = "55d5f85229ab35420718bdbfdca4a84a328132548b73f7810bff9cd4d1d7901c"
 const dshEntry = "app/apps/cli/lib/bin.js"
 
 type dshManifestFile struct {

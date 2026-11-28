@@ -111,6 +111,8 @@ func VideoCapabilitiesFor(provider Provider, modelID string) (VideoCapabilities,
 			cap.ParamRules = []VideoParamRule{
 				{When: VideoCondition{Modes: []VideoMode{VideoImageToVideo, VideoFirstLastToVideo}}, Name: "aspect_ratio", Choices: videoValues("adaptive")},
 			}
+		} else {
+			cap.PromptMaxCharacters = 4000
 		}
 		cap.Params = []VideoParamSpec{
 			{Name: "resolution", Type: "string", Choices: resolutions},

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -29,6 +30,9 @@ func TestDSHCanvasSDKWorkerAcceptance(t *testing.T) {
 		t.Skip("patched SDK and isolated Electron canvas worker not configured")
 	}
 	scenario := os.Getenv("DSH_TEST_CANVAS_SCENARIO")
+	imageReference := scenario == "image_reference"
+	const referenceID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+	var referencePath, referenceCanvasFile string
 	customGoal := scenario == "expert_goal"
 	localGoal := scenario == "local_goal" || customGoal
 	const customExpert = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
@@ -115,6 +119,31 @@ func TestDSHCanvasSDKWorkerAcceptance(t *testing.T) {
 	design := workspaceDesign(rootSession, id)
 	if !customGoal && len(design) == 0 {
 		t.Fatal("missing canvas marker")
+	}
+	if imageReference {
+		var marker struct{ LocalDesignPath string }
+		if err := json.Unmarshal(design, &marker); err != nil || !filepath.IsLocal(marker.LocalDesignPath) {
+			t.Fatalf("invalid canvas marker: %v", err)
+		}
+		referencePath = filepath.ToSlash(filepath.Join(marker.LocalDesignPath, "assets/images/old-reference.png"))
+		data, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/aS8AAAAASUVORK5CYII=")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = os.WriteFile(filepath.Join(session.CWD, referencePath), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		referenceCanvasFile = filepath.Join(session.CWD, marker.LocalDesignPath, "canvas.json")
+		data, err = os.ReadFile(referenceCanvasFile)
+		var doc map[string]json.RawMessage
+		if err != nil || json.Unmarshal(data, &doc) != nil {
+			t.Fatalf("open canvas fixture: %v", err)
+		}
+		doc["nodes"] = json.RawMessage(fmt.Sprintf(`[{"id":%q,"type":"image","title":"Old reference","source":"assets/images/old-reference.png","x":32,"y":32,"width":90,"height":90,"zIndex":0}]`, referenceID))
+		data, _ = json.Marshal(doc)
+		if err = os.WriteFile(referenceCanvasFile, data, 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if !customGoal && useTemplate != "" {
 		var marker struct{ LocalDesignPath string }
@@ -230,7 +259,26 @@ func TestDSHCanvasSDKWorkerAcceptance(t *testing.T) {
 		}
 		delta := map[string]any{"role": "assistant", "content": "finished"}
 		finish := "stop"
-		if (n == 1 && !customGoal) || (n == 2 && (scenario == "" || customGoal)) {
+		if imageReference {
+			if n == 1 || n == 2 {
+				name, args := designReadTool, `{}`
+				if n == 2 {
+					if !strings.Contains(string(wire), referenceID) || !strings.Contains(string(wire), referencePath) {
+						t.Error("model did not receive the old image node and its source path")
+					}
+					name, args = "canvas_update_node", fmt.Sprintf(`{"operation":{"type":"node.move","nodeId":%q,"x":144,"y":120}}`, referenceID)
+				}
+				delta = map[string]any{"role": "assistant", "tool_calls": []any{map[string]any{"index": 0, "id": fmt.Sprintf("reference-call-%d", n), "type": "function", "function": map[string]string{"name": name, "arguments": args}}}}
+				finish = "tool_calls"
+			} else if n == 4 {
+				if !strings.Contains(string(wire), "Continue in the original canvas session") || !strings.Contains(string(wire), "Moved the existing image") {
+					t.Error("the original conversation was lost on follow-up")
+				}
+				delta["content"] = "Original canvas session resumed"
+			} else {
+				delta["content"] = "Moved the existing image"
+			}
+		} else if (n == 1 && !customGoal) || (n == 2 && (scenario == "" || customGoal)) {
 			content := fmt.Sprintf("SDK canvas acceptance %d", n)
 			if customGoal {
 				if !strings.Contains(string(wire), skillText) {
@@ -385,6 +433,9 @@ func TestDSHCanvasSDKWorkerAcceptance(t *testing.T) {
 
 	op := "22222222-2222-4222-8222-222222222222"
 	turn := acpTurn{Operation: op, Prompt: "Create a canvas text node", Started: time.Now().UTC()}
+	if imageReference {
+		turn.Prompt = "Read the old canvas reference and move its existing image node"
+	}
 	session.Engine, session.DSHSessionID, session.Turns, session.State = "dsh", id, []acpTurn{turn}, "running"
 	live.mu.Lock()
 	err = live.save(session)
@@ -605,7 +656,11 @@ func TestDSHCanvasSDKWorkerAcceptance(t *testing.T) {
 				t.Fatalf("waiting for approval %d after %d model requests: %v", i, calls.Load(), err)
 			}
 		}
-		if !strings.HasPrefix(scenario, "pptx") && !strings.Contains(string(frame.Params), "SDK canvas acceptance") {
+		expectedApproval := "SDK canvas acceptance"
+		if imageReference {
+			expectedApproval = referenceID
+		}
+		if !strings.HasPrefix(scenario, "pptx") && !strings.Contains(string(frame.Params), expectedApproval) {
 			t.Fatalf("approval lacks content: %s", frame.Params)
 		}
 		var rpcID any
@@ -761,6 +816,27 @@ func TestDSHCanvasSDKWorkerAcceptance(t *testing.T) {
 	}
 	if err != nil {
 		t.Fatal(err)
+	}
+	if imageReference {
+		if turn.Answer != "Moved the existing image" || len(turn.ToolRuns) != 2 || turn.ToolRuns[1].Report.Failed != 0 {
+			t.Fatalf("existing image update failed: %q, %+v", turn.Answer, turn.ToolRuns)
+		}
+		data, err := os.ReadFile(referenceCanvasFile)
+		var saved struct {
+			Nodes []struct {
+				ID, Source string
+				X, Y       int
+			}
+		}
+		if err != nil || json.Unmarshal(data, &saved) != nil || len(saved.Nodes) != 1 || saved.Nodes[0].ID != referenceID || saved.Nodes[0].Source != "assets/images/old-reference.png" || saved.Nodes[0].X != 144 || saved.Nodes[0].Y != 120 {
+			t.Fatalf("existing image node did not persist the update: %+v, %v", saved, err)
+		}
+		followup := acpTurn{Operation: "22222222-2222-4222-8222-222222222223", Prompt: "Continue in the original canvas session"}
+		if err = runDSHTurn(ctx, cfg, session, &followup, true, nil); err != nil || followup.Answer != "Original canvas session resumed" || calls.Load() != 4 {
+			t.Fatalf("original session follow-up: %v, %q, calls=%d", err, followup.Answer, calls.Load())
+		}
+		t.Log("DSH read the source_path, moved the existing image node, and replied on the original session")
+		return
 	}
 	if scenario == "pptx_recover" || scenario == "pptx_workspace_recover" {
 		turn.Failed, turn.Acked, turn.FailureCode, turn.Ended = true, true, "dsh_canvas_outcome_unknown", time.Now().UTC()
