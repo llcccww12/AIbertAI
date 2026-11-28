@@ -36314,8 +36314,14 @@ function OG(e) {
     }
   );
 }
+function localDesktopStandardPreset() {
+  return et.kind === "electron" && ts()?.transport !== "relay";
+}
+function currentEmployeeStandardPreset() {
+  return ts()?.transport !== "relay" && (localDesktopStandardPreset() || employeeStandardPreset);
+}
 function useEmployeeStandardPreset() {
-  return y.useSyncExternalStore(OG, () => employeeStandardPreset, () => employeeStandardPreset);
+  return y.useSyncExternalStore(OG, currentEmployeeStandardPreset, currentEmployeeStandardPreset);
 }
 const jve = (e) => {
   for (const t of xH) t(e);
@@ -115503,6 +115509,7 @@ const qwt = {
       output: "输出",
       input: "参数",
       connectError: "无法连接运行时",
+      connecting: "正在连接运行时。草稿可编辑。",
       reconnecting: "连接已断开，正在重连。草稿已保留。",
       offlineHistory: "平台连接暂时不可用。可以查看本机历史、编辑草稿，恢复连接后即可发送。",
       onlineAgain: "连接已恢复，可以发送消息。",
@@ -118781,6 +118788,7 @@ Start with the conclusion, then explain the reasoning.`,
       output: "Output",
       input: "Input",
       connectError: "Cannot connect to the runtime",
+      connecting: "Connecting to the runtime. You can edit your draft.",
       reconnecting: "Connection lost. Reconnecting… Your draft is kept.",
       offlineHistory: "The platform is unavailable. You can read local history and edit drafts, then send when the connection returns.",
       onlineAgain: "Connection restored. You can send messages.",
@@ -160971,7 +160979,7 @@ function y_e(e) {
           children: l.jsx(f_e, {
             ...E,
             experts: n?.expertSummaries ?? [],
-            standardMode: e.session ? e.session.dshJobsAvailable : liveStandardPreset,
+            standardMode: liveStandardPreset || e.session?.dshJobsAvailable,
             value: e.expertId ?? "",
             onSelect: (N) => {
               (e.onCloseMenu(),
@@ -161089,10 +161097,11 @@ function iTt({ expertId: e }) {
       : null
   );
 }
-const EmployeePreset = y.lazy(async () => {
+async function loadEmployeePreset() {
   bindChatFramework(y, l, la);
   return import("../dsh/native-presets/preset.js");
-});
+}
+const EmployeePreset = y.lazy(loadEmployeePreset);
 function b_e({
   standardMode = false,
   inHeader = false,
@@ -161113,7 +161122,8 @@ function b_e({
     m = sL(
       (h ? f.expert : void 0) ?? d?.expertSummaries.find((C) => C.id === p),
     ),
-    g = p === "monkeyai-design" ? a(standardMode ? "home.standardMode" : "home.generalExpert") : (m?.name ?? (p || a("home.standardMode"))),
+    liveStandardMode = useEmployeeStandardPreset() || standardMode,
+    g = p === "monkeyai-design" ? a(liveStandardMode ? "home.standardMode" : "home.generalExpert") : (m?.name ?? (p || a("home.standardMode"))),
     b = `composer-expert-avatar${p === "monkeyai-design" ? " composer-expert-avatar-design" : ""}`,
     v = l.jsx(z0, {
       kind: "expert",
@@ -161123,9 +161133,10 @@ function b_e({
       className: b,
       fallback: l.jsx(A4, { id: p, plain: !0, className: b }),
     });
-  if (i && standardMode) {
+  if (i && liveStandardMode) {
     const experts = d?.expertSummaries ?? [];
-    return l.jsx(y.Suspense, { fallback: null, children: l.jsx(EmployeePreset, {
+    const fallback = l.jsx(Te, { type: "button", variant: "ghost", size: "xs", className: "composer-expert", disabled: true, children: g });
+    return l.jsx(y.Suspense, { fallback, children: l.jsx(EmployeePreset, {
       experts: p && !experts.some(expert => expert.id === p) ? [...experts, {id: p, name: g, description: m?.description}] : experts,
       expertId: p, busy: r || !d, language: i18n.language, onSelect: i,
     }) });
@@ -169333,12 +169344,16 @@ function She() {
     previouslyConnected.current = true;
     if (!wasDisconnected.current) return;
     wasDisconnected.current = false;
+    if (localDesktopStandardPreset() && document.getElementById("boot-splash")) return;
     setRestored(true);
     const timeout = setTimeout(() => setRestored(false), 4000);
     return () => clearTimeout(timeout);
   }, [connected, offline]);
   if (connected) return restored ? l.jsx("p", { role: "status", className: "mx-6 mt-3 text-sm text-muted-foreground", children: e("session.onlineAgain") }) : null;
   if (offline && t) return l.jsx("p", { role: "status", className: "mx-6 mt-3 text-sm text-muted-foreground", children: e("session.offlineHistory") });
+  if (!previouslyConnected.current && !n && localDesktopStandardPreset()) {
+    return l.jsx("p", { role: "status", className: "mx-6 mt-3 text-sm text-muted-foreground", children: e("session.connecting") });
+  }
   const o =
     n === Se.runtimeFailed
       ? e("session.runtimeFailed")
@@ -280875,17 +280890,22 @@ function watchBootSplash() {
     text && ((text.querySelector("span") ?? text).textContent = "正在连接服务…");
   }, 3e3);
   let errorTimer;
+  let offlineTimer;
   const stop = [];
   const finish = () => {
     clearTimeout(slow);
     clearTimeout(errorTimer);
+    clearTimeout(offlineTimer);
     clearTimeout(limit);
     for (const off of stop) off();
     hideBootSplash();
   };
   const check = () => {
     const session = Jt.getState();
-    if (bootSplashSecondary || !ir.getState().account || session.ready) return finish();
+    if (bootSplashSecondary || !ir.getState().account || (session.ready && !session.offline)) return finish();
+    // Give short startup recovery a chance to finish while keeping offline history accessible.
+    if (session.ready && session.offline) offlineTimer ??= setTimeout(finish, 2500);
+    else (clearTimeout(offlineTimer), (offlineTimer = void 0));
     // 连接失败先等运行时自动重连，持续失败再露出界面里的错误与重试入口。
     if (session.connectError) errorTimer ??= setTimeout(finish, 8e3);
     else (clearTimeout(errorTimer), (errorTimer = void 0));
@@ -280899,6 +280919,7 @@ vtt();
 async function Irn() {
   (await Promise.all([is.getState().hydrate(), ir.getState().hydrate(), xve()]),
     await hkt(is.getState().locale),
+    (localDesktopStandardPreset() && loadEmployeePreset().catch(() => {})),
     (document.title = cve(is.getState().locale).productName),
     Iye.createRoot(JIe(), {
       onCaughtError: (e, t) =>
