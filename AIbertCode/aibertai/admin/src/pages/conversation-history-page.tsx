@@ -6,6 +6,7 @@ import {
 } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { useTranslation } from "react-i18next"
+import { Link } from "react-router-dom"
 import { TablePagination } from "@/components/table-pagination"
 import { TableLoading } from "@/components/table-loading"
 import { TABLE_DATE_TIME_OPTIONS } from "@/lib/date-time"
@@ -24,6 +25,13 @@ import {
   DropdownMenuGroup,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import {
@@ -44,6 +52,7 @@ import {
   type ConversationPage,
 } from "@/lib/conversation-history"
 import { cn } from "@/lib/utils"
+import { CONSOLE_ROUTES } from "@/lib/routes"
 
 const columns = [
   "time",
@@ -219,6 +228,7 @@ export function ConversationHistoryPage() {
   const displayedColumns = columns.filter((column) =>
     visibleColumns.has(column)
   )
+  const [openMessage, setOpenMessage] = useState<Conversation | null>(null)
   const [accountUserID, setAccountUserID] = useState<string | null>(null)
 
   if (previousQuery !== filterQuery) {
@@ -367,14 +377,15 @@ export function ConversationHistoryPage() {
           </Badge>
         )
       case "content": {
-        const text = entry.input_text?.trim() ? entry.input_text : copy.noText
-        const title = entry.input_text_truncated
-          ? `${text}\n${t("pages.sessionReporting.detail.textTruncated")}`
-          : text
+        if (!entry.input_text?.trim()) return <span>{copy.noText}</span>
         return (
-          <span className="block truncate" title={title}>
-            {text}
-          </span>
+          <button
+            type="button"
+            className="block w-full truncate text-start hover:underline"
+            onClick={() => setOpenMessage(entry)}
+          >
+            {entry.input_text}
+          </button>
         )
       }
     }
@@ -382,6 +393,17 @@ export function ConversationHistoryPage() {
 
   return (
     <section className="data-table-page-layout">
+      {request.data?.items.some((entry) => !entry.input_text?.trim()) && (
+        <p className="px-2 text-sm text-muted-foreground">
+          {t("pages.otherSettings.sessionReporting.missingText")}{" "}
+          <Link
+            className="underline underline-offset-4"
+            to={CONSOLE_ROUTES.otherSettings + "#session-reporting"}
+          >
+            {t("pages.otherSettings.sessionReporting.title")}
+          </Link>
+        </p>
+      )}
       <Card className="min-h-0 flex-1">
         <CardContent className="min-h-0 flex-1 gap-4 px-0">
           <form
@@ -625,6 +647,22 @@ export function ConversationHistoryPage() {
           />
         </CardContent>
       </Card>
+      <Dialog open={openMessage !== null} onOpenChange={(open) => {
+        if (!open) setOpenMessage(null)
+      }}>
+        {openMessage && (
+          <DialogContent className="max-h-[85vh] overflow-auto sm:max-w-3xl" closeLabel={t("common.close")}>
+            <DialogHeader>
+              <DialogTitle>{copy.content}</DialogTitle>
+              <DialogDescription>{openMessage.task_title || copy.task}</DialogDescription>
+            </DialogHeader>
+            <p className="whitespace-pre-wrap break-words">{openMessage.input_text}</p>
+            {openMessage.input_text_truncated && (
+              <p className="text-muted-foreground">{t("pages.sessionReporting.detail.textTruncated")}</p>
+            )}
+          </DialogContent>
+        )}
+      </Dialog>
       {accountUserID && (
         <AccountDialog
           key={accountUserID}

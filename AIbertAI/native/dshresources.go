@@ -27,7 +27,7 @@ var dshDevelopmentResources string
 
 const dshSourceCommit = "3f321d32bfe382212a8ed8785c1d47a5a300aa23"
 const dshSourceArchiveSHA256 = "a46ccc2890645d0a7f3b032eeadb988769893392da5dcd48a1bc4ce0e49ba3fc"
-const dshPatchSHA256 = "9739f29e682dfb9eb1789f4c9ece7bb2a7c7f98ec77d2ae01f9bc6326db6a15d"
+const dshPatchSHA256 = "21da609dc88fbf6cae946e7d30cbac93bf906a25082ec5169668d83ba23bf101"
 const dshEntry = "app/apps/cli/lib/bin.js"
 
 type dshManifestFile struct {
@@ -306,11 +306,13 @@ func configureDSHResources(live *acpLive, profile, serverID, machineID, resource
 	}
 	gateway := &dshGateway{client: live.client, authorization: live.authorization}
 	config, err := newDSHGatewayRuntime(dshInstalledRuntime{Executable: node, Entry: entry, StandardSkillsDir: filepath.Join(resourceRoot, "app", "packages", "preset", "agent-preset", "skills"), Home: filepath.Join(base, "home"), PlatformSkillsDir: filepath.Join(base, "platform-skills"), Env: dshProcessEnvironment()}, filepath.Join(base, "gateway"), gateway, func(ctx context.Context, session acpSession) (selectedModelConfig, error) {
-		auth, err := live.authorization(ctx)
-		if err != nil {
-			return selectedModelConfig{}, err
-		}
-		return live.client.modelConfig(ctx, auth, session.Model)
+		var model selectedModelConfig
+		err := live.withTurnAuthorization(ctx, func(ctx context.Context, auth authorization) error {
+			var err error
+			model, err = live.client.modelConfig(ctx, auth, session.Model)
+			return err
+		})
+		return model, err
 	})
 	if err != nil {
 		return err
@@ -318,11 +320,9 @@ func configureDSHResources(live *acpLive, profile, serverID, machineID, resource
 	config.SyncPlatformSkills = func(ctx context.Context) error {
 		ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
-		auth, err := live.authorization(ctx)
-		if err != nil {
-			return err
-		}
-		return live.client.syncDSHPlatformSkills(ctx, auth, filepath.Join(base, "platform-skills"))
+		return live.withTurnAuthorization(ctx, func(ctx context.Context, auth authorization) error {
+			return live.client.syncDSHPlatformSkills(ctx, auth, filepath.Join(base, "platform-skills"))
+		})
 	}
 	config.SessionSkills = func(session acpSession) error {
 		live.mu.Lock()
@@ -354,6 +354,7 @@ func configureDSHResources(live *acpLive, profile, serverID, machineID, resource
 	}
 	config.VerifiedResourceRoot = filepath.Dir(filepath.Dir(node))
 	config.LeasePool = &dshLeasePool{}
+	config.ContinueAfterFailedTurn = true
 	live.dsh = config
 	return nil
 }

@@ -64,9 +64,9 @@ func TestDSHSessionPermissionPreset(t *testing.T) {
 	}
 }
 
-// New conversations default to 工作区内修改, and the level can change only
-// before the first message.
-func TestDSHPermissionLevelLocksAfterFirstTurn(t *testing.T) {
+// New conversations default to 工作区内修改, and the level can change at any
+// time: a DSH session that already has turns queues its SDK preset switch.
+func TestDSHPermissionLevelSwitchesDuringConversation(t *testing.T) {
 	const id = "f4bd985c-9f71-4b85-937a-c41b1b104d38"
 	live := &acpLive{dir: t.TempDir(), cwd: "/work", operations: map[string]string{}, sessions: map[string]acpSession{}}
 	op, _ := newUUID()
@@ -91,13 +91,26 @@ func TestDSHPermissionLevelLocksAfterFirstTurn(t *testing.T) {
 		t.Fatalf("switch before the first message: %v", err)
 	}
 	row := live.sessions[created]
-	row.Turns = []acpTurn{{Operation: op}}
+	row.Engine, row.Turns = "dsh", []acpTurn{{Operation: op}}
 	live.sessions[created] = row
-	if err := set("full-access"); err == nil || err.Error() != "session_mode_locked" {
+	if err := set("full-access"); err != nil {
 		t.Fatalf("switch after the first message: %v", err)
 	}
-	if err := set("read-only"); err != nil {
+	if mode := live.sessions[created].permissionMode(); mode != "full-access" {
+		t.Fatalf("level after the switch %q", mode)
+	}
+	if preset := live.sessions[created].DSHPendingMode; preset != "danger-full-access" {
+		t.Fatalf("pending preset %q", preset)
+	}
+	if err := set("full-access"); err != nil {
 		t.Fatalf("reselecting the current level: %v", err)
+	}
+	// A session without the SDK keeps the level without a queued preset.
+	row = live.sessions[created]
+	row.Engine, row.DSHPendingMode = "", ""
+	live.sessions[created] = row
+	if err := set("read-only"); err != nil || live.sessions[created].DSHPendingMode != "" {
+		t.Fatalf("non-DSH switch: %v %q", err, live.sessions[created].DSHPendingMode)
 	}
 }
 

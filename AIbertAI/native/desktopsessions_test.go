@@ -4,9 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -231,6 +237,7 @@ func TestDSHFailedTurnAdmitsNextMessage(t *testing.T) {
 		{"connector reviewed", acpTurn{Failed: true, FailureCode: "dsh_connector_reconciliation_required", DSHUserReviewed: true, Acked: true}, ""},
 		{"canvas outcome unknown", acpTurn{Failed: true, FailureCode: "dsh_canvas_outcome_unknown", Acked: true}, ""},
 		{"model outcome unknown", acpTurn{Failed: true, FailureCode: "dsh_model_outcome_unknown", Acked: true}, ""},
+		{"ordinary failure", acpTurn{Failed: true, FailureCode: "session_turn_failed", Acked: true}, ""},
 		{"runtime exited", acpTurn{Failed: true, FailureCode: "dsh_runtime_exited", Acked: true}, ""},
 		{"stop not confirmed", acpTurn{Failed: true, FailureCode: "dsh_reconciliation_required", Acked: true}, ""},
 		{"report pending", acpTurn{Failed: true, FailureCode: "dsh_connector_reconciliation_required", DSHReconciled: true}, "session_report_pending"},
@@ -254,5 +261,196 @@ func TestDSHFailedTurnAdmitsNextMessage(t *testing.T) {
 				t.Fatalf("failed turn was rewritten: %+v", prior)
 			}
 		})
+	}
+}
+
+func TestDesktopQueueRecoversEmptyPause(t *testing.T) {
+	const session = "11111111-1111-4111-8111-111111111111"
+	const message = "22222222-2222-4222-8222-222222222222"
+	for _, tc := range []struct {
+		name, action string
+		messages     []desktopQueuedMessage
+		orphaned     bool
+		wantCount    int
+	}{
+		{"add to an old empty paused queue", "add", nil, false, 1},
+		{"remove the last paused message", "remove", []desktopQueuedMessage{{ID: message}}, false, 0},
+		{"add after an ended turn lost its worker", "add", nil, true, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			live := &acpLive{dir: t.TempDir(), sessions: map[string]acpSession{
+				session: {ID: session, Engine: "dsh", State: "error", Queue: desktopSessionQueue{
+					Messages: tc.messages, Paused: true, PauseReason: "session_report_pending",
+				}},
+			}}
+			if tc.orphaned {
+				row := live.sessions[session]
+				row.State = "running"
+				row.Turns = []acpTurn{{Ended: time.Now(), Acked: true, Failed: true}}
+				live.sessions[session] = row
+			}
+			host := &relaySessionHost{live: live, local: &desktopRuntimeAccess{address: "127.0.0.1:12345", protocol: "fixture"}}
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://127.0.0.1:12345/agent", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request.Header.Set("Sec-WebSocket-Protocol", "monkeyai.v1, fixture")
+			raw := json.RawMessage(fmt.Sprintf(`{"sessionId":%q,"action":%q,"id":%q,"text":"next"}`, session, tc.action, message))
+			if _, err := host.handleQueue(t.Context(), nil, request, raw, nil); err != nil {
+				t.Fatal(err)
+			}
+			row, err := live.load(session)
+			if err != nil || row.Queue.Paused || row.Queue.PauseReason != "" || len(row.Queue.Messages) != tc.wantCount {
+				t.Fatalf("queue was left paused or changed unexpectedly: %+v, %v", row.Queue, err)
+			}
+			if tc.wantCount != 0 && !live.claimQueue(row) {
+				t.Fatal("a new message in the formerly empty queue could not start")
+			}
+		})
+	}
+}
+
+func TestDesktopQueueContinuesOnlyAfterSettledFailure(t *testing.T) {
+	const id = "11111111-1111-4111-8111-111111111111"
+	const op = "22222222-2222-4222-8222-222222222222"
+	root := t.TempDir()
+	live := &acpLive{dsh: &dshRuntimeConfig{JournalRoot: root}}
+	row := acpSession{ID: id, Engine: "dsh", State: "error", Turns: []acpTurn{
+		{Operation: op, Failed: true, Acked: true, FailureCode: "session_turn_failed"},
+	}}
+	if !live.canContinueQueueAfterFailure(row, op) {
+		t.Fatal("an ordinary failure stopped the next queued message")
+	}
+	row.Turns[0].Acked = false
+	if live.canContinueQueueAfterFailure(row, op) {
+		t.Fatal("advanced while the previous report was pending")
+	}
+	row.Turns[0].Acked = true
+	row.Turns[0].FailureCode = "dsh_canvas_outcome_unknown"
+	if live.canContinueQueueAfterFailure(row, op) {
+		t.Fatal("advanced after an unverified canvas change")
+	}
+	row.Turns[0].FailureCode = "dsh_model_outcome_unknown"
+	if err := os.Mkdir(filepath.Join(root, id), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, id, "pending.json"), []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if live.canContinueQueueAfterFailure(row, op) {
+		t.Fatal("advanced while the model receipt was pending")
+	}
+}
+
+func TestDesktopTurnFailureSurvivesReloadAndOperationLookup(t *testing.T) {
+	const id = "11111111-1111-4111-8111-111111111111"
+	const op = "22222222-2222-4222-8222-222222222222"
+	live := &acpLive{dir: t.TempDir(), sessions: map[string]acpSession{id: {
+		ID: id, Engine: "dsh", State: "error", Turns: []acpTurn{{
+			Operation: op, ClientID: op, Failed: true, Ended: time.Now(), Acked: true,
+			FailureCode: safeDesktopTurnFailure(fmt.Errorf("session resume: %w", errDSHSessionNotFound)),
+		}},
+	}}}
+	if err := live.save(live.sessions[id]); err != nil {
+		t.Fatal(err)
+	}
+	host := &relaySessionHost{live: live}
+	result, err := host.sessionState(id)
+	if err != nil || result["state"].(map[string]any)["lastError"] != "dsh_session_not_found" {
+		t.Fatalf("failed to load the current failure: %v, %v", result, err)
+	}
+	snapshot, err := host.sessionOperation(op, relayAuthorization{})
+	if err != nil || snapshot.(map[string]any)["error"].(map[string]any)["message"] != "dsh_session_not_found" {
+		t.Fatalf("failed to look up the current failure: %v, %v", snapshot, err)
+	}
+	if got := safeDesktopTurnFailure(errors.New("unclassified failure")); got != "session_turn_failed" {
+		t.Fatalf("unexpected fallback reason: %q", got)
+	}
+}
+
+func TestSessionsContinueWithReportsOffline(t *testing.T) {
+	t.Run("dsh", func(t *testing.T) { testTurnReportBacklog(t, "dsh") })
+	t.Run("cloud-legacy", func(t *testing.T) { testTurnReportBacklog(t, "") })
+}
+
+func testTurnReportBacklog(t *testing.T, engine string) {
+	t.Helper()
+	const id = "11111111-1111-4111-8111-111111111111"
+	const model = "22222222-2222-4222-8222-222222222222"
+	const first = "33333333-3333-4333-8333-333333333333"
+	const second = "44444444-4444-4444-8444-444444444444"
+	const third = "55555555-5555-4555-8555-555555555555"
+	root, err := os.OpenRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	now := time.Now().UTC()
+	cwd := t.TempDir()
+	c, err := newClient("https://private.example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := &acpLive{client: c, cwd: cwd, store: &desktopSessionStore{Root: root},
+		reportWake: make(chan struct{}, 1), sessions: map[string]acpSession{}}
+	row := acpSession{ID: id, Model: model, Operation: id, Engine: engine, CWD: cwd,
+		Created: now, Updated: now, State: "error", Turns: []acpTurn{{
+			Operation: first, Model: model, Started: now, Ended: now, Failed: true, FailureCode: "session_turn_failed",
+		}}}
+	if err = live.save(row); err != nil {
+		t.Fatal(err)
+	}
+	var cursors []string
+	offline := true
+	c.http.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		status, body := http.StatusNoContent, ""
+		if strings.HasSuffix(req.URL.Path, "/turns") {
+			cursor := req.URL.Query().Get("after_turn")
+			cursors = append(cursors, cursor)
+			if offline {
+				status = http.StatusServiceUnavailable
+			} else {
+				status = http.StatusOK
+				previous, _ := strconv.Atoi(cursor)
+				body = fmt.Sprintf(`{"acked_turn":%d}`, previous+1)
+			}
+		}
+		return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	host := &relaySessionHost{live: live, local: &desktopRuntimeAccess{reportMachine: id}}
+	if err := host.reportTurnBacklog(t.Context(), id); err == nil {
+		t.Fatal("expected the test report to fail")
+	}
+
+	row, index, _, err := live.beginTurn(id, second, second, "After failure", nil, func() {})
+	if err != nil || index != 1 {
+		t.Fatalf("could not start next message while reporting was offline: %d, %v", index, err)
+	}
+	row.Turns[index].Ended = row.Turns[index].Started
+	row.Turns[index].Answer = "Same chat"
+	row.State = "idle"
+	delete(live.activeTurns, id)
+	if err = live.save(row); err != nil {
+		t.Fatal(err)
+	}
+	row, err = readDesktopSession(root, id)
+	if err != nil || len(row.Turns) != 2 || row.Turns[0].Acked || row.Turns[1].Acked {
+		t.Fatalf("report backlog did not survive reload: %+v, %v", row.Turns, err)
+	}
+	live.sessions[id] = row
+	if _, index, _, err = live.beginTurn(id, third, third, "Keep working", nil, func() {}); err != nil || index != 2 {
+		t.Fatalf("could not start third turn: %d, %v", index, err)
+	}
+	offline = false
+	if err := host.reportTurnBacklog(t.Context(), id); err != nil {
+		t.Fatal(err)
+	}
+	row, err = readDesktopSession(root, id)
+	if err != nil || row.State != "running" || row.archivedTurns != 2 || row.Turns[1].Answer != "Same chat" ||
+		!row.Turns[0].Acked || !row.Turns[1].Acked || row.Turns[2].Acked {
+		t.Fatalf("reporting disturbed a live turn: %+v, %v", row, err)
+	}
+	if !slices.Equal(cursors, []string{"0", "0", "1"}) {
+		t.Fatalf("out-of-order report cursors: %v", cursors)
 	}
 }

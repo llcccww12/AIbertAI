@@ -284,6 +284,7 @@ func serveCloudRuntime(ctx context.Context, profile string, identity cloudIdenti
 		return err
 	}
 	live.cloudWorkspace = workspace
+	live.reportWake = make(chan struct{}, 1)
 	live.client, live.source, live.protocol, live.modelBudget = c, source, selected.Protocol, selected.inputBudget()
 	modelID = selected.ID
 	terminals, err := newDesktopTerminals()

@@ -273,11 +273,9 @@ func (l *acpLive) touchDevice(ctx context.Context) {
 	if !due {
 		return
 	}
-	auth, err := l.authorization(ctx)
-	if err == nil {
-		err = report(ctx, auth)
-	}
-	if err != nil {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := l.withTurnAuthorization(ctx, report); err != nil {
 		fmt.Fprintf(os.Stderr, "device report failed: %v\n", err)
 	}
 }

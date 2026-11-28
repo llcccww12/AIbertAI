@@ -193,7 +193,7 @@ func readDesktopSession(root *os.Root, id string) (acpSession, error) {
 		if err := readDesktopSessionRecord(root, id+".json", &manifest.acpSession); err != nil {
 			return acpSession{}, err
 		}
-	} else if manifest.Archived < 0 || len(manifest.Turns) > 1 || manifest.Archived > 0 && len(manifest.Turns) != 1 {
+	} else if manifest.Archived < 0 || manifest.Archived > 0 && len(manifest.Turns) == 0 {
 		return acpSession{}, errors.New("invalid_desktop_session_manifest")
 	}
 	session := manifest.acpSession
@@ -215,7 +215,7 @@ func readDesktopSession(root *os.Root, id string) (acpSession, error) {
 			}
 			turns = append(turns, turn)
 		}
-		session.Turns = append(turns, session.Turns[0])
+		session.Turns = append(turns, session.Turns...)
 		session.archivedTurns = manifest.Archived
 	}
 	if summary := session.ContextSummary; summary != nil && (summary.Through < 1 || summary.Through > len(session.Turns) ||
@@ -228,8 +228,10 @@ func readDesktopSession(root *os.Root, id string) (acpSession, error) {
 		unfinishedGoal := i == len(session.Turns)-1 && session.GoalRun == turn.Operation && turn.GoalCheckpoint != nil &&
 			session.Goal != nil && session.Goal.Current
 		if !validUUID(turn.Operation) || turn.Started.IsZero() ||
-			(turn.Ended.IsZero() && session.State != "running" && !unfinishedGoal) || (!turn.Ended.IsZero() && turn.Ended.Before(turn.Started)) ||
-			(i < len(session.Turns)-1 && !turn.Acked) || (turn.Acked && turn.Ended.IsZero()) || duplicate {
+			(turn.Ended.IsZero() && (i < len(session.Turns)-1 || session.State != "running" && !unfinishedGoal)) ||
+			(!turn.Ended.IsZero() && turn.Ended.Before(turn.Started)) ||
+			(!turn.Acked && i < manifest.Archived) ||
+			(turn.Acked && turn.Ended.IsZero()) || duplicate {
 			return acpSession{}, errors.New("invalid_desktop_turn_snapshot")
 		}
 		operations[turn.Operation] = struct{}{}
@@ -241,6 +243,14 @@ func saveDesktopSession(root *os.Root, session acpSession, previous int) (int, e
 	committed := max(0, len(session.Turns)-1)
 	if previous > committed {
 		return 0, errors.New("cannot_discard_desktop_session_turns")
+	}
+	// Keep the unreported tail mutable until the background reporter has
+	// acknowledged each turn in order.
+	for index := previous; index < committed; index++ {
+		if !session.Turns[index].Acked {
+			committed = index
+			break
+		}
 	}
 	// The manifest is the commit point. Older acknowledged turns are immutable.
 	// A record written before a failed manifest rename is ignored on restart.
@@ -439,6 +449,8 @@ func (l *acpLive) restoreDesktopSessions() error {
 					last.FailureCode = "dsh_write_outcome_unknown"
 				} else if session.Engine == "dsh" && dshPendingCanvasWrite(*last) {
 					last.FailureCode = "dsh_canvas_outcome_unknown"
+				} else if session.Engine == "dsh" && last.FailureCode == "" {
+					last.FailureCode = "dsh_runtime_exited"
 				}
 				if last.Ended.Before(last.Started) {
 					last.Ended = last.Started
@@ -460,18 +472,99 @@ func (l *acpLive) restoreDesktopSessions() error {
 }
 
 func completedState(turn acpTurn) string {
+	if turn.DSHUserStopped {
+		return "idle"
+	}
 	if turn.Failed {
 		return "error"
 	}
 	return "idle"
 }
 
+func (l *acpLive) usesAsyncTurnReports(session acpSession) bool {
+	return l.store != nil && (l.reportWake != nil || session.Engine == "dsh" && l.dsh != nil && l.dsh.ContinueAfterFailedTurn)
+}
+
+func (l *acpLive) wakeDesktopReports() {
+	select {
+	case l.reportWake <- struct{}{}:
+	default:
+	}
+}
+
+func pendingTurnReport(row acpSession) int {
+	for index := row.archivedTurns; index < len(row.Turns); index++ {
+		if !row.Turns[index].Acked {
+			if row.Turns[index].Ended.IsZero() {
+				return -1
+			}
+			return index
+		}
+	}
+	return -1
+}
+
+func (h *relaySessionHost) reportTurnBacklog(ctx context.Context, id string) error {
+	live := h.live
+	live.mu.Lock()
+	if live.restarting || live.reportingTurns[id] {
+		live.mu.Unlock()
+		return nil
+	}
+	if live.reportingTurns == nil {
+		live.reportingTurns = make(map[string]bool)
+	}
+	live.reportingTurns[id] = true
+	live.mu.Unlock()
+	defer func() {
+		live.mu.Lock()
+		delete(live.reportingTurns, id)
+		live.mu.Unlock()
+	}()
+	for ctx.Err() == nil {
+		live.mu.Lock()
+		row := live.sessions[id]
+		index := pendingTurnReport(row)
+		if live.restarting || index < 0 {
+			live.mu.Unlock()
+			return nil
+		}
+		turn := row.Turns[index]
+		live.mu.Unlock()
+
+		if err := h.submitACPTurn(ctx, id, index+1, turn, index == 0); err != nil {
+			return err
+		}
+
+		live.mu.Lock()
+		row = live.sessions[id]
+		if index >= len(row.Turns) || row.Turns[index].Operation != turn.Operation {
+			live.mu.Unlock()
+			return nil
+		}
+		row.Turns = slices.Clone(row.Turns)
+		row.Turns[index].Acked = true
+		err := live.save(row)
+		live.mu.Unlock()
+		if err != nil {
+			return err
+		}
+	}
+	return ctx.Err()
+}
+
 func (h *relaySessionHost) recoverDesktopReports(ctx context.Context) {
 	h.live.mu.Lock()
 	var pending []string
 	for _, session := range h.live.sessions {
-		index := len(session.Turns)
-		if index > 0 && session.State != "running" && !session.Turns[index-1].Acked {
+		if h.live.usesAsyncTurnReports(session) {
+			if pendingTurnReport(session) >= 0 {
+				pending = append(pending, session.ID)
+			}
+			continue
+		}
+		last := len(session.Turns) - 1
+		if last >= 0 && session.State != "running" && !session.Turns[last].Acked {
 			pending = append(pending, session.ID)
 		}
 	}
@@ -494,9 +587,16 @@ func (h *relaySessionHost) superviseDesktopReports(ctx context.Context, interval
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			attempt, cancel := context.WithTimeout(ctx, 10*time.Second)
-			h.recoverDesktopReports(attempt)
-			cancel()
+		case <-h.live.reportWake:
 		}
+		attempt, cancel := context.WithTimeout(ctx, 10*time.Second)
+		var err error
+		if h.live.source != nil {
+			_, err = h.live.source.access(attempt)
+		}
+		if err == nil {
+			h.recoverDesktopReports(attempt)
+		}
+		cancel()
 	}
 }

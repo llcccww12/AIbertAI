@@ -141,16 +141,25 @@ func dshQuestionAnswer(request dshQuestionRequest, raw json.RawMessage) (any, er
 	answers := make([]map[string]any, 0, len(request.Questions))
 	for i, q := range request.Questions {
 		a := response.Answers[i]
-		if a.Question != q.Question || !q.MultiSelect && len(a.Selected) > 1 || a.Custom && len(a.Selected) == 0 {
-			return nil, errors.New("dsh_invalid_question_answer")
-		}
 		var intent struct {
 			Kind string `json:"kind"`
 		}
 		if len(q.Intent) != 0 && json.Unmarshal(q.Intent, &intent) != nil {
 			return nil, errors.New("dsh_invalid_question_answer")
 		}
-		if intent.Kind == "approval" && len(a.Selected) != 1 {
+		if a.Question != q.Question || a.Custom && len(a.Selected) == 0 {
+			return nil, errors.New("dsh_invalid_question_answer")
+		}
+		options := len(a.Selected)
+		if intent.Kind == "plan-review" {
+			if a.Custom {
+				options--
+			}
+			if options != 1 {
+				return nil, errors.New("dsh_invalid_question_answer")
+			}
+		}
+		if !q.MultiSelect && options > 1 || intent.Kind == "approval" && options != 1 {
 			return nil, errors.New("dsh_invalid_question_answer")
 		}
 		selected := a.Selected

@@ -1,4 +1,4 @@
-import { useMemo, useSyncExternalStore } from 'react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
 import { ClientJobsModel } from 'sdk/api/job-controller/src/client/model.ts'
 import { JobListAction } from 'sdk/client/ui-jobs/src/client/JobListAction.tsx'
 import { zh, en } from 'sdk/client/ui-jobs/src/client/locales.ts'
@@ -21,6 +21,7 @@ function watch(poll, failed) {
 }
 
 export default function EmployeeJobs({ sessionId, request, language }) {
+  const [roster, setRoster] = useState({ count: 0, stale: false })
   const adapter = useMemo(() => {
     const model = new ClientJobsModel()
     const subscribe = model.subscribe.bind(model)
@@ -28,10 +29,15 @@ export default function EmployeeJobs({ sessionId, request, language }) {
     return {
       useJobs: select => select(useSyncExternalStore(subscribe, snapshot)),
       watchRows: () => watch(async current => {
-        const { jobs } = await request({ sessionId, action: 'list' })
-        if (current()) model.rowsReplaced(sessionId, jobs)
-        return jobs.some(job => job.status === 'running' || job.status === 'stopping') ? 750 : 1500
-      }, () => model.rowsDropped(sessionId)),
+        const { jobs, available } = await request({ sessionId, action: 'list' })
+        if (available === false) throw new Error('dsh_job_observer_unavailable')
+        const count = jobs.filter(job => job.status === 'running' || job.status === 'stopping').length
+        if (current()) {
+          model.rowsReplaced(sessionId, jobs)
+          setRoster({ count, stale: false })
+        }
+        return count ? 750 : 1500
+      }, () => setRoster(previous => previous.stale ? previous : { ...previous, stale: true })),
       observe: (_, jobId) => {
         let opened = false
         const stop = watch(async current => {
@@ -61,5 +67,12 @@ export default function EmployeeJobs({ sessionId, request, language }) {
   }, [request, sessionId])
   const dictionary = language?.startsWith('zh') ? zh : en
   const t = (key, params) => (dictionary[key] ?? key).replace(/\{(\w+)\}/g, (token, name) => params?.[name] ?? token)
-  return <span className="dsh-native-theme"><JobListAction sessionId={sessionId} {...adapter} t={t} /></span>
+  const chinese = dictionary === zh
+  const description = roster.stale
+    ? (chinese ? '后台状态待刷新' : 'Background status unavailable')
+    : (chinese ? `${roster.count} 个后台任务运行中` : `${roster.count} background tasks running`)
+  return <span className="dsh-native-theme inline-flex items-center gap-1">
+    <JobListAction sessionId={sessionId} {...adapter} t={t} />
+    {roster.count > 0 && <span className="session-header-action-label text-xs text-muted-foreground" role="status" aria-label={description}>{roster.stale ? description : chinese ? '运行中' : 'Running'}</span>}
+  </span>
 }

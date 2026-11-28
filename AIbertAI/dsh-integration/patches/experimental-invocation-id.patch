@@ -11885,3 +11885,58 @@ diff --git a/packages/sdk/server/src/server.ts b/packages/sdk/server/src/server.
      const handle = await this.ctx.sessionPersistence.open(session.id, 'read')
      try {
        const stored = (await handle.read()).events
+diff --git a/packages/sdk/server/src/server.ts b/packages/sdk/server/src/server.ts
+--- a/packages/sdk/server/src/server.ts
++++ b/packages/sdk/server/src/server.ts
+@@ -844,7 +844,7 @@
+    */
+   async handleRequest(method: string, params: Record<string, unknown> | undefined): Promise<unknown> {
+     if (this.turnLease !== undefined) {
+-      const allowed = new Set(['aibertai/turn-bind', 'aibertai/turn-release', 'session/prompt', 'session/query', 'session/resume', 'session/wait', 'aibertai/history', 'aibertai/workspace-proof', 'aibertai/reconcile', 'aibertai/session-cancel', 'aibertai/query-wait', 'aibertai/agent-team', 'aibertai/jobs', 'aibertai/members', 'aibertai/member-prompt', 'aibertai/member-interrupt', 'aibertai/team-cancel-proof', 'shutdown'])
++      const allowed = new Set(['aibertai/turn-bind', 'aibertai/turn-release', 'session/prompt', 'session/query', 'session/resume', 'session/wait', 'aibertai/history', 'aibertai/workspace-proof', 'aibertai/reconcile', 'aibertai/session-cancel', 'aibertai/query-wait', 'aibertai/agent-team', 'aibertai/jobs', 'aibertai/members', 'aibertai/member-prompt', 'aibertai/member-interrupt', 'aibertai/team-cancel-proof', 'aibertai/steer', 'shutdown'])
+       if (!allowed.has(method)) throw new Error('turn lease method unavailable')
+       if (method !== 'shutdown' && params?.sessionId !== this.turnLease.sessionId) throw new Error('turn lease session mismatch')
+       if (method === 'session/prompt' || method === 'session/query') {
+@@ -1070,6 +1070,30 @@
+         }
+         return receipt
+       }
++      case 'aibertai/steer': {
++        const sessionId = params?.sessionId, operationId = params?.operationId, requestId = params?.requestId
++        if (!this.turnLease || typeof sessionId !== 'string' || typeof operationId !== 'string'
++          || typeof requestId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)
++          || requestId === operationId || !this.turnLease.allows(sessionId, operationId)) throw new Error('dsh_steer_unavailable')
++        const rec = this.sessions.get(sessionId)
++        if (rec === undefined) throw new Error('dsh_steer_unavailable')
++        const agent = rec.handle.agent
++        const content = await durablePromptContent(this.ctx, queryContent(params?.contentBlocks))
++        this.assertLiveAgent(rec, brandString<SessionId>(sessionId))
++        const session = agent.session
++        const previous = session.snapshotEvents().flatMap(event =>
++          event.type === 'agent/inbox/spliced' && event.data.target === 'next-step' ? event.data.inserted : []
++        ).find(message => message.source.kind === 'user' && message.source.aibertaiOperationId === requestId)
++        if (previous !== undefined) {
++          if (!await this.ctx.sessions.flush(session)) throw new Error('no session persistence')
++          return { messageId: previous.id }
++        }
++        if (!this.turnLease.allows(sessionId, operationId) || agent.status !== 'running') throw new Error('dsh_steer_unavailable')
++        const message = createUserMessage({ content, source: { kind: 'user', aibertaiOperationId: requestId } })
++        agent.steer(message)
++        if (!await this.ctx.sessions.flush(session)) throw new Error('no session persistence')
++        return { messageId: message.id }
++      }
+       case 'aibertai/member-prompt': {
+         const sessionId = params?.sessionId, op = params?.operationId
+         if (!params || !this.turnLease || !this.initialized || this.shuttingDown || typeof sessionId !== 'string'
+diff --git a/packages/sdk/server/src/server.ts b/packages/sdk/server/src/server.ts
+--- a/packages/sdk/server/src/server.ts
++++ b/packages/sdk/server/src/server.ts
+@@ -1335,7 +1335,7 @@
+     if (rec !== undefined) {
+       this.assertLiveAgent(rec, sessionId)
+       const agent = rec.handle.agent
+-      if (agent.status !== 'idle' || agent.inbox.nextTurn.length !== 0 || agent.inbox.nextStep.length !== 0
++      if (agent.status !== 'idle' || agent.inbox.nextTurn.length !== 0 || agent.inbox.nextStep.some(message => message.source.kind !== 'plan-mode' || message.source.form !== 'notice')
+         || this.ctx.get('goals')?.get(agent)?.activation === 'armed') throw new Error('turn lease busy')
+     }
+   }

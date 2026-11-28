@@ -2834,8 +2834,7 @@ function recentFailureLines(limit = 4) {
 function diagnosticsSignIn() {
   const account = currentAccount();
   if (!account) return { state: "signedOut", server: null };
-  const expired = recentFailureLines(8).some((line) => /HTTP 40[13]/.test(line));
-  return { state: expired ? "expired" : "active", server: account.server?.url ?? null, userId: account.user?.id ?? null };
+  return { state: accountSessionExpired(account) ? "expired" : status$1 === "ready" ? "active" : "checking", server: account.server.url, userId: account.user.id };
 }
 function setupDiagnosticsIpc(runtimeStatus2, platform2) {
   handle("diagnostics:acp-timeout", acpTimeoutDiagnostic, (event, diagnostic) => {
@@ -3146,9 +3145,24 @@ function writeAuth(accountId, file2) {
   writeJsonAtomic$1(authFile(accountId), file2);
   authCache.set(accountId, file2);
 }
+const expiredAccountSessions = new Set();
+function accountSessionKey(account) {
+  return JSON.stringify([account.id, account.server.url]);
+}
+function accountSessionExpired(account) {
+  return account !== null && expiredAccountSessions.has(accountSessionKey(account));
+}
+function setAccountSessionExpired(account, expired) {
+  const key = accountSessionKey(account);
+  if (expiredAccountSessions.has(key) === expired) return;
+  if (expired) expiredAccountSessions.add(key);
+  else expiredAccountSessions.delete(key);
+  const contents = applicationWorkspace()?.webContents;
+  if (contents && mainFrameAlive(contents)) contents.send("auth:session-expired", { accountId: account.id, serverUrl: account.server.url, expired });
+}
 function statusOf(f) {
   const account = f.accounts.find((a) => a.id === f.currentId) ?? null;
-  return { loggedIn: account !== null, account, lastServer: account?.server ?? f.lastServer };
+  return { loggedIn: account !== null, account, lastServer: account?.server ?? f.lastServer, sessionExpired: accountSessionExpired(account) };
 }
 function accountList(f) {
   return { accounts: f.accounts.map((a) => ({ ...a, loggedIn: isLoggedIn(a.id) })), currentId: f.currentId };
@@ -3239,7 +3253,7 @@ function accountOperation(run2) {
   });
   return next;
 }
-async function login(server, superseded = () => false, onAuthorize) {
+async function login(server, superseded = () => false, onAuthorize, expectedAccount) {
   cancelAccountLogin();
   if (superseded()) throw new CodedError(ErrorCode.loginCancelled);
   try {
@@ -3251,12 +3265,12 @@ async function login(server, superseded = () => false, onAuthorize) {
   const attempt = new AbortController();
   pendingLogin = attempt;
   try {
-    return await completeLogin(server, attempt.signal, onAuthorize);
+    return await completeLogin(server, attempt.signal, onAuthorize, expectedAccount);
   } finally {
     if (pendingLogin === attempt) pendingLogin = null;
   }
 }
-async function completeLogin(server, signal, onAuthorize) {
+async function completeLogin(server, signal, onAuthorize, expectedAccount) {
   const normalized = { kind: server.kind, url: server.url.replace(/\/+$/, "") };
   const chosen = {};
   const desktopReturn = desktopReturnURL();
@@ -3271,12 +3285,15 @@ async function completeLogin(server, signal, onAuthorize) {
     // 登录的是谁定了：新账号的 profile 按用户 ID 建，已有账号复用原 ID；换了地址就先停掉它的运行时（它连着旧地址）。
     // 同一地址重新登录（token 过期是最常见的情况）不停：凭据文件写好后让它重读，正在跑的任务不受影响
     async target(signedIn) {
+      if (expectedAccount && (currentAccount() !== expectedAccount || signedIn.id !== expectedAccount.user.id)) {
+        throw new LoginError("user_mismatch");
+      }
       const before = accountsState();
       const id22 = resolveAccountId(before.accounts, signedIn.id, before.currentId);
       chosen.id = id22;
       const existing = before.accounts.find((account2) => account2.id === id22);
       signal.throwIfAborted();
-      if (existing && (existing.server.url !== normalized.url || currentAccount()?.id === id22)) {
+      if (existing && existing.server.url !== normalized.url) {
         await beforeAccountUpdate(id22);
         if (signal.aborted) notifyAccountChanged();
       }
@@ -3294,7 +3311,9 @@ async function completeLogin(server, signal, onAuthorize) {
   writeAuth(id2, { ...previous?.dataKey ? { dataKey: previous.dataKey } : {}, loggedIn: true, user, server: normalized });
   if (!desktopReturn) bringAppToFront();
   const f = accountsState();
-  const status2 = statusOf(writeAccounts({ ...f, accounts: [account, ...f.accounts.filter((a) => a.id !== id2)], currentId: id2, lastServer: normalized }));
+  const next = writeAccounts({ ...f, accounts: [account, ...f.accounts.filter((a) => a.id !== id2)], currentId: id2, lastServer: normalized });
+  setAccountSessionExpired(account, false);
+  const status2 = statusOf(next);
   await reloadCredentials(id2, normalized.url);
   return status2;
 }
@@ -3447,6 +3466,18 @@ function setupAccounts() {
     });
     notifyAccountChanged();
     return r;
+  });
+  handle("auth:reauthenticate", (args) => [requestId(args)], async (event, id2) => {
+    const account = currentAccount();
+    if (!accountSessionExpired(account)) return;
+    await runAccountLogin(event, id2, (superseded, onAuthorize) => {
+      if (currentAccount() !== account || !accountSessionExpired(account)) throw new CodedError(ErrorCode.loginCancelled);
+      return login(account.server, superseded, onAuthorize, account);
+    }).catch((error) => {
+      throw loginFailure(error);
+    });
+    restart$2 = initialRestartState();
+    notifyAccountChanged();
   });
   handle("auth:cancelLogin", (args) => [args[0] === void 0 ? void 0 : text(args[0], ErrorCode.invalidRequest, 64)], (event, id2) => {
     if (id2 !== void 0 && (!pendingLoginRequest || pendingLoginRequest.requestId !== id2 || pendingLoginRequest.sender !== event.sender || !mainFrameAlive(event.sender, pendingLoginRequest.frame))) return;
@@ -14813,6 +14844,14 @@ function onStdoutLine(proc, token, raw, logger, authorizationServer) {
       event = null;
     }
   }
+  if (authorizationServer && event?.event === "source_grant_rejected") {
+    const account = currentAccount();
+    if (child$2 === proc && account?.id === activeAccountId && account.server.url === authorizationServer) {
+      setAccountSessionExpired(account, true);
+      settleReadyWaiters$1(new Error("source_grant_rejected"));
+    }
+    return;
+  }
   if (authorizationServer && event?.event === "source_authorize") {
     if (child$2 !== proc || typeof event.url !== "string") return;
     sourceAuthorizing = true;
@@ -14857,6 +14896,7 @@ function onStdoutLine(proc, token, raw, logger, authorizationServer) {
   sourceAuthorizing = false;
   verifiedOfficeResources = authorizationServer && typeof event.dshResources === "string" && node_path.isAbsolute(event.dshResources) ? event.dshResources : null;
   if (authorizationServer) ready2.sourcePreview = true;
+  if (event.offline === true) ready2.offline = true;
   endpoint$2 = ready2;
   restart$2 = recordReady();
   console.log(`[main] runtime ${typeof event.version === "string" && event.version ? event.version + " " : ""}ready at ${endpoint$2.httpBase}`);
@@ -14929,6 +14969,7 @@ async function start$2(account) {
     stderr.flush();
     console.log(`[main] runtime exited with code ${code}`);
     if (child$2 !== proc) return;
+    const recovered = endpoint$2?.offline === true && code === 0;
     capabilities?.disconnect();
     onEndpoint(null);
     closeBrowserRuntime();
@@ -14938,7 +14979,7 @@ async function start$2(account) {
     status$1 = "exited";
     endpoint$2 = null;
     clearDeviceRemoteStatus();
-    restart$2 = recordUnexpectedExit(restart$2, Date.now());
+    restart$2 = recovered ? initialRestartState() : recordUnexpectedExit(restart$2, Date.now());
     lastRuntimeExitCode = code;
     lastRuntimeExitAt = new Date().toISOString();
     settleReadyWaiters$1(new Error(ErrorCode.runtimeExited));
@@ -14952,7 +14993,7 @@ async function start$2(account) {
     console.error(`[main] runtime could not be started: ${error.message}`);
     onGone(null);
   });
-  proc.on("exit", (code) => onGone(code));
+  proc.on("close", (code) => onGone(code));
   proc.stdin?.write(JSON.stringify(init) + "\n");
 }
 function forceKill$1(proc) {
@@ -15040,7 +15081,7 @@ function syncRuntimeToAccount() {
     const wanted = account ? profileDir(account.id) : null;
     if (wanted === activeProfile && account?.server.url === activeServerUrl && child$2) return;
     await stop();
-    if (quitting$1 || !currentAccount()) return;
+    if (quitting$1 || !currentAccount() || accountSessionExpired(currentAccount())) return;
     const delay = restartDelayMs(restart$2, Date.now());
     if (delay === null) {
       // 熔断只暂停冷却期内的时间窗，不是放弃。这里原来直接 return，
@@ -15060,12 +15101,13 @@ function syncRuntimeToAccount() {
       if (!await waitBackoff(delay)) return;
     }
     const latest = currentAccount();
-    if (!quitting$1 && latest) await start$2(latest);
+    if (!quitting$1 && latest && !accountSessionExpired(latest)) await start$2(latest);
   });
   return transition;
 }
 function whenReady() {
   if (status$1 === "ready") return Promise.resolve();
+  if (accountSessionExpired(currentAccount())) return Promise.reject(new Error("source_grant_rejected"));
   return new Promise((resolve, reject) => {
     const waiter = {
       resolve: () => {
@@ -15256,7 +15298,7 @@ async function readyRuntime(sender, rejectedToken) {
   await syncRuntimeToAccount();
   if (!account || !binding) throw new Error(ErrorCode.noActiveAccount);
   deviceWindows.assertCurrent(sender, binding, deviceAccount());
-  if (!child$2) throw new Error(runtimeFailed() ? ErrorCode.runtimeFailed : currentAccount() ? ErrorCode.runtimeExited : ErrorCode.noActiveAccount);
+  if (!child$2) throw new Error(accountSessionExpired(currentAccount()) ? "source_grant_rejected" : runtimeFailed() ? ErrorCode.runtimeFailed : currentAccount() ? ErrorCode.runtimeExited : ErrorCode.noActiveAccount);
   await whenReady();
   deviceWindows.assertCurrent(sender, binding, deviceAccount());
   if (!child$2 || status$1 !== "ready" || !endpoint$2 || sender.isDestroyed()) throw new Error(ErrorCode.runtimeUnavailable);
@@ -23466,22 +23508,93 @@ function createUpdateController(updater2, notify2, requiresElevation = false, op
 }
 // 私有部署的安装包没有 Developer ID 签名，也不是 NSIS 安装版；macOS 与 Windows 都下载与下载页相同的
 // 压缩包，退出后由独立脚本等待进程结束，再整体替换应用目录。
-const MAC_REPLACE_SCRIPT = `
+const MAC_REPLACE_SCRIPT = String.raw`
 pid=$1 zip=$2 app=$3 run=$4
-exec >>"\${TMPDIR:-/tmp}/aibertai-update.log" 2>&1
+temp=$TMPDIR
+[ -n "$temp" ] || temp=/tmp
+exec >>"$temp/aibertai-update.log" 2>&1
+set -o pipefail
 marker="$(dirname "$app")/.aibertai-updating"
 staged=""
+progress_dir=$(mktemp -d "$temp/aibertai-progress.XXXXXX")
+progress=""
+if [ -n "$progress_dir" ]; then progress="$progress_dir/status"; fi
+show_progress() {
+  if [ -n "$progress" ]; then
+    { printf '%s\n%s\n' "$1" "$2" >"$progress.next" && mv -f "$progress.next" "$progress"; } || :
+  fi
+}
+cleanup_progress() {
+  [ -z "$progress_dir" ] || rm -rf "$progress_dir"
+}
+trap cleanup_progress EXIT
 fail() {
   echo "FAILED: $1"
   [ -n "$staged" ] && rm -rf "$staged"
   rm -f "$marker"
-  # 替换失败时把旧版重新打开，别让员工面对一个关掉的应用。
   [ -d "$app" ] && open "$app"
   exit 1
 }
+if [ -n "$progress" ]; then
+  show_progress "正在等待旧版本退出…" -1
+  /usr/bin/osascript -l JavaScript - "$progress" <<'JXA' &
+ObjC.import('AppKit')
+function run(args) {
+  const path = args[0]
+  const fm = $.NSFileManager.defaultManager
+  const app = $.NSApplication.sharedApplication
+  app.setActivationPolicy(1)
+  const window = $.NSWindow.alloc.initWithContentRectStyleMaskBackingDefer($.NSMakeRect(0,0,400,108),1,2,false)
+  window.title = 'AIbertAI 更新'
+  window.center
+  const label = $.NSTextField.alloc.initWithFrame($.NSMakeRect(24,64,352,22))
+  label.editable = false
+  label.bordered = false
+  label.drawsBackground = false
+  window.contentView.addSubview(label)
+  const bar = $.NSProgressIndicator.alloc.initWithFrame($.NSMakeRect(24,32,352,16))
+  bar.minValue = 0
+  bar.maxValue = 100
+  window.contentView.addSubview(bar)
+  window.makeKeyAndOrderFront(null)
+  app.activateIgnoringOtherApps(true)
+  let last
+  while (fm.fileExistsAtPath(path)) {
+    const raw = ObjC.unwrap($.NSString.stringWithContentsOfFileEncodingError(path,4,null))
+    if (raw && raw !== last) {
+      last = raw
+      const [message, value] = raw.split('\n')
+      const percent = Number(value)
+      label.stringValue = percent < 0 ? message : message + ' ' + percent + '%'
+      bar.indeterminate = percent < 0
+      if (percent < 0) bar.startAnimation(null)
+      else { bar.stopAnimation(null); bar.doubleValue = percent }
+      window.displayIfNeeded
+    }
+    $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.15))
+  }
+}
+JXA
+fi
 while kill -0 "$pid" 2>/dev/null; do sleep 0.5; done
 staged=$(mktemp -d "$(dirname "$app")/.aibertai-update.XXXXXX") || fail "无法创建临时目录"
-ditto -x -k "$zip" "$staged" || fail "解压失败"
+total=$(/usr/bin/unzip -Z -t "$zip" 2>/dev/null | awk '$2 ~ /^files?,$/ {print $3; exit}')
+if [ -n "$progress" ] && [ -n "$total" ] && [ "$total" -gt 0 ]; then
+  show_progress "正在解压新版…" 0
+  /usr/bin/ditto -V -x -k "$zip" "$staged" 2>&1 |
+    awk -v total="$total" '/^[0-9]+ bytes for / {
+      done += $1
+      percent = int(done * 100 / total)
+      if (percent > 99) percent = 99
+      if (percent > last) {print percent; fflush(); last = percent}
+      next
+    } { print > "/dev/stderr" }' |
+    while IFS= read -r percent; do show_progress "正在解压新版…" "$percent"; done || fail "解压失败"
+else
+  show_progress "正在解压新版…" -1
+  /usr/bin/ditto -x -k "$zip" "$staged" || fail "解压失败"
+fi
+show_progress "正在验证并替换应用…" -1
 new=$(find "$staged" -maxdepth 1 -name '*.app' -type d | head -n 1)
 [ -n "$new" ] || fail "压缩包里没有应用"
 [ -f "$new/Contents/Resources/app/package.json" ] || fail "新版缺少应用文件"
@@ -23490,9 +23603,13 @@ mv "$app" "$old" || fail "无法移开旧版"
 if ! mv "$new" "$app"; then mv "$old" "$app"; fail "新版无法就位"; fi
 rm -rf "$staged" "$zip"
 xattr -dr com.apple.quarantine "$app" 2>/dev/null
+show_progress "安装完成" 100
+rm -f "$marker"
 [ "$run" = 1 ] && open "$app"
+[ -z "$progress" ] || sleep 1
 exit 0
 `;
+
 const WINDOWS_REPLACE_SCRIPT = `param([int]$ProcessId, [string]$Zip, [string]$Dir, [string]$Exe, [int]$Run)
 $ErrorActionPreference = "Stop"
 $log = Join-Path $env:TEMP "aibertai-update.log"
@@ -23532,7 +23649,7 @@ function Show-Progress([string]$message, [int]$percent) {
       $script:form.Controls.Add($script:bar)
       $script:form.Show()
     }
-    $script:label.Text = $message
+    $script:label.Text = if ($percent -lt 0) { $message } else { "$message $percent%" }
     if ($percent -lt 0) {
       $script:bar.Style = "Marquee"
       $script:bar.MarqueeAnimationSpeed = 30
@@ -23548,7 +23665,7 @@ function Close-Progress {
     if ($script:form) {
       $script:bar.Style = "Blocks"
       $script:bar.Value = 100
-      $script:label.Text = "更新完成，正在启动新版本…"
+      $script:label.Text = "更新完成 100%"
       [System.Windows.Forms.Application]::DoEvents()
       Start-Sleep -Milliseconds 1500
       $script:form.Close()
@@ -23590,17 +23707,47 @@ try {
     $orphans | ForEach-Object { try { $_.Kill() } catch { } }
     Start-Sleep -Milliseconds 500
   }
-  Show-Progress "正在解压新版…" 20
+  Show-Progress "正在解压新版…" 0
   $parent = Split-Path -Parent $Dir
   $stage = Join-Path $parent (".aibertai-update-" + [guid]::NewGuid().ToString("N"))
   Add-Type -AssemblyName System.IO.Compression.FileSystem
-  [IO.Compression.ZipFile]::ExtractToDirectory($Zip, $stage)
+  $stageRoot = [IO.Path]::GetFullPath($stage) + [IO.Path]::DirectorySeparatorChar
+  [void][IO.Directory]::CreateDirectory($stage)
+  $archive = [IO.Compression.ZipFile]::OpenRead($Zip)
+  try {
+    $total = [long](($archive.Entries | Measure-Object -Property Length -Sum).Sum)
+    $written = [long]0
+    $previousPercent = 0
+    foreach ($entry in $archive.Entries) {
+      $destination = [IO.Path]::GetFullPath([IO.Path]::Combine($stageRoot, $entry.FullName))
+      if (-not $destination.StartsWith($stageRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "压缩包内的路径无效"
+      }
+      if ([string]::IsNullOrEmpty($entry.Name)) {
+        [void][IO.Directory]::CreateDirectory($destination)
+      } else {
+        [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($destination))
+        [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $destination, $false)
+        $written += $entry.Length
+        if ($total -gt 0) {
+          $percent = [int][Math]::Min(99, [Math]::Floor(100 * $written / $total))
+          if ($percent -gt $previousPercent) {
+            Show-Progress "正在解压新版…" $percent
+            $previousPercent = $percent
+          }
+        }
+      }
+      if ($script:form) { [System.Windows.Forms.Application]::DoEvents() }
+    }
+  } finally {
+    $archive.Dispose()
+  }
   $new = Get-ChildItem -LiteralPath $stage -Directory | Select-Object -First 1
   if (-not $new) { Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue; Resume-Old "压缩包结构不对" }
   if (-not (Test-Path -LiteralPath (Join-Path $new.FullName "Resources\\app\\package.json"))) {
     Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue; Resume-Old "新版压缩包缺少应用文件"
   }
-  Show-Progress "正在替换文件…" 60
+  Show-Progress "正在替换文件…" -1
   $old = Join-Path $stage "previous"
   $moved = $false
   for ($i = 0; $i -lt 240; $i++) {
@@ -23615,7 +23762,7 @@ try {
   Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $Zip -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
-  Show-Progress "正在启动新版…" 95
+  Show-Progress "正在启动新版…" -1
   if ($Run -eq 1) {
     # Windows 和 macOS 不同：这里要按新版目录里的文件启动。包名一改（例如从候选包
     # 换成 AIbertAI.exe），旧名字就不存在了，照旧名字启动会让更新装上了却不重开。
@@ -23689,7 +23836,7 @@ class ArchiveReplaceUpdater extends electronUpdater.BaseUpdater {
     }
     let child;
     if (process.platform === "darwin") {
-      child = node_child_process.spawn("/bin/sh", ["-c", MAC_REPLACE_SCRIPT, "sh", String(process.pid), zip, target, run], { detached: true, stdio: "ignore" });
+      child = node_child_process.spawn("/bin/bash", ["-c", MAC_REPLACE_SCRIPT, "sh", String(process.pid), zip, target, run], { detached: true, stdio: "ignore" });
     } else {
       const script = node_path.join(node_os.tmpdir(), `aibertai-update-${process.pid}.ps1`);
       node_fs.writeFileSync(script, WINDOWS_REPLACE_SCRIPT, "utf8");

@@ -21,6 +21,7 @@ import (
 )
 
 type relaySessionHost struct {
+	offline              bool
 	interactions         *desktopDSHInteractions
 	access               *relayAccess
 	local                *desktopRuntimeAccess

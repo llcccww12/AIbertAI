@@ -41,6 +41,8 @@ type acpLive struct {
 	operations       map[string]string
 	sessions         map[string]acpSession
 	activeTurns      map[string]context.CancelFunc
+	reportingTurns   map[string]bool
+	reportWake       chan struct{}
 	dshStoppedTurns  map[string]string
 	queueWorkers     map[string]chan struct{}
 	compacting       map[string]bool
@@ -72,12 +74,16 @@ type acpSession struct {
 	Workspace          string                 `json:"workspace,omitempty"`
 	// SharedDefault marks a session opened in the shared default workspace
 	// (DSH default-workspace). It is still a granted "selected" folder.
-	SharedDefault        bool                  `json:"sharedDefaultWorkspace,omitempty"`
-	ProjectID            string                `json:"projectId,omitempty"`
-	ExpertID             string                `json:"expertId,omitempty"`
-	ExpertName           string                `json:"expertName,omitempty"`
-	Model                string                `json:"model,omitempty"`
-	Mode                 string                `json:"mode,omitempty"`
+	SharedDefault bool   `json:"sharedDefaultWorkspace,omitempty"`
+	ProjectID     string `json:"projectId,omitempty"`
+	ExpertID      string `json:"expertId,omitempty"`
+	ExpertName    string `json:"expertName,omitempty"`
+	Model         string `json:"model,omitempty"`
+	Mode          string `json:"mode,omitempty"`
+	// DSHPendingMode is the DSH preset a mid-session level change still owes the
+	// SDK session. DSH records a preset when it first opens a session and keeps
+	// it on resume, so the change is sent as /permission at the next turn.
+	DSHPendingMode       string                `json:"dshPendingMode,omitempty"`
 	MediaImageModelID    string                `json:"mediaImageModelId,omitempty"`
 	MediaVideoModelID    string                `json:"mediaVideoModelId,omitempty"`
 	Thinking             *modelThinking        `json:"thinking,omitempty"`
@@ -407,7 +413,7 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(in.ID) == 0 {
 			// The browser ACP client sends session/cancel as a notification.
-			if initialized && in.Method == "session/cancel" && h.local != nil && h.live != nil && h.acpScope(r, "session:control") == nil {
+			if initialized && !h.offline && in.Method == "session/cancel" && h.local != nil && h.live != nil && h.acpScope(r, "session:control") == nil {
 				var input struct{ SessionID string }
 				if json.Unmarshal(in.Params, &input) == nil && validUUID(input.SessionID) {
 					h.live.cancelTurn(input.SessionID)
@@ -443,7 +449,10 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 			} else {
 				initialized = true
 				meta := map[string]any{"sessionReads": map[string]any{"version": 1, "maxBytes": 5 << 20, "queue": true, "state": 1, "pageFragments": 1}}
-				if h.live != nil && (h.local != nil) && h.acpScope(r, "session:control") == nil {
+				if h.offline {
+					meta["offline"] = true
+				}
+				if !h.offline && h.live != nil && h.local != nil && h.acpScope(r, "session:control") == nil {
 					meta["goalMode"] = map[string]int{"version": 1}
 					if h.live.dsh != nil {
 						meta["agentTeam"] = 1
@@ -482,10 +491,20 @@ func (h *relaySessionHost) acp(w http.ResponseWriter, r *http.Request) {
 			}
 			if len(in.Params) != 0 && json.Unmarshal(in.Params, &p) != nil {
 				fault = errors.New("invalid_session_parameters")
+			} else if h.offline && !offlineDesktopMethod(in.Method) {
+				fault = errors.New("desktop_offline")
 			} else if len(p.MCPServers) != 0 || len(p.AdditionalDirectories) != 0 {
 				fault = errors.New("workspace_scope_fixed")
 			} else {
 				switch in.Method {
+				case "_monkeyai/auth/credentials":
+					var control struct{ Server string }
+					if h.local == nil || h.live == nil || h.live.source == nil || r.Header.Get("Origin") != "" ||
+						json.Unmarshal(in.Params, &control) != nil || control.Server != h.live.source.client.server {
+						fault = errRelayAccess
+					} else if fault = h.live.source.reload(); fault == nil {
+						result = map[string]bool{"reloaded": true}
+					}
 				case "_monkeyai/terminal/get", "_monkeyai/terminal/list", "_monkeyai/terminal/open", "_monkeyai/terminal/close":
 					if h.terminals == nil {
 						code, fault = -32601, errors.New("terminal_unavailable")
@@ -976,6 +995,7 @@ func (row acpSession) workspaceMetadata() map[string]any {
 			}
 		}
 		row.addAgentTeamMetadata(metadata)
+		row.addDSHPlanMetadata(metadata)
 		for i := len(row.Turns) - 1; i >= 0; i-- {
 			turn := row.Turns[i]
 			if turn.Model != row.Model {

@@ -50,7 +50,11 @@ func (h *relaySessionHost) sessionState(id string) (map[string]any, error) {
 	}
 	row.addDSHTodoMetadata(state)
 	row.addAgentTeamMetadata(state)
+	row.addDSHPlanMetadata(state)
 	state["status"], state["goal"] = row.State, goalView(row)
+	if reason := row.lastTurnFailure(); reason != "" {
+		state["lastError"] = reason
+	}
 	if row.GoalRun != "" && row.State == "running" {
 		state["executionId"] = row.GoalRun
 	}

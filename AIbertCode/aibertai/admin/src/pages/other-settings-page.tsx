@@ -259,6 +259,8 @@ const INITIAL_EMAIL_SETTINGS: EmailSettings = {
   encryption: "starttls",
 }
 
+type SessionReportingMode = "off" | "stats" | "full"
+
 export function OtherSettingsPage() {
   const { t } = useTranslation()
   const { showToast } = useAppToast()
@@ -313,6 +315,10 @@ export function OtherSettingsPage() {
   const [knowledgeEndpoints, setKnowledgeEndpoints] = useState<Partial<Record<KnowledgeEndpointKind, KnowledgeEndpointConfig>>>({})
   const [knowledgeEndpointDialog, setKnowledgeEndpointDialog] = useState<KnowledgeEndpointKind | null>(null)
   const [knowledgeEndpointSaving, setKnowledgeEndpointSaving] = useState(false)
+  const [reportingMode, setReportingMode] = useState<SessionReportingMode>("stats")
+  const [savedReportingMode, setSavedReportingMode] =
+    useState<SessionReportingMode | null>(null)
+  const [savingReporting, setSavingReporting] = useState(false)
   const [contentEnhancementModel, setContentEnhancementModel] = useState<ContentEnhancementModelConfig | null>(null)
   const [contentEnhancementDialogOpen, setContentEnhancementDialogOpen] =
     useState(false)
@@ -357,6 +363,11 @@ export function OtherSettingsPage() {
       }>
     }>("/api/admin/v1/settings")
       .then(({ settings }) => {
+        const reporting = settings.find(({ key }) => key === "session_reporting")?.value
+        const mode: SessionReportingMode =
+          reporting?.enabled === false ? "off" : reporting?.level === "full" ? "full" : "stats"
+        setReportingMode(mode)
+        setSavedReportingMode(mode)
         for (const setting of settings) {
           if (setting.key === "branding") {
             const workspaceName = String(
@@ -430,6 +441,25 @@ export function OtherSettingsPage() {
     } catch (reason) {
       showToast({ status: "error", title: (reason as Error).message })
       return false
+    }
+  }
+
+  const saveReporting = async () => {
+    setSavingReporting(true)
+    try {
+      const saved = await saveSetting("session_reporting", {
+        enabled: reportingMode !== "off",
+        level: reportingMode === "full" ? "full" : "stats",
+      })
+      if (saved) {
+        setSavedReportingMode(reportingMode)
+        showToast({
+          status: "success",
+          title: t("pages.otherSettings.sessionReporting.saved"),
+        })
+      }
+    } finally {
+      setSavingReporting(false)
     }
   }
 
@@ -849,6 +879,47 @@ export function OtherSettingsPage() {
 
   return (
     <section className="flex flex-1 flex-col gap-4 p-4 pt-0">
+      <Card id="session-reporting">
+        <CardHeader>
+          <CardTitle>{t("pages.otherSettings.sessionReporting.title")}</CardTitle>
+          <CardDescription>
+            {t("pages.otherSettings.sessionReporting.description")}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-end gap-3">
+          <Field className="w-full max-w-xs">
+            <FieldLabel htmlFor="session-reporting-mode">
+              {t("pages.otherSettings.sessionReporting.mode")}
+            </FieldLabel>
+            <Select
+              value={reportingMode}
+              disabled={savedReportingMode === null || savingReporting}
+              onValueChange={(mode) => {
+                if (mode === "off" || mode === "stats" || mode === "full")
+                  setReportingMode(mode)
+              }}
+            >
+              <SelectTrigger id="session-reporting-mode" className="w-full">
+                <SelectValue>
+                  {t(`pages.otherSettings.sessionReporting.${reportingMode}`)}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="off">{t("pages.otherSettings.sessionReporting.off")}</SelectItem>
+                <SelectItem value="stats">{t("pages.otherSettings.sessionReporting.stats")}</SelectItem>
+                <SelectItem value="full">{t("pages.otherSettings.sessionReporting.full")}</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+          <Button
+            type="button"
+            disabled={savedReportingMode === null || reportingMode === savedReportingMode || savingReporting}
+            onClick={() => void saveReporting()}
+          >
+            {t("pages.otherSettings.sessionReporting.save")}
+          </Button>
+        </CardContent>
+      </Card>
       <ProxySettings />
       <MCPNetworkSettings />
       <Card>

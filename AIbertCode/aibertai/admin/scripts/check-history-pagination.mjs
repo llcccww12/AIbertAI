@@ -100,7 +100,7 @@ try {
               started_at: "2026-10-01T00:00:00Z",
               ended_at: "2026-10-01T00:00:01Z",
               duration_seconds: 1,
-              input_text: `正文 ${i + 1}`,
+              input_text: i === 0 ? null : `正文 ${i + 1}`,
               input_text_truncated: false,
               input_kind: "prompt",
               input_tokens: 0,
@@ -216,6 +216,14 @@ try {
         )
         release()
         await ready(50)
+        if (kind === "conversation") {
+          await page.getByRole("link", { name: "会话记录设置" }).waitFor()
+          await page.getByRole("button", { name: "正文 2", exact: true }).click()
+          const dialog = page.getByRole("dialog", { name: "消息内容" })
+          await dialog.getByText("正文 2", { exact: true }).waitFor()
+          await dialog.getByRole("button", { name: "关闭" }).click()
+          await dialog.waitFor({ state: "hidden" })
+        }
         assert.equal(requests[0].get("page_size"), "50")
         assert.match(await footer(), /显示 1–50 条/)
         assert.ok(!(await footer()).includes("共"))

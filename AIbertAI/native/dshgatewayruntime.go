@@ -88,6 +88,9 @@ func newDSHGatewayRuntime(installation dshInstalledRuntime, journalRoot string, 
 			}
 		}
 		journal := filepath.Join(journalRoot, session.ID)
+		if err := archivePreviousModelRoute(ctx, journal, session); err != nil {
+			return nil, "", "", nil, nil, err
+		}
 		local, err := newDSHLocalGateway(gateway, session.ID, selected, journal)
 		if err != nil {
 			return nil, "", "", nil, nil, err

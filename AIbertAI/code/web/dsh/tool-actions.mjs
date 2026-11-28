@@ -111,7 +111,7 @@ export function dshErrorKey(message) {
   if (message === 'dsh_canvas_unavailable') return 'errors.codes.dsh_canvas_unavailable';
   if (/\bdesign_template_selection_conflict$/.test(message)) return 'errors.codes.design_template_selection_conflict';
   if (message === 'tool_approval_unavailable') return 'errors.codes.tool_approval_unavailable';
-  if (message === 'session_turn_failed') return 'errors.codes.session_turn_failed';
+  if (['session_turn_failed', 'session_report_pending', 'dsh_runtime_exited', 'dsh_session_not_found'].includes(message)) return 'errors.codes.' + message;
   return undefined;
 }
 

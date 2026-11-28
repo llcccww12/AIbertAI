@@ -35,7 +35,7 @@ func (h *relaySessionHost) sessionJobs(ctx context.Context, raw json.RawMessage)
 		return slot.observerCall(ctx, p, "aibertai/jobs", req)
 	}
 	if req.Action == "list" {
-		return map[string]any{"jobs": []any{}}, nil
+		return map[string]any{"jobs": []any{}, "available": false}, nil
 	}
 	return nil, errors.New("dsh_job_unavailable")
 }

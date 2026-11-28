@@ -17,7 +17,6 @@ import (
 	"aibertai.local/backend/internal/identity"
 	"aibertai.local/backend/internal/resource"
 	"aibertai.local/backend/internal/rootgroup"
-	"aibertai.local/backend/internal/testmember"
 	memberapi "aibertai.local/backend/member"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -72,7 +71,7 @@ func TestGroups(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	service := NewService(pool).WithMemberWriter(testmember.Groups())
+	service := NewService(pool).WithMemberWriter(NewMemberWriter())
 	router := chi.NewRouter()
 	router.Use(identity.NewService(pool, nil, "http://localhost").RequireAdmin)
 	service.RegisterAdmin(router)
@@ -237,7 +236,7 @@ func TestGroups(t *testing.T) {
 	}
 	service.WithMemberWriter(memberapi.EmptyGroupWriter{})
 	must("DELETE", "/groups/"+parent.ID, nil, 204)
-	service.WithMemberWriter(testmember.Groups())
+	service.WithMemberWriter(NewMemberWriter())
 	must("POST", "/groups", map[string]any{"name": "已删除父组", "parent_id": parent.ID}, 404)
 
 	// 相互移动并发执行时，只允许其中一次成功。

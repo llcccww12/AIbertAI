@@ -228,7 +228,7 @@ func TestDesktopTrustTurnExecutesToolAndReportsAnswer(t *testing.T) {
 	read()
 	send(2, "session/prompt", map[string]any{"sessionId": session, "_meta": map[string]string{"operationId": operation},
 		"prompt": []map[string]string{{"type": "text", "text": "Read the fixture"}}})
-	answered, allowed := false, false
+	answered, switched := false, false
 	for {
 		message := read()
 		if message["method"] == "session/request_permission" {
@@ -239,8 +239,7 @@ func TestDesktopTrustTurnExecutesToolAndReportsAnswer(t *testing.T) {
 			}
 		}
 		if message["id"] == float64(3) {
-			fault, _ := message["error"].(map[string]any)
-			allowed = fault != nil && fault["message"] == "session_mode_locked"
+			switched = message["error"] == nil
 		}
 		if params, ok := message["params"].(map[string]any); ok {
 			if update, ok := params["update"].(map[string]any); ok {
@@ -250,14 +249,14 @@ func TestDesktopTrustTurnExecutesToolAndReportsAnswer(t *testing.T) {
 			}
 		}
 		if message["id"] == float64(2) {
-			if !answered || !reported || !allowed || message["error"] != nil {
-				t.Fatalf("turn did not finish through the real ACP handler: allowed=%v answered=%v reported=%v result=%v", allowed, answered, reported, message)
+			if !answered || !reported || !switched || message["error"] != nil {
+				t.Fatalf("turn did not finish through the real ACP handler: switched=%v answered=%v reported=%v result=%v", switched, answered, reported, message)
 			}
 			break
 		}
 	}
 	row, err := host.live.load(session)
-	if err != nil || row.permissionMode() != "workspace-write" || !row.Turns[0].Acked {
+	if err != nil || row.permissionMode() != "full-access" || !row.Turns[0].Acked {
 		t.Fatalf("turn or mode not retained: %v", err)
 	}
 	unrelated, err := host.live.load(other)

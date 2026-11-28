@@ -279,3 +279,45 @@ func TestDSHCommittedDeliveryRequiresProof(t *testing.T) {
 		})
 	}
 }
+
+func TestDSHArchivesOnlyAnEndedPredecessorBeforeNextPrompt(t *testing.T) {
+	const next = "66666666-6666-4666-8666-666666666666"
+	for _, tc := range []struct {
+		name     string
+		previous acpTurn
+		liveCall bool
+		archived bool
+	}{
+		{"failed predecessor", acpTurn{Failed: true, Ended: time.Now()}, false, true},
+		{"incomplete predecessor", acpTurn{Failed: true}, false, false},
+		{"live handler", acpTurn{Failed: true, Ended: time.Now()}, true, false},
+		{"goal accounting", acpTurn{Failed: true, Ended: time.Now(), GoalCheckpoint: &goalCheckpoint{}}, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gateway := pendingSettleGateway(t, 200)
+			if tc.liveCall {
+				gateway.serving = make(chan struct{})
+			}
+			tc.previous.Operation = settleOperation
+			row := acpSession{Turns: []acpTurn{tc.previous, {Operation: next}}}
+			if err := gateway.archivePreviousFailure(row, next); err != nil {
+				t.Fatal(err)
+			}
+			if !tc.archived {
+				if gateway.pending == nil {
+					t.Fatal("an invocation without a finished owner was archived")
+				}
+				return
+			}
+			if gateway.pending != nil {
+				t.Fatal("the previous invocation still blocks the next message")
+			}
+			raw, err := os.ReadFile(filepath.Join(gateway.journal, settleCall+".json"))
+			var archived dshLocalRecord
+			if err != nil || json.Unmarshal(raw, &archived) != nil || !archived.Unverified || archived.CallID != settleCall ||
+				archived.OperationID != settleOperation {
+				t.Fatalf("the previous invocation's durable identity was lost: %+v, %v", archived, err)
+			}
+		})
+	}
+}

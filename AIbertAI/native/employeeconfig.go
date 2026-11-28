@@ -44,16 +44,11 @@ func (h *relaySessionHost) employeeConfig(ctx context.Context) (any, error) {
 	if h.local == nil && l.protocol != "" && l.protocol != m.Protocol {
 		return nil, errors.New("model_unavailable")
 	}
-	models, err := l.client.desktopCatalog(ctx, auth, "models")
+	items, err := l.client.employeeModelCatalog(ctx, auth)
 	if err != nil {
 		return nil, err
 	}
-	items := make([]map[string]any, 0, len(models))
-	for _, raw := range models {
-		var item map[string]any
-		if json.Unmarshal(raw, &item) != nil || item == nil {
-			return nil, errors.New("model_catalog_invalid")
-		}
+	for _, item := range items {
 		item["ready"] = item["id"] == m.ID || !l.modelLocked && item["kind"] == "text" &&
 			(item["protocol"] == "openai_chat_completions" || item["protocol"] == "openai_responses")
 		if h.local != nil && !l.modelLocked && (item["kind"] == "image" || item["kind"] == "video") {
@@ -65,7 +60,6 @@ func (h *relaySessionHost) employeeConfig(ctx context.Context) (any, error) {
 				item["source"] = "mine"
 			}
 		}
-		items = append(items, item)
 	}
 	empty := []any{}
 	syncStatus := map[string]any{}
@@ -162,6 +156,22 @@ func (h *relaySessionHost) employeeConfig(ctx context.Context) (any, error) {
 		"goals": map[string]any{"default_token_budget": settings.goalBudget(), "execution_supported": false},
 		"rules": "", "rulesReady": true, "engineDir": "", "skillsDir": "",
 	}, nil
+}
+
+func (c *client) employeeModelCatalog(ctx context.Context, auth authorization) ([]map[string]any, error) {
+	models, err := c.desktopCatalog(ctx, auth, "models")
+	if err != nil {
+		return nil, err
+	}
+	items := make([]map[string]any, 0, len(models))
+	for _, raw := range models {
+		var item map[string]any
+		if json.Unmarshal(raw, &item) != nil || item == nil {
+			return nil, errors.New("model_catalog_invalid")
+		}
+		items = append(items, item)
+	}
+	return items, nil
 }
 
 func (c *client) desktopSkillCatalog(ctx context.Context, auth authorization) ([]map[string]any, error) {

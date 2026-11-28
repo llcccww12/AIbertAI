@@ -1011,6 +1011,8 @@ function exposeHostApi(getPathForFile2, features) {
     getLinuxDesktopEntry: () => electron.ipcRenderer.invoke("linux:desktopEntry:status"),
     createLinuxDesktopEntry: () => electron.ipcRenderer.invoke("linux:desktopEntry:create"),
     getAuthStatus: () => electron.ipcRenderer.invoke("auth:status"),
+    onAccountSessionExpired: (listener) => subscribe("auth:session-expired", listener),
+    reauthenticate: (request2) => invokeLogin("auth:reauthenticate", null, request2),
     getBranding: (server) => electron.ipcRenderer.invoke("auth:branding", server),
     login: (server, request2) => invokeLogin("auth:login", server, request2),
     cancelLogin: (requestId) => electron.ipcRenderer.invoke("auth:cancelLogin", requestId),

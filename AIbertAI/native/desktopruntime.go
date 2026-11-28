@@ -276,7 +276,7 @@ const startupAttempts = 3
 func retryStartup[T any](ctx context.Context, call func(context.Context) (T, error)) (T, error) {
 	for attempt := 1; ; attempt++ {
 		value, err := call(ctx)
-		if err == nil || attempt == startupAttempts {
+		if err == nil || errors.Is(err, errSourceGrantRejected) || attempt == startupAttempts {
 			return value, err
 		}
 		select {
@@ -308,9 +308,9 @@ func withAuthRetry(ctx context.Context, source *desktopSourceAuth, call func(con
 	if !errors.As(err, &failure) || failure.Status != http.StatusUnauthorized {
 		return err
 	}
-	refreshed, refreshErr := source.refreshForce(ctx)
+	refreshed, refreshErr := source.refreshForce(ctx, auth.Access)
 	if refreshErr != nil {
-		return err
+		return refreshErr
 	}
 	return call(ctx, refreshed)
 }
@@ -359,7 +359,7 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 		cancel()
 	}()
 	startup, endStartup := context.WithTimeout(lifetime, 5*time.Minute)
-	defer endStartup()
+	defer func() { endStartup() }()
 	var root *os.Root
 	var name, verificationDirectory string
 	if file != "" {
@@ -387,14 +387,11 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 	// 走浏览器授权换一份新的。原来只有文件不存在或刷新被拒才重新登录，其余错误
 	// 直接让运行时退出，账号就再也起不来，连退出登录也救不回来。
 	missingGrant := err != nil
-	source := &desktopSourceAuth{client: c, store: store, grant: grant}
-	var auth authorization
-	if err == nil {
-		auth, err = source.access(startup)
-	}
-	if missingGrant || errors.Is(err, errSourceGrantRejected) {
-		// Use the browser flow for account migration and definitively rejected
-		// grants. Replace the stored grant only after the same account consents.
+	source := &desktopSourceAuth{client: c, store: store, grant: grant, onRejected: func() {
+		_ = sendEvent(map[string]string{"event": "source_grant_rejected"})
+	}}
+	if missingGrant {
+		// Older profiles may need to migrate to a source grant.
 		authorization, signedIn, loginErr := c.loginWithScopes(startup, sourceGrantScopes, func(link string) error {
 			return sendEvent(map[string]string{"event": "source_authorize", "url": link})
 		})
@@ -412,73 +409,49 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 			}
 			return fmt.Errorf("desktop authorization: %w", loginErr)
 		}
-		auth, err = authorization, nil
+	}
+	identity := findOfflineDesktopIdentity(profile, init.DataKey, init.ServerURL, init.UserID)
+	connect := func(ctx context.Context) (desktopStartupConnection, error) {
+		return prepareDesktopStartup(ctx, source, init.DataKey, init.UserID)
+	}
+	var connection desktopStartupConnection
+	if !missingGrant && identity.serverID != "" {
+		probe, cancelProbe := context.WithTimeout(startup, 2*time.Second)
+		connection, err = connect(probe)
+		cancelProbe()
+		if desktopNetworkUnavailable(err) {
+			endStartup()
+			err = serveOfflineDesktop(lifetime, profile, verificationDirectory, init.Token, init.WebOrigin, init.UserID, identity, source,
+				func(ctx context.Context) error {
+					candidate, probeErr := connect(ctx)
+					if probeErr == nil {
+						connection = candidate
+					}
+					return probeErr
+				}, sendEvent)
+			if err != nil || !validUUID(connection.key.ID) {
+				return err
+			}
+			startup, endStartup = context.WithTimeout(lifetime, 5*time.Minute)
+		}
+	} else {
+		connection, err = retryStartup(startup, connect)
 	}
 	if err != nil {
-		return fmt.Errorf("desktop authorization: %w", err)
-	}
-	var user account
-	if err := retryStartupCall(startup, func(ctx context.Context) error {
-		return withAuthRetry(ctx, source, func(ctx context.Context, current authorization) error {
-			return c.json(ctx, http.MethodGet, "/api/v1/me", current.Access, "", nil, &user)
-		})
-	}); err != nil {
 		return err
 	}
-	if user.ID != init.UserID {
-		return errDesktopCredential
-	}
-	model, err := retryStartup(startup, func(ctx context.Context) (selectedModelConfig, error) {
-		var selected selectedModelConfig
-		err := withAuthRetry(ctx, source, func(ctx context.Context, current authorization) error {
-			var callErr error
-			selected, callErr = c.selectedModelConfig(ctx, current)
-			return callErr
-		})
-		return selected, err
-	})
-	if err != nil {
-		return err
-	}
+	init.DataKey = ""
+	model, serverID, device := connection.model, connection.serverID, connection.device
+	user, ready, auth, key := connection.user, connection.ready, connection.auth, connection.key
+	defer func() { err = errors.Join(err, revokeDesktopModelKey(source, key.ID)) }()
 	modelLocked := modelID != ""
 	modelID = model.ID
-	var serverID string
-	if err := retryStartupCall(startup, func(ctx context.Context) error {
-		return withAuthRetry(ctx, source, func(ctx context.Context, _ authorization) error {
-			var err error
-			serverID, _, err = c.relaySigningKeys(ctx)
-			return err
-		})
-	}); err != nil {
-		return fmt.Errorf("desktop server identity: %w", err)
-	}
-	device, err := desktopRelayDevice(init.DataKey, init.ServerURL, serverID, init.UserID)
-	init.DataKey = ""
-	if err != nil {
-		return err
-	}
-	bridge, ready, err := c.relayHandshake(startup, auth, user, serverID, device, "bind_identity", "control", 0)
-	if err != nil {
-		return fmt.Errorf("desktop device identity: %w", err)
-	}
-	_ = bridge.CloseNow()
 	reportDevice := func(ctx context.Context, auth authorization) error { return c.reportDevice(ctx, auth, device) }
-	if err := reportDevice(startup, auth); err != nil {
+	reportCtx, stopReport := context.WithTimeout(startup, 2*time.Second)
+	if err := withAuthRetry(reportCtx, source, reportDevice); err != nil {
 		fmt.Fprintf(os.Stderr, "device report failed: %v\n", err)
 	}
-	key, err := c.createModelKey(startup, auth)
-	if validUUID(key.ID) {
-		defer func() {
-			cleanup, cancelCleanup := context.WithTimeout(context.Background(), 3*time.Second)
-			defer cancelCleanup()
-			err = errors.Join(err, withAuthRetry(cleanup, source, func(ctx context.Context, current authorization) error {
-				return c.json(ctx, http.MethodDelete, "/api/v1/api-keys/"+key.ID, current.Access, "", nil, nil)
-			}))
-		}()
-	}
-	if err != nil {
-		return fmt.Errorf("desktop model authorization: %w", err)
-	}
+	stopReport()
 	live, err := openEmployeeSessions(profile, serverID, device.machine, verificationDirectory)
 	if err != nil {
 		return err
@@ -497,6 +470,7 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 	live.modelBudget = model.inputBudget()
 	live.modelLocked = modelLocked
 	live.deviceReport, live.deviceReportedAt = reportDevice, time.Now()
+	live.reportWake = make(chan struct{}, 1)
 	if err := configureInstalledDSH(live, profile, serverID, device.machine); err != nil {
 		live.store.Close()
 		live.workspaces.root.Close()
@@ -536,13 +510,6 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 	host.desktopRelay = newDesktopRelay(host, device, user, ready, auth)
 	if host.desktopRelay.uploads != nil {
 		defer host.desktopRelay.uploads.root.Close()
-	}
-	// Right after the first browser authorization the model catalog failed
-	// once on Windows and the whole runtime exited; retry before giving up.
-	if _, err := retryStartup(startup, func(ctx context.Context) (any, error) {
-		return host.employeeConfig(ctx)
-	}); err != nil {
-		return err
 	}
 	importCtx, stopImport := context.WithTimeout(startup, 15*time.Second)
 	host.legacyImport = host.importLegacyResources(importCtx, auth, store.cipher)

@@ -97,7 +97,7 @@ type InstanceIdentity interface {
 
 func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, error) {
 	return newApp(ctx, cfg, logger, func(pool *pgxpool.Pool) (member.UserWriter, member.GroupWriter, error) {
-		return teamcapacity.NewMembers(pool), member.EmptyGroupWriter{}, nil
+		return teamcapacity.NewMembers(pool), group.NewMemberWriter(), nil
 	}, nil)
 }
 

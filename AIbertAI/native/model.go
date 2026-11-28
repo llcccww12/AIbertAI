@@ -87,6 +87,8 @@ func (c *client) selectedModelConfig(ctx context.Context, auth authorization) (s
 	return c.modelConfig(ctx, auth, modelID)
 }
 
+var errDesktopModelUnavailable = errors.New("指定模型未开放给当前登录用户")
+
 func (c *client) modelConfig(ctx context.Context, auth authorization, requested string) (selectedModelConfig, error) {
 	for page := 1; page <= 100; page++ {
 		var catalog struct {
@@ -112,7 +114,7 @@ func (c *client) modelConfig(ctx context.Context, auth authorization, requested 
 			break
 		}
 	}
-	return selectedModelConfig{}, errors.New("指定模型未开放给当前登录用户")
+	return selectedModelConfig{}, errDesktopModelUnavailable
 }
 
 func (c *client) createModelKey(ctx context.Context, auth authorization) (invocationKey, error) {

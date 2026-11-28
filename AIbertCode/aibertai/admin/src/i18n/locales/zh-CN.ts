@@ -2367,6 +2367,17 @@ export const zhCN = {
       retry: "重新加载",
     },
     otherSettings: {
+      sessionReporting: {
+        title: "会话记录设置",
+        mode: "采集范围",
+        off: "关闭会话上报",
+        stats: "仅记录统计",
+        full: "统计及用户消息正文",
+        save: "保存",
+        saved: "会话记录设置已保存",
+        description: "选择记录用户消息正文后，后续上报的用户输入会显示在消息历史中。此前未保存的正文无法补回。",
+        missingText: "部分消息未采集正文。可在设置中调整后续消息的采集范围。",
+      },
       about: "关于",
       mcpNetwork: {
         title: "MCP 网络访问",

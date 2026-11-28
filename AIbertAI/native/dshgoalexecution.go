@@ -470,7 +470,9 @@ func (h *relaySessionHost) finishRecoveredDSHGoal(ctx context.Context, row acpSe
 		return errors.New("session_write_failed")
 	}
 	h.live.mu.Unlock()
-	if !turn.Acked {
+	if !turn.Acked && h.live.usesAsyncTurnReports(row) {
+		h.live.wakeDesktopReports()
+	} else if !turn.Acked {
 		if err := h.submitACPTurn(ctx, row.ID, index+1, turn, index == 0); err == nil {
 			h.live.mu.Lock()
 			current = h.live.sessions[row.ID]

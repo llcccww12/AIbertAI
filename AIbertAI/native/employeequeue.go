@@ -41,9 +41,10 @@ type desktopQueuedMessage struct {
 }
 
 type desktopSessionQueue struct {
-	Messages []desktopQueuedMessage `json:"messages,omitempty"`
-	Revision int                    `json:"revision,omitempty"`
-	Paused   bool                   `json:"paused,omitempty"`
+	Messages    []desktopQueuedMessage `json:"messages,omitempty"`
+	Revision    int                    `json:"revision,omitempty"`
+	Paused      bool                   `json:"paused,omitempty"`
+	PauseReason string                 `json:"pauseReason,omitempty"`
 }
 
 func (s *acpSession) advanceQueue() {
@@ -72,6 +73,9 @@ func (s acpSession) queueSnapshot() map[string]any {
 			"createdAt": message.CreatedAt, "attachments": files, "canvasNodes": message.CanvasNodes})
 	}
 	queue := map[string]any{"paused": s.Queue.Paused, "messages": messages}
+	if s.Queue.Paused && s.Queue.PauseReason != "" {
+		queue["pauseReason"] = s.Queue.PauseReason
+	}
 	if len(editing) != 0 {
 		queue["editingIds"] = editing
 	}
@@ -161,7 +165,7 @@ func (h *relaySessionHost) handleQueue(ctx context.Context, ws *websocket.Conn, 
 		if !validUUID(p.EditID) {
 			return nil, errors.New("session_queue_action_unavailable")
 		}
-	case "resume", "remove", "move", "sendNow":
+	case "resume", "remove", "move", "sendNow", "steer":
 	default:
 		return nil, errors.New("session_queue_action_unavailable")
 	}
@@ -201,7 +205,7 @@ func (h *relaySessionHost) handleQueue(ctx context.Context, ws *websocket.Conn, 
 		h.uploads.mu.Unlock()
 	}
 	live := h.live
-	if p.Action == "add" || p.Action == "resume" {
+	if (p.Action == "add" || p.Action == "resume") && (live.dsh == nil || !live.dsh.ContinueAfterFailedTurn) {
 		// A turn recorded before DSH failure semantics may still block the
 		// queue; settle it from the SDK record when possible. Otherwise the
 		// existing checks below report the blocked session.
@@ -221,9 +225,12 @@ func (h *relaySessionHost) handleQueue(ctx context.Context, ws *websocket.Conn, 
 	messages := row.Queue.Messages
 	index := slices.IndexFunc(messages, func(m desktopQueuedMessage) bool { return m.ID == p.ID })
 	memberID, _ := ctx.Value(dshMemberQueueKey{}).(string)
-	if index >= 0 && messages[index].DSHMemberID != memberID {
+	if index >= 0 && (messages[index].DSHMemberID != memberID || messages[index].editID == queueSteering) {
 		live.mu.Unlock()
 		return nil, errors.New("session_queue_message_not_found")
+	}
+	if p.Action == "steer" {
+		return h.steerQueuedMessage(ctx, ws, r, row, index, result, accept)
 	}
 	switch p.Action {
 	case "add":
@@ -244,7 +251,7 @@ func (h *relaySessionHost) handleQueue(ctx context.Context, ws *websocket.Conn, 
 		}
 		// Only a model call still unsettled in the gateway journal blocks the
 		// next message (same rule as reserveTurn); any other failure does not.
-		if row.Engine == "dsh" && row.State != "running" && len(row.Turns) > 0 {
+		if !live.usesAsyncTurnReports(row) && row.Engine == "dsh" && row.State != "running" && len(row.Turns) > 0 {
 			last := row.Turns[len(row.Turns)-1]
 			if dshPendingModelFailure(last) && live.dshModelCallPending(p.SessionID) {
 				live.mu.Unlock()
@@ -255,12 +262,17 @@ func (h *relaySessionHost) handleQueue(ctx context.Context, ws *websocket.Conn, 
 			live.mu.Unlock()
 			return nil, errors.New("session_queue_full")
 		}
+		if len(messages) == 0 || live.usesAsyncTurnReports(row) && row.wasPausedForReport() {
+			// A queue paused by the old report or receipt gate can resume
+			// when the user explicitly sends another message.
+			row.Queue.Paused, row.Queue.PauseReason = false, ""
+		}
 		messages = append(slices.Clone(messages), desktopQueuedMessage{
 			ID: p.ID, OperationID: p.Meta.OperationID, DSHMemberID: memberID, Text: p.Text, Attachments: p.Attachments, CanvasNodes: p.CanvasNodes,
 			CreatedAt: time.Now().UnixMilli(),
 		})
 	case "resume":
-		row.Queue.Paused = false
+		row.Queue.Paused, row.Queue.PauseReason = false, ""
 	case "beginEdit", "endEdit", "update":
 		if index < 0 || p.Action != "beginEdit" && messages[index].editID != p.EditID {
 			live.mu.Unlock()
@@ -295,7 +307,7 @@ func (h *relaySessionHost) handleQueue(ctx context.Context, ws *websocket.Conn, 
 		messages = slices.Delete(slices.Clone(messages), index, index+1)
 		if p.Action == "sendNow" {
 			messages = slices.Insert(messages, 0, message)
-			row.Queue.Paused = false
+			row.Queue.Paused, row.Queue.PauseReason = false, ""
 		} else if p.Action == "move" {
 			next := len(messages)
 			if p.BeforeID != nil {
@@ -307,6 +319,13 @@ func (h *relaySessionHost) handleQueue(ctx context.Context, ws *websocket.Conn, 
 			}
 			messages = slices.Insert(messages, next, message)
 		}
+	}
+	if len(messages) == 0 {
+		row.Queue.Paused, row.Queue.PauseReason = false, ""
+	}
+	if row.State == "running" && live.activeTurns[row.ID] == nil && !live.compacting[row.ID] &&
+		!desktopGoalAdvancing(row.Goal) && (p.Action == "add" || p.Action == "resume" || p.Action == "sendNow") {
+		row = live.closeInterruptedTurn(row)
 	}
 	row.Queue.Messages = messages
 	row.advanceQueue()
@@ -396,8 +415,17 @@ func (h *relaySessionHost) runSessionQueue(ctx context.Context, ws *websocket.Co
 		if err != nil {
 			live.mu.Lock()
 			row = live.sessions[id]
+			if live.canContinueQueueAfterFailure(row, message.OperationID) {
+				live.mu.Unlock()
+				continue
+			}
 			if len(row.Queue.Messages) != 0 {
-				row.Queue.Paused = true
+				reason := safeDesktopTurnFailure(err)
+				if n := len(row.Turns); n > 0 && row.Turns[n-1].Operation == message.OperationID &&
+					!live.usesAsyncTurnReports(row) && !row.Turns[n-1].Acked && !errors.Is(err, errSourceGrantRejected) {
+					reason = errSessionReportPending.Error()
+				}
+				row.Queue.Paused, row.Queue.PauseReason = true, reason
 				row.advanceQueue()
 				if saveErr := live.save(row); saveErr != nil {
 					err = errors.Join(err, saveErr)
@@ -414,6 +442,41 @@ func (h *relaySessionHost) runSessionQueue(ctx context.Context, ws *websocket.Co
 				"params": map[string]any{"sessionId": id, "eventSeq": current.historySequence()}})
 		}
 	}
+}
+
+func (row acpSession) wasPausedForReport() bool {
+	switch row.Queue.PauseReason {
+	case "session_report_pending", "dsh_reconciliation_required", "dsh_model_outcome_unknown", "dsh_model_response_interrupted":
+		return true
+	case "":
+		if n := len(row.Turns); n > 0 {
+			turn := row.Turns[n-1]
+			return !turn.Acked || dshPendingModelFailure(turn)
+		}
+	}
+	return false
+}
+
+// The next queued message is independent. Keep the existing pause for
+// unresolved file, connector or canvas changes.
+func (l *acpLive) canContinueQueueAfterFailure(row acpSession, operation string) bool {
+	if row.State != "error" || len(row.Turns) == 0 || row.Engine != "dsh" && !l.usesAsyncTurnReports(row) {
+		return false
+	}
+	last := row.Turns[len(row.Turns)-1]
+	if last.Operation != operation || !last.Failed ||
+		!l.usesAsyncTurnReports(row) && (!last.Acked || l.dshModelCallPending(row.ID)) {
+		return false
+	}
+	switch last.FailureCode {
+	case "dsh_reconciliation_required":
+		return l.usesAsyncTurnReports(row) && !dshPendingWrite(last) && !dshPendingCanvasWrite(last)
+	case "dsh_write_outcome_unknown", "dsh_connector_outcome_unknown",
+		"dsh_connector_reconciliation_required", "dsh_canvas_outcome_unknown", "dsh_session_not_found",
+		"source_grant_rejected":
+		return false
+	}
+	return !dshPendingWrite(last) && !dshPendingCanvasWrite(last)
 }
 
 var errSessionQueueChanged = errors.New("session_queue_changed")
@@ -501,7 +564,7 @@ func (h *relaySessionHost) sessionOperation(operation string, a relayAuthorizati
 			}
 			if turn.Failed {
 				snapshot["state"] = "failed"
-				snapshot["error"] = map[string]any{"code": -32000, "message": "session_turn_failed"}
+				snapshot["error"] = map[string]any{"code": -32000, "message": turn.failureReason()}
 				return snapshot, nil
 			}
 			seq := session.historySequence()

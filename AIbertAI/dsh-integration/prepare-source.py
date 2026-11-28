@@ -12,7 +12,7 @@ import tempfile
 
 SOURCE = "3f321d32bfe382212a8ed8785c1d47a5a300aa23"
 ARCHIVE_SHA256 = "a46ccc2890645d0a7f3b032eeadb988769893392da5dcd48a1bc4ce0e49ba3fc"
-PATCH_SHA256 = "9739f29e682dfb9eb1789f4c9ece7bb2a7c7f98ec77d2ae01f9bc6326db6a15d"
+PATCH_SHA256 = "21da609dc88fbf6cae946e7d30cbac93bf906a25082ec5169668d83ba23bf101"
 PATCH = Path(__file__).parent / "patches/experimental-invocation-id.patch"
 
 

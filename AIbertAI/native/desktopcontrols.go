@@ -104,9 +104,9 @@ func (h *relaySessionHost) updateDesktopSessionPresentation(method string, raw j
 	return map[string]any{"title": title, "titleSource": source, "pinned": row.Pinned, "archivedAt": row.ArchivedAt, "readAt": row.ReadAt}, nil
 }
 
-// DSH's three permission presets. A conversation's level is chosen before its
-// first message: DSH pins the preset into the session when the SDK first opens
-// it, and the SDK cannot switch it afterwards.
+// DSH's three permission presets. A conversation chooses its level when it is
+// created and may change it at any time: the record moves at once, and a DSH
+// session that already has turns switches its SDK preset at the next turn.
 const (
 	modeReadOnly       = "read-only"
 	modeWorkspaceWrite = "workspace-write"
@@ -149,7 +149,16 @@ func (h *relaySessionHost) setACPPermissionMode(r *http.Request, raw json.RawMes
 		if row.permissionMode() == p.ModeID {
 			return map[string]any{"modeId": p.ModeID}, nil
 		}
-		return nil, errors.New("session_mode_locked")
+		// A writable level still needs the caller's files:write; launches
+		// without it pin the SDK to read-only and escalate through the host.
+		if p.ModeID != modeReadOnly && h.acpScope(r, "files:write") != nil {
+			return nil, errRelayAccess
+		}
+		// DSH keeps the preset it pinned when it opened the session, so the
+		// running SDK session is switched at the start of the next turn.
+		if row.Engine == "dsh" {
+			row.DSHPendingMode = dshPermissionPreset(p.ModeID)
+		}
 	}
 	row.Mode = p.ModeID
 	if err := l.save(row); err != nil {
@@ -272,7 +281,7 @@ func (h *relaySessionHost) setDesktopSessionMedia(ctx context.Context, raw json.
 	if !ok {
 		return nil, errors.New("session_not_found")
 	}
-	if row.State == "running" || len(row.Turns) > 0 && !row.Turns[len(row.Turns)-1].Acked {
+	if row.State == "running" || !l.usesAsyncTurnReports(row) && len(row.Turns) > 0 && !row.Turns[len(row.Turns)-1].Acked {
 		return nil, errors.New("session_unavailable_for_model_change")
 	}
 	if len(p.Image) != 0 {

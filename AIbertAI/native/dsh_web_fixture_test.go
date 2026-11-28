@@ -71,6 +71,10 @@ func TestDSHWebFixture(t *testing.T) {
 		t.Fatal("DSH_TEST_NODE and DSH_PATCHED_TEST_ENTRY required")
 	}
 	const modelID = "22222222-2222-4222-8222-222222222222"
+	const alternateModel = "23232323-2323-4232-8232-232323232323"
+	conversationReview := os.Getenv("DSH_WEB_CONVERSATION_REVIEW") == "1"
+	switchModel := os.Getenv("DSH_WEB_MODEL_SWITCH") == "1"
+	var stepCancelled, feedbackReceived atomic.Bool
 	const keyID = "33333333-3333-4333-8333-333333333333"
 	root := t.TempDir()
 	goalMode := os.Getenv("DSH_WEB_GOAL") == "1"
@@ -141,6 +145,7 @@ child.on('exit',code=>process.exit(code??1));process.on('SIGTERM',()=>child.kill
 	var memberRootCalls, designerCalls atomic.Int32
 	var memberModelHeld, memberModelCancelled, memberOutputLimited atomic.Bool
 	modelFailures := os.Getenv("DSH_WEB_GATEWAY_FAILURE") == "1"
+	var reportFailures atomic.Int32
 	var failedPath, failedHash atomic.Value
 	var deferredModelReceipt, deferredStreamReceipt atomic.Bool
 	var holdStreamReceipt, streamReceiptWaiting atomic.Bool
@@ -194,6 +199,8 @@ child.on('exit',code=>process.exit(code??1));process.on('SIGTERM',()=>child.kill
 				break
 			}
 			fmt.Fprint(w, `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"模拟连接器调用成功"}]}}`)
+		case r.URL.Path == "/api/v1/models" && switchModel:
+			fmt.Fprintf(w, `{"total_count":2,"models":[{"id":%q,"model":"fixture","display_name":"验收模型","kind":"text","protocol":"openai_chat_completions","context_window_tokens":100000,"max_output_tokens":4096,"ready":true},{"id":%q,"model":"fixture-alternate","display_name":"备用验收模型","kind":"text","protocol":"openai_chat_completions","context_window_tokens":100000,"max_output_tokens":4096,"ready":true}]}`, modelID, alternateModel)
 		case r.URL.Path == "/api/v1/models":
 			fmt.Fprintf(w, `{"total_count":1,"models":[{"id":%q,"model":"fixture","display_name":"验收模型","kind":"text","protocol":"openai_chat_completions","context_window_tokens":100000,"max_output_tokens":4096,"supports_vision":%t,"ready":true}]}`, modelID, visionMode)
 		case expertEditor && r.URL.Path == "/api/v1/skills":
@@ -305,6 +312,11 @@ child.on('exit',code=>process.exit(code??1));process.on('SIGTERM',()=>child.kill
 		case strings.HasPrefix(r.URL.Path, "/api/v1/sessions/") && strings.HasSuffix(r.URL.Path, "/receipt") && os.Getenv("DSH_WEB_CANCEL_RECOVERY") == "1":
 			fmt.Fprint(w, `{"recorded":true,"transaction_id":"44444444-4444-4444-8444-444444444444"}`)
 		case strings.HasPrefix(r.URL.Path, "/api/v1/sessions/") && strings.HasSuffix(r.URL.Path, "/turns"):
+			if modelFailures {
+				reportFailures.Add(1)
+				w.WriteHeader(http.StatusServiceUnavailable)
+				break
+			}
 			var body struct {
 				Turns []struct {
 					Index int `json:"turn_index"`
@@ -333,6 +345,65 @@ child.on('exit',code=>process.exit(code??1));process.on('SIGTERM',()=>child.kill
 			var request map[string]any
 			_ = json.Unmarshal(body, &request)
 			n := calls.Add(1)
+			if conversationReview {
+				emit := func(out io.Writer, delta map[string]any, finish string) {
+					frame, _ := json.Marshal(map[string]any{"id": "fixture", "object": "chat.completion.chunk", "model": modelID, "choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": nil}}})
+					_, _ = fmt.Fprintf(out, "data: %s\n\n", frame)
+					frame, _ = json.Marshal(map[string]any{"id": "fixture", "object": "chat.completion.chunk", "model": modelID, "choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": finish}}, "usage": map[string]int{"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}})
+					_, _ = fmt.Fprintf(out, "data: %s\n\ndata: [DONE]\n\n", frame)
+				}
+				tool := func(name string, args map[string]any) map[string]any {
+					arguments, _ := json.Marshal(args)
+					return map[string]any{"role": "assistant", "tool_calls": []any{map[string]any{"index": 0, "id": fmt.Sprintf("fixture-call-%d", n), "type": "function", "function": map[string]any{"name": name, "arguments": string(arguments)}}}}
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				switch n {
+				case 1:
+					reader, writer := io.Pipe()
+					go func() {
+						defer writer.Close()
+						_, _ = io.WriteString(writer, `data: {"id":"fixture","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"正在准备首轮校验。"},"finish_reason":null}]}`+"\n\n")
+						select {
+						case <-releaseGoal:
+						case <-r.Context().Done():
+							stepCancelled.Store(true)
+							return
+						}
+						emit(writer, tool("bash", map[string]any{"description": "后台校验示例", "command": "printf 'fixture-check-ready\\n'; exec sleep 45", "run_in_background": true}), "tool_calls")
+					}()
+					return &http.Response{StatusCode: http.StatusOK, Header: w.Result().Header, Body: reader}, nil
+				case 2:
+					answer := "本轮没有收到补充消息。"
+					if bytes.Contains(body, []byte("补充验收条件")) {
+						answer = "本轮已读取补充条件，后台校验继续运行。"
+					}
+					emit(w, map[string]any{"content": answer}, "stop")
+				case 3, 4:
+					plan := "# 初版校验计划\n\n- 核对第一节"
+					if n == 4 {
+						feedbackReceived.Store(bytes.Contains(body, []byte("覆盖第二节")))
+						plan = "# 修订校验计划\n\n- 核对第一节和第二节"
+					}
+					emit(w, tool("exit_plan_mode", map[string]any{"plan": plan}), "tool_calls")
+				case 5:
+					emit(w, map[string]any{"content": "已按批准的计划执行。"}, "stop")
+				case 7:
+					w.Header().Set("X-Billing-Transaction-ID", memberTransaction)
+					reader, writer := io.Pipe()
+					go func() {
+						defer writer.Close()
+						_, _ = io.WriteString(writer, `data: {"id":"fixture","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"正在拟定待停止的计划。"},"finish_reason":null}]}`+"\n\n")
+						<-r.Context().Done()
+					}()
+					// No receipt route for this transaction.
+					return &http.Response{StatusCode: http.StatusOK, Header: w.Result().Header, Body: reader}, nil
+				case 8:
+					emit(w, map[string]any{"content": "停止后仍可在原会话继续。"}, "stop")
+				default:
+					emit(w, map[string]any{"content": "历史暂不可用时仍能回复。"}, "stop")
+				}
+				return w.Result(), nil
+			}
 			if modelFailures {
 				invocation := r.Header.Get("Idempotency-Key")
 				switch n {
@@ -903,11 +974,17 @@ child.on('exit',code=>process.exit(code??1));process.on('SIGTERM',()=>child.kill
 		selected.ContextWindowTokens, selected.MaxOutputTokens = 32768, 2048
 	}
 	gw := &dshGateway{client: c, authorization: func(context.Context) (authorization, error) { return authorization{Access: "fixture"}, nil }}
-	cfg, err := newDSHGatewayRuntime(dshInstalledRuntime{Executable: node, Entry: entry, Home: filepath.Join(root, "home"), Env: []string{"PATH=" + os.Getenv("PATH")}}, filepath.Join(root, "journal"), gw, func(context.Context, acpSession) (selectedModelConfig, error) { return selected, nil })
+	cfg, err := newDSHGatewayRuntime(dshInstalledRuntime{Executable: node, Entry: entry, Home: filepath.Join(root, "home"), Env: []string{"PATH=" + os.Getenv("PATH")}}, filepath.Join(root, "journal"), gw, func(ctx context.Context, row acpSession) (selectedModelConfig, error) {
+		if switchModel && row.Model == alternateModel {
+			return c.modelConfig(ctx, authorization{Access: "fixture"}, alternateModel)
+		}
+		return selected, nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	cfg.LeasePool = &dshLeasePool{}
+	cfg.ContinueAfterFailedTurn = modelFailures || conversationReview
 	t.Cleanup(func() { _ = cfg.LeasePool.close(context.Background()) })
 	if goalHold {
 		bind := cfg.BindLease
@@ -1108,6 +1185,12 @@ child.on('exit',code=>process.exit(code??1));process.on('SIGTERM',()=>child.kill
 	if err = os.WriteFile(filepath.Join(row.CWD, "brief.txt"), []byte("请整理这份工作区说明。\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	if modelFailures {
+		row.Queue.Paused = true
+		if err = live.save(row); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if os.Getenv("DSH_WEB_PROMPT_RECOVERY") == "1" {
 		now := time.Now().UTC()
 		turn := acpTurn{Operation: "99999999-9999-4999-8999-999999999999", Model: modelID, Started: now, Prompt: "模拟中断的普通聊天"}
@@ -1187,6 +1270,22 @@ child.on('exit',code=>process.exit(code??1));process.on('SIGTERM',()=>child.kill
 	}
 	defer listener.Close()
 	host := &relaySessionHost{profile: root, live: live, local: &desktopRuntimeAccess{address: listener.Addr().String(), origin: "http://" + listener.Addr().String(), protocol: "monkeyai.token.fixture", reportMachine: "machine", attachments: attachments}, goals: newGoalRuntime(), terminalLifetime: t.Context()}
+	if conversationReview {
+		host.interactions = newDesktopDSHInteractions()
+	}
+	if modelFailures {
+		live.reportWake = make(chan struct{}, 1)
+		reportCtx, cancelReports := context.WithCancel(t.Context())
+		reportDone := make(chan struct{})
+		go func() {
+			defer close(reportDone)
+			host.superviseDesktopReports(reportCtx, 30*time.Second)
+		}()
+		defer func() {
+			cancelReports()
+			<-reportDone
+		}()
+	}
 	if os.Getenv("DSH_WEB_MIGRATION") == "1" {
 		host.local.userID = "11111111-1111-4111-8111-111111111111"
 		host.local.serverID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
@@ -1333,6 +1432,31 @@ child.on('exit',code=>process.exit(code??1));process.on('SIGTERM',()=>child.kill
 		})
 	}
 	if modelFailures {
+		mux.HandleFunc("POST /fixture/park-previous-invocation", func(w http.ResponseWriter, r *http.Request) {
+			const invocation = "77777777-7777-4777-8777-777777777777"
+			slot, err := cfg.LeasePool.acquire(r.Context(), id)
+			if err != nil {
+				http.Error(w, "session unavailable", http.StatusConflict)
+				return
+			}
+			defer func() { <-slot.gate }()
+			row, err := live.load(id)
+			if err != nil || row.State != "error" || len(row.Turns) == 0 {
+				http.Error(w, "expected a failed turn", http.StatusConflict)
+				return
+			}
+			slot.discard()
+			journal := filepath.Join(root, "journal", id)
+			record := dshLocalRecord{SessionID: id, OperationID: row.Turns[len(row.Turns)-1].Operation,
+				CallID: invocation, ModelID: modelID, Protocol: selected.Protocol, State: "dispatched",
+				Status: http.StatusServiceUnavailable, Body: []byte("{}")}
+			raw, _ := json.Marshal(record)
+			if err := os.WriteFile(filepath.Join(journal, "pending.json"), raw, 0600); err != nil {
+				http.Error(w, "could not seed an unresolved invocation", http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		})
 		mux.HandleFunc("POST /fixture/hold-stream-receipt", func(w http.ResponseWriter, _ *http.Request) {
 			holdStreamReceipt.Store(true)
 			w.WriteHeader(http.StatusNoContent)
@@ -1347,15 +1471,33 @@ child.on('exit',code=>process.exit(code??1));process.on('SIGTERM',()=>child.kill
 			w.WriteHeader(http.StatusNoContent)
 		})
 	}
+	if conversationReview {
+		mux.HandleFunc("POST /fixture/release-first-step", func(w http.ResponseWriter, _ *http.Request) {
+			if goalReleased.CompareAndSwap(false, true) {
+				close(releaseGoal)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		})
+	}
 	mux.HandleFunc("/fixture", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		status := map[string]any{"sessionId": id, "goalHeld": goalHeld.Load(), "modelCalls": calls.Load(), "compactCalls": compactCalls.Load()}
+		if conversationReview {
+			status["stepCancelled"], status["feedbackReceived"] = stepCancelled.Load(), feedbackReceived.Load()
+			if current, err := live.load(id); err == nil {
+				status["turnCount"] = len(current.Turns)
+			}
+		}
 		if modelFailures {
+			status["reportFailures"] = reportFailures.Load()
 			status["streamReceiptWaiting"] = streamReceiptWaiting.Load()
+			_, archiveErr := os.Stat(filepath.Join(root, "journal", id, "77777777-7777-4777-8777-777777777777.json"))
+			status["previousInvocationArchived"] = archiveErr == nil
 			if current, err := live.load(id); err == nil && len(current.Turns) > 0 {
 				turn := current.Turns[len(current.Turns)-1]
 				status["failure"], status["settled"], status["turnCount"], status["ended"], status["answer"] = turn.FailureCode, turn.DSHModelFailureSettled, len(current.Turns), !turn.Ended.IsZero(), turn.Answer
 				status["queued"], status["queuePaused"] = len(current.Queue.Messages), current.Queue.Paused
+				status["model"] = turn.Model
 			}
 			_, err := os.Stat(filepath.Join(root, "journal", id, "pending.json"))
 			status["pending"] = err == nil
@@ -1559,8 +1701,8 @@ child.on('exit',code=>process.exit(code??1));process.on('SIGTERM',()=>child.kill
 		// The browser fixture has a real local ACP endpoint but no Electron shell.
 		// Exercise the same automatic receipt check as that shell.
 		replaceOne(`L && et.kind === "electron" && ts()?.transport !== "relay" &&
-          [Se.dshModelOutcomeUnknown`, `L && ts()?.transport !== "relay" &&
-          [Se.dshModelOutcomeUnknown`)
+          e.error === Se.dshReconciliationRequired`, `L && ts()?.transport !== "relay" &&
+          e.error === Se.dshReconciliationRequired`)
 		replaceOne(`.includes(J?.error) && et.kind === "electron" && ts()?.transport !== "relay"`, `.includes(J?.error) && ts()?.transport !== "relay"`)
 	}
 	if attachmentMode {

@@ -129,7 +129,8 @@ func (s *sourceGrantStore) replace(auth authorization) (sourceGrant, error) {
 	if !validSourceAuthorization(auth) {
 		return sourceGrant{}, errDesktopCredential
 	}
-	grant := sourceGrant{Auth: auth, Expires: time.Now().Add(time.Duration(auth.TTL) * time.Second)}
+	// Server expiry follows wall time, including time spent asleep.
+	grant := sourceGrant{Auth: auth, Expires: time.Now().UTC().Add(time.Duration(auth.TTL) * time.Second)}
 	return grant, s.save(grant)
 }
 
@@ -139,11 +140,34 @@ type desktopSourceAuth struct {
 	store       *sourceGrantStore
 	grant       sourceGrant
 	oauthClient string
+	rejected    bool
+	onRejected  func()
+}
+
+func (s *desktopSourceAuth) reload() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reloadLocked()
+}
+
+func (s *desktopSourceAuth) reloadLocked() error {
+	grant, err := s.store.load()
+	if err != nil {
+		return err
+	}
+	if s.rejected && grant.Auth == s.grant.Auth {
+		return errSourceGrantRejected
+	}
+	s.grant, s.rejected = grant, false
+	return nil
 }
 
 func (s *desktopSourceAuth) access(ctx context.Context) (authorization, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.rejected && s.reloadLocked() != nil {
+		return authorization{}, errSourceGrantRejected
+	}
 	if time.Until(s.grant.Expires) > 2*time.Minute {
 		return s.grant.Auth, nil
 	}
@@ -152,18 +176,32 @@ func (s *desktopSourceAuth) access(ctx context.Context) (authorization, error) {
 
 // refreshForce 不管还剩多久都换一份授权。后端重启或令牌被提前拒掉时，
 // 接口会直接返回 401，这时只有强制刷新能把请求救回来。
-func (s *desktopSourceAuth) refreshForce(ctx context.Context) (authorization, error) {
+func (s *desktopSourceAuth) refreshForce(ctx context.Context, rejectedAccess string) (authorization, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.rejected && s.reloadLocked() != nil {
+		return authorization{}, errSourceGrantRejected
+	}
+	if s.grant.Auth.Access != rejectedAccess && time.Until(s.grant.Expires) > 2*time.Minute {
+		return s.grant.Auth, nil
+	}
 	return s.refreshLocked(ctx)
 }
 
 func (s *desktopSourceAuth) refreshLocked(ctx context.Context) (authorization, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	client := s.oauthClient
 	if client == "" {
 		client = clientID
 	}
 	auth, err := s.client.refreshSourceGrant(ctx, client, s.grant.Auth.Refresh)
+	if errors.Is(err, errSourceGrantRejected) {
+		s.rejected = true
+		if s.onRejected != nil {
+			s.onRejected()
+		}
+	}
 	if err != nil {
 		return authorization{}, err
 	}

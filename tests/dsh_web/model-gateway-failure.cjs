@@ -27,6 +27,7 @@ async function run() {
     await page.goto(url)
     const login=page.getByRole('button',{name:'登录',exact:true})
     await login.or(page.getByRole('button',{name:/会话的工具/})).first().waitFor()
+    await page.locator('#boot-splash').waitFor({state:'hidden'})
     if(await login.isVisible()){
       await page.locator('input').first().fill(base)
       await login.click()
@@ -44,61 +45,42 @@ async function run() {
     await until(s=>s.turnCount===3 && s.ended && s.answer==='已在原会话继续。' && s.modelCalls===4,'fresh continuation')
     await send('请生成一段较长的文字')
     await until(s=>s.turnCount===4 && s.ended && s.settled && s.failure==='dsh_model_output_limit' && !s.pending && s.answer==='已保留的半句' && s.modelCalls===5,'complete limited response')
-    await page.getByText(/本次输出已达到模型长度上限/).first().waitFor()
+    await page.getByText(/已达到输出 token 上限/).first().waitFor()
     await send('继续')
     await until(s=>s.ended && s.answer==='已接着写完。' && s.modelCalls===6,'continue from limit')
     await send('测试结果尚未核验的模型调用')
-    await until(s=>s.turnCount===6 && s.ended && !s.settled && s.failure==='dsh_model_outcome_unknown' && s.pending && s.modelCalls===7,'unknown outcome')
+    await until(s=>s.turnCount===6 && s.ended && s.modelCalls===7 &&
+      s.failure==='dsh_model_service_unavailable' && s.reportFailures>0, 'failed call with reporting offline')
+    assert.equal((await context.request.post(base+'/fixture/park-previous-invocation')).status(),204)
+    assert.equal((await fixture()).pending,true)
     await page.reload()
-    await page.getByText(/模型调用结果仍待核验/).first().waitFor()
-    const check = page.getByRole('button',{name:'重新核验',exact:true})
-    await check.click()
-    await page.getByText('暂未核验完成，可稍后再查。',{exact:true}).waitFor()
-    assert.equal((await fixture()).modelCalls,7)
-    await send('继续上一项')
-    await page.waitForTimeout(800)
-    const state=await fixture()
-    assert.equal(state.modelCalls,7)
-    assert.equal(state.turnCount,6)
-    assert.equal(state.pending,true)
-    assert.equal(state.queued,0)
-    assert.equal(state.queuePaused,false)
-    assert.equal((await context.request.post(base+'/fixture/model-receipt')).status(),204)
-    await check.click()
-    await until(s=>s.turnCount===6 && s.settled && s.failure==='dsh_model_service_unavailable' && !s.pending && s.modelCalls===7,'late accounting receipt')
-    await check.waitFor({state:'hidden'})
     await page.getByText(/模型服务暂时不可用/).first().waitFor()
-    await send('继续核验后的任务')
-    await until(s=>s.turnCount===7 && s.ended && s.modelCalls===8 && s.answer==='已从确认的失败处继续。','verified continuation')
+    await page.getByRole('button',{name:'重新核验',exact:true}).waitFor({state:'hidden'})
+    const switchModel = process.env.DSH_WEB_MODEL_SWITCH === '1'
+    const selectModel = async (current, next) => {
+      await page.locator('.composer-model').filter({ hasText: current }).click()
+      await page.getByText(next, { exact: true }).last().click()
+      await page.locator('.composer-model').filter({ hasText: next }).waitFor()
+    }
+    if (switchModel) {
+      await selectModel('验收模型', '备用验收模型')
+      assert.equal((await fixture()).pending, true, 'model selection does not wait for old receipt')
+    }
+    await send('继续处理失败后的任务')
+    await until(s=>s.turnCount===7 && s.ended && s.modelCalls===8 && !s.pending &&
+      s.previousInvocationArchived && s.answer==='已从确认的失败处继续。','continue without prior receipt')
+    if (switchModel) {
+      assert.equal((await fixture()).model, '23232323-2323-4232-8232-232323232323')
+      await selectModel('备用验收模型', '验收模型')
+    }
     await send('检查中途断开的输出')
-    await until(s=>s.turnCount===8 && s.ended && !s.settled && s.pending && s.modelCalls===9 && s.failure==='dsh_model_response_interrupted' && s.answer==='断开前已收到的文字','partial interrupted response')
-    const survivor = await context.newPage()
-    await survivor.goto(base + '/')
-    await survivor.locator('body').waitFor()
-    assert.equal((await context.request.post(base+'/fixture/hold-stream-receipt')).status(),204)
-    await page.reload()
-    await until(s=>s.streamReceiptWaiting, 'first window holds the account receipt check')
-    const overlappingCheck = new Promise(resolve => survivor.on('websocket', ws => {
-      ws.on('framesent', frame => {
-        const request = JSON.parse(String(frame.payload))
-        if (request.method === '_aibertai/session/reconcile-workspace' && request.params?.sessionId === url.split('/').pop()) resolve()
-      })
-    }))
-    await survivor.goto(url)
-    await Promise.race([overlappingCheck, new Promise((_, reject) => {
-      const timer = setTimeout(()=>reject(new Error('second window never joined the receipt check')), 10000)
-      timer.unref()
-    })])
-    await page.close()
-    page = survivor
-    assert.equal((await context.request.post(base+'/fixture/model-receipt')).status(),204)
-    await until(s=>s.turnCount===8 && s.settled && !s.pending && s.modelCalls===9 && s.failure==='dsh_model_stream_ended','overlapping windows settle without model replay')
-    await page.getByRole('button',{name:'重新核验',exact:true}).waitFor({state:'hidden',timeout:10000})
+    await until(s=>s.turnCount===8 && s.ended && s.modelCalls===9 &&
+      s.answer==='断开前已收到的文字' && s.failure==='dsh_model_stream_ended','partial interrupted response')
     await page.getByText('断开前已收到的文字',{exact:true}).waitFor()
-    await page.getByText(/用量已核验/).first().waitFor()
+    await page.getByText(/模型输出中断，已收到的内容已保留/).first().waitFor()
     await send('继续补完断流的回复')
     await until(s=>s.ended && s.modelCalls===10 && s.answer==='已补完断流的回复。','continue after partial stream')
-    console.log('Verified ten provider requests through the employee workbench, including safe retry, paid rate limit, output limit, delayed accounting and recovery from a partial stream without replay.')
+    console.log('Verified ten provider requests in the same chat with reporting offline, including a new answer while the previous invocation receipt was unresolved.')
   } finally { await browser.close() }
 }
 run().catch(error=>{console.error(error);process.exitCode=1})

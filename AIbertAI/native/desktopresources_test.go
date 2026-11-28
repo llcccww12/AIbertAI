@@ -15,6 +15,7 @@ func TestPrivateDesktopResources(t *testing.T) {
 	const sessionID = "c3bd985c-9f71-4b85-937a-c41b1b104d38"
 	const userID = "c4bd985c-9f71-4b85-937a-c41b1b104d38"
 	saved := false
+	deleted := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer account" {
 			t.Error("resource call must use account authorization")
@@ -37,6 +38,9 @@ func TestPrivateDesktopResources(t *testing.T) {
 			body = `{"skills":[{"id":"` + other + `","name":"Uploaded skill","ownership_type":"system","package_sha256":"fixture","tags":null}],"total_count":1}`
 		case "GET /api/v1/skills/" + other + "/content":
 			body = `{"content":"Uploaded instructions"}`
+		case "DELETE /api/v1/skills/" + other:
+			deleted = true
+			body = `{}`
 		case "GET /api/v1/experts":
 			body = `{"experts":[{"id":"` + other + `","name":"Private expert"}],"total_count":1}`
 		case "PUT /api/v1/experts/" + other:
@@ -119,6 +123,11 @@ func TestPrivateDesktopResources(t *testing.T) {
 		json.RawMessage(`{"kind":"expert","id":"`+other+`","etag":"\"4\"","input":{"name":"Updated expert"}}`))
 	if err != nil {
 		t.Fatal("expert edit failed through the private resource API", err)
+	}
+	_, err = host.desktopResource(t.Context(), "_monkeyai/resources/delete",
+		json.RawMessage(`{"kind":"skill","id":"`+other+`","etag":"\"7\""}`))
+	if err != nil || !deleted {
+		t.Fatal("skill delete failed through the private resource API", err)
 	}
 }
 

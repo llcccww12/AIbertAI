@@ -88,11 +88,15 @@ func dshRenderedParts(parts []dshMessagePart, text string) []map[string]string {
 }
 
 type acpTurn struct {
+	DSHPlanActive          *bool             `json:"dshPlanActive,omitempty"`
+	DSHSteers              []dshSteerMessage `json:"dshSteers,omitempty"`
 	DSHMemberNotices       []dshMemberNotice `json:"dshMemberNotices,omitempty"`
 	DSHInjected            []dshContextEntry `json:"dshInjected,omitempty"`
 	DSHMemberID            string            `json:"dshMemberId,omitempty"`
 	goalOutcome            string
 	dshImageAdmission      dshImageAdmission
+	dshPromptDispatched    bool
+	dshModeApplied         string
 	Operation              string                `json:"operationId"`
 	ClientID               string                `json:"clientMessageId,omitempty"`
 	Model                  string                `json:"model,omitempty"`
@@ -135,6 +139,7 @@ type acpTurn struct {
 	DSHReconciled          bool                  `json:"dshReconciled,omitempty"`
 	DSHProjectionSeq       *int64                `json:"dshProjectionSeq,omitempty"`
 	DSHModelFailureSettled bool                  `json:"dshModelFailureSettled,omitempty"`
+	DSHUserStopped         bool                  `json:"dshUserStopped,omitempty"`
 	DSHStopObserved        bool                  `json:"dshStopObserved,omitempty"`
 	DSHCancelConfirmed     bool                  `json:"dshCancelConfirmed,omitempty"`
 	Acked                  bool                  `json:"acked,omitempty"`
@@ -255,12 +260,6 @@ func (l *acpLive) reserveTurn(id, op, clientID, prompt string, attachments []acp
 		// one instead of colliding with the turn the user starts now.
 		session.GoalRun = ""
 	}
-	if n := len(session.Turns); session.State == "running" && n > 0 && !session.Turns[n-1].Ended.IsZero() {
-		// 回合已经结束（Ended 有值），会话状态却还停在 running：上一轮失败时收尾
-		// 没走完。不放行的话，这个会话之后每条消息都会被 session_unavailable_for_prompt
-		// 挡回去，用户只能开新会话。
-		session.State = "idle"
-	}
 	if session.State == "running" && l.activeTurns[id] == nil {
 		// Nothing is driving the turn any more; the finalize path above already
 		// deleted its cancel key and saved, all under this lock. Close what it
@@ -293,38 +292,25 @@ func (l *acpLive) reserveTurn(id, op, clientID, prompt string, attachments []acp
 		if turn.DSHMemberID != memberID || turn.Prompt != prompt || turn.ClientID != clientID || !slices.Equal(turn.Attachments, attachments) || !slices.Equal(turn.CanvasNodes, canvasNodes) || turn.Ended.IsZero() {
 			return session, 0, false, errors.New("session_operation_conflict")
 		}
-		if !turn.Acked {
+		if !turn.Acked && !l.usesAsyncTurnReports(session) {
 			session.State = "running"
 			if err := l.save(session); err != nil {
 				return session, 0, false, errors.New("session_write_failed")
 			}
+			l.trackTurn(id, cancel)
 		}
 		return session, index, true, nil
 	}
-	// DSH never locks a conversation because an earlier turn failed: the agent
-	// loop records the failure, returns to idle and admits the next message.
-	// The guarantees this gate used to provide are enforced where they belong:
-	//   - the failed turn's SDK child is discarded, so no old reply can run on;
-	//   - a resumed turn reconciles any pending model invocation before it
-	//     prompts (runDSHSessionWithProfile), and fails that attempt only;
-	//   - on resume the SDK closes every unanswered tool call with an
-	//     "outcome unknown, verify before retrying" result (core/session repair),
-	//     so the model, not a lock, decides what to re-check;
-	//   - a replayed side-effecting call is still refused by its durable claim.
-	// The failed turn stays on disk unchanged, and the explicit recheck action
-	// remains available for billing receipts.
-	//
-	// One case still waits: the last turn's own model call is unsettled in the
-	// gateway journal and promptACP could not settle it just now. That call
-	// cannot be dispatched past, and keeping it the last turn is what lets the
-	// "重新核验" receipt check (and settleStuckDSHModelTurn) resolve it.
-	if n := len(session.Turns); !background && session.Engine == "dsh" && n > 0 {
-		if last := session.Turns[n-1]; (dshPendingModelFailure(last) || dshStuckModelOnlyTurn(last)) && l.dshModelCallPending(id) {
+	// Persistent desktop and cloud runtimes report finished turns independently
+	// of prompt admission. Standalone hosts have no background reporter.
+	if !l.usesAsyncTurnReports(session) && len(session.Turns) > 0 {
+		last := session.Turns[len(session.Turns)-1]
+		if !background && session.Engine == "dsh" && (dshPendingModelFailure(last) || dshStuckModelOnlyTurn(last)) && l.dshModelCallPending(id) {
 			return session, 0, false, errors.New("dsh_reconciliation_required")
 		}
-	}
-	if n := len(session.Turns); n > 0 && !session.Turns[n-1].Acked {
-		return session, 0, false, errSessionReportPending
+		if !last.Acked {
+			return session, 0, false, errSessionReportPending
+		}
 	}
 	started := time.Now().UTC()
 	if started.Before(session.Updated) {
@@ -362,13 +348,16 @@ func (l *acpLive) trackTurn(id string, cancel context.CancelFunc) {
 }
 
 func (h *relaySessionHost) submitACPTurn(ctx context.Context, id string, index int, turn acpTurn, register bool) error {
-	live := h.live
-	auth, err := live.authorization(ctx)
-	if err != nil {
-		return err
+	if h.local != nil {
+		// The turn is already durable. Let the background reporter retry
+		// slow uploads instead of leaving the composer waiting on them.
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 8*time.Second)
+		defer cancel()
 	}
+	live := h.live
 	if register {
-		if err := live.client.registerSession(ctx, auth, h.reportMachine(), id, turn.Model, turn.reportTitle(), turn.Started); err != nil {
+		if err := h.registerACPTurn(ctx, id, turn); err != nil {
 			return err
 		}
 	}
@@ -392,7 +381,26 @@ func (h *relaySessionHost) submitACPTurn(ctx context.Context, id string, index i
 	live.mu.Lock()
 	cwd := live.sessions[id].CWD
 	live.mu.Unlock()
-	return live.client.reportTurn(ctx, auth, h.reportMachine(), id, turn.Model, index, index-1, turn.Started, turn.Ended, stop, turn.Usage, input, turn.reportFacts(cwd), facts...)
+	return live.withTurnAuthorization(ctx, func(ctx context.Context, auth authorization) error {
+		return live.client.reportTurn(ctx, auth, h.reportMachine(), id, turn.Model, index, index-1, turn.Started, turn.Ended, stop, turn.Usage, input, turn.reportFacts(cwd), facts...)
+	})
+}
+
+func (l *acpLive) withTurnAuthorization(ctx context.Context, call func(context.Context, authorization) error) error {
+	if l.source != nil {
+		return withAuthRetry(ctx, l.source, call)
+	}
+	auth, err := l.authorization(ctx)
+	if err != nil {
+		return err
+	}
+	return call(ctx, auth)
+}
+
+func (h *relaySessionHost) registerACPTurn(ctx context.Context, id string, turn acpTurn) error {
+	return h.live.withTurnAuthorization(ctx, func(ctx context.Context, auth authorization) error {
+		return h.live.client.registerSession(ctx, auth, h.reportMachine(), id, turn.Model, turn.reportTitle(), turn.Started)
+	})
 }
 
 func (t acpTurn) reportFacts(cwd string) turnReportFacts {
@@ -426,6 +434,10 @@ func (h *relaySessionHost) retryPendingReport(ctx context.Context, id string) er
 	live := h.live
 	live.mu.Lock()
 	session, ok := live.sessions[id]
+	if ok && live.usesAsyncTurnReports(session) {
+		live.mu.Unlock()
+		return h.reportTurnBacklog(ctx, id)
+	}
 	index := len(session.Turns) - 1
 	if !ok || index < 0 || session.State == "running" || session.Turns[index].Ended.IsZero() {
 		live.mu.Unlock()
@@ -437,15 +449,19 @@ func (h *relaySessionHost) retryPendingReport(ctx context.Context, id string) er
 		return nil
 	}
 	// Reserve the session while replaying its durable facts after a disconnect.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	session.State = "running"
 	if err := live.save(session); err != nil {
 		live.mu.Unlock()
 		return err
 	}
+	live.trackTurn(id, cancel)
 	live.mu.Unlock()
 	reportErr := h.submitACPTurn(ctx, id, index+1, turn, index == 0)
 	live.mu.Lock()
 	defer live.mu.Unlock()
+	delete(live.activeTurns, id)
 	session = live.sessions[id]
 	turn.Acked = reportErr == nil
 	session.State = completedState(turn)
@@ -467,22 +483,42 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 	defer cancel()
 	_, background := ctx.Value(goalRuntimeContext{}).(*goalRuntime)
 	if !background {
+		if live.source != nil {
+			authCtx, cancel := context.WithTimeout(turnCtx, 10*time.Second)
+			_, err := live.source.access(authCtx)
+			cancel()
+			if errors.Is(err, errSourceGrantRejected) {
+				return nil, err
+			}
+			if err != nil {
+				return nil, errors.New("source_auth_unavailable")
+			}
+		}
 		if err := h.preflightOwnedModel(turnCtx, id, op); err != nil {
 			return nil, err
 		}
 		// Settle a stale earlier failure when its evidence allows. This only
 		// tidies receipts; the next message is admitted either way.
-		_ = h.settleStuckDSHModelTurn(ctx, id)
+		if live.dsh == nil || !live.dsh.ContinueAfterFailedTurn {
+			_ = h.settleStuckDSHModelTurn(ctx, id)
+		}
 		_ = h.settleStaleCanvasTurn(id)
 	}
 	session, index, retry, err := live.reserveTurn(id, op, clientID, prompt, files, cancel, background, queued)
-	if errors.Is(err, errSessionReportPending) && h.retryPendingReport(ctx, id) == nil {
-		session, index, retry, err = live.reserveTurn(id, op, clientID, prompt, files, cancel, background, queued)
+	if errors.Is(err, errSessionReportPending) {
+		reportErr := h.retryPendingReport(ctx, id)
+		if errors.Is(reportErr, errSourceGrantRejected) {
+			return nil, reportErr
+		}
+		if reportErr == nil {
+			session, index, retry, err = live.reserveTurn(id, op, clientID, prompt, files, cancel, background, queued)
+		}
 	}
 	if err != nil {
 		return nil, err
 	}
 	turn := session.Turns[index]
+	asyncReports := live.usesAsyncTurnReports(session)
 	attemptStarted := time.Now()
 	var previousActiveTime time.Duration
 	if background && turn.GoalCheckpoint != nil {
@@ -508,12 +544,8 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 			turn.ReportText = turn.DSHMemberID == "" && h.collectTurnText(turnCtx)
 			live.touchDevice(turnCtx)
 		}
-		if err == nil && index == 0 {
-			var auth authorization
-			auth, err = live.authorization(turnCtx)
-			if err == nil {
-				err = live.client.registerSession(turnCtx, auth, h.reportMachine(), id, turn.Model, turn.reportTitle(), turn.Started)
-			}
+		if err == nil && index == 0 && (!asyncReports || session.Engine != "dsh") {
+			err = h.registerACPTurn(turnCtx, id, turn)
 			register = err != nil
 		}
 		if err == nil {
@@ -693,6 +725,9 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 			}
 		}
 		notAdmitted := err != nil && (inputPreparationFailed || turn.DSHHasImages && turn.dshImageAdmission == dshImageNotSent)
+		if err != nil && session.Engine == "dsh" && !turn.dshPromptDispatched {
+			turn.DSHInputNotAdmitted = true
+		}
 		if notAdmitted {
 			// A local failure or an explicit SDK admission refusal is not an
 			// unknown dispatch. Preserve the failure without retaining an image.
@@ -709,7 +744,10 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 		memberStopped := turn.DSHMemberID != "" && turn.DSHCancelConfirmed && errors.Is(err, context.Canceled)
 		turn.Interrupted = err != nil && !notAdmitted && ctx.Err() == nil && (turnCtx.Err() == context.Canceled || memberStopped)
 		if session.Engine == "dsh" && turn.Interrupted && !turn.DSHCancelConfirmed {
-			turn.DSHCancelConfirmed = !background && h.confirmStoppedDSHReply(ctx, session, &turn)
+			// Desktop prompts can continue while the previous call is settled.
+			// Keep the reconciliation record without waiting on accounting.
+			turn.DSHUserStopped = asyncReports && !background && turn.DSHMemberID == "" && session.platformGoal() == nil
+			turn.DSHCancelConfirmed = !turn.DSHUserStopped && !background && h.confirmStoppedDSHReply(ctx, session, &turn)
 			if !turn.DSHCancelConfirmed {
 				turn.Interrupted = false
 				turn.FailureCode = "dsh_reconciliation_required"
@@ -730,6 +768,9 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 			turn.Failed = true
 			turn.FailureCode = "dsh_canvas_outcome_unknown"
 		}
+		if turn.FailureCode != "dsh_reconciliation_required" {
+			turn.DSHUserStopped = false
+		}
 		if turn.Failed {
 			if turn.FailureCode == "" {
 				turn.FailureCode = safeDesktopTurnFailure(err)
@@ -740,7 +781,7 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 					plannedGoalStop = current.Goal.Status == "budget_limited" || current.Goal.Status == "clearing" || current.Goal.Status == "paused" && current.Goal.Reason == "user_paused"
 				}
 			}
-			if ctx.Err() == nil && !plannedGoalStop {
+			if ctx.Err() == nil && !plannedGoalStop && !turn.DSHUserStopped {
 				slog.Warn("桌面对话执行失败", "session_id", id, "operation_id", op, "reason", turn.FailureCode)
 			}
 		}
@@ -748,8 +789,16 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 			turn.Ended = turn.Started
 		}
 		live.mu.Lock()
-		delete(live.activeTurns, id)
 		current := live.sessions[id]
+		if turn.dshModeApplied != "" {
+			// The SDK accepted the level the user picked mid-session; a later
+			// change queues the next switch.
+			session.DSHPendingMode, current.DSHPendingMode = "", ""
+			live.sessions[id] = current
+		} else {
+			// A switch made while this turn ran stays queued for the next one.
+			session.DSHPendingMode = current.DSHPendingMode
+		}
 		if background {
 			saved := *current.Turns[index].GoalCheckpoint
 			saved.ActiveTime = previousActiveTime + time.Since(attemptStarted)
@@ -759,6 +808,7 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 			if ctx.Err() != nil {
 				// Leave the unfinished turn with the saved checkpoint for startup recovery.
 				saveErr := live.save(current)
+				delete(live.activeTurns, id)
 				live.mu.Unlock()
 				return nil, errors.Join(ctx.Err(), saveErr)
 			}
@@ -767,7 +817,7 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 		session.Goal, session.LastGoalRequest = current.Goal, current.LastGoalRequest
 		session.GoalRun = current.GoalRun
 		session.Queue = current.Queue
-		session.Turns = slices.Clone(session.Turns)
+		session.Turns = slices.Clone(current.Turns)
 		paused := background && current.Goal.Current && (current.Goal.Status == "paused" || turn.Interrupted || turn.Failed)
 		if paused {
 			saved := current.Turns[index].GoalCheckpoint
@@ -802,6 +852,9 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 				turn.GoalCheckpoint, session.GoalRun = nil, ""
 			}
 			session.Turns[index] = turn
+			if asyncReports {
+				session.State, session.Updated = completedState(turn), turn.Ended
+			}
 		}
 		writeErr := live.save(session)
 		if writeErr == nil && !background && session.Engine == "dsh" && turn.Failed && turn.FailureCode == "dsh_write_outcome_unknown" {
@@ -809,6 +862,9 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 				live.dshStoppedTurns = make(map[string]string)
 			}
 			live.dshStoppedTurns[id] = op
+		}
+		if writeErr != nil || paused || turn.Acked || asyncReports {
+			delete(live.activeTurns, id)
 		}
 		live.mu.Unlock()
 		if writeErr != nil {
@@ -820,7 +876,7 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 			return map[string]string{"stopReason": "cancelled"}, nil
 		}
 	}
-	if !turn.Acked {
+	if !turn.Acked && !asyncReports {
 		reportErr := h.submitACPTurn(ctx, id, index+1, turn, register)
 		turn.Acked = reportErr == nil
 		if reportErr != nil {
@@ -828,6 +884,7 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 		}
 		session.State, session.Updated = completedState(turn), turn.Ended
 		live.mu.Lock()
+		delete(live.activeTurns, id)
 		current := live.sessions[id]
 		session.Mode, session.desktopSessionPresentation = current.Mode, current.desktopSessionPresentation
 		session.Goal, session.LastGoalRequest = current.Goal, current.LastGoalRequest
@@ -840,21 +897,24 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 			return nil, errors.New("session_write_failed")
 		}
 	}
+	if asyncReports {
+		live.wakeDesktopReports()
+	}
 	h.notifyDSHTurnCheckpoint(ctx, session, index, op)
 	if clientID != "" {
 		_ = notifyACPReply(ctx, ws, session, index, background)
 		_ = notifyACPTurnState(ctx, ws, session, op, true)
 	}
-	if turn.Failed {
-		if dshTerminalModelFailure(turn.FailureCode) || turn.FailureCode == "dsh_model_outcome_unknown" || turn.FailureCode == "dsh_model_response_interrupted" || turn.FailureCode == "dsh_connector_outcome_unknown" || turn.FailureCode == "dsh_canvas_outcome_unknown" {
-			return nil, errors.New(turn.FailureCode)
+	if turn.Failed && !turn.DSHUserStopped {
+		if turn.FailureCode == errSourceGrantRejected.Error() {
+			return nil, errSourceGrantRejected
 		}
 		if errors.Is(err, errSkillCommandUnavailable) {
 			return nil, errSkillCommandUnavailable
 		}
-		return nil, errors.New("session_turn_failed")
+		return nil, errors.New(turn.failureReason())
 	}
-	if turn.Interrupted {
+	if turn.Interrupted || turn.DSHUserStopped {
 		return map[string]string{"stopReason": "cancelled"}, nil
 	}
 	if clientID == "" && !(session.Engine == "dsh" && turn.DSHStreamed && !retry) {
@@ -902,19 +962,10 @@ func acpTurnStatePayload(session acpSession, operation string, finished bool) ma
 	state := map[string]any{"status": session.State, "executionId": operation, "title": title, "titleSource": source}
 	if finished {
 		state["executionId"] = nil
-		if reason := session.lastTurnFailure(); reason != "" {
-			// A goal that is still resumable did not fail the employee's work.
-			// The technical code stays on the turn for recovery; the window gets
-			// the neutral line instead of a red "the turn failed" message.
-			if session.Goal != nil && session.Goal.Current && !session.Goal.Observed {
-				reason = "session_turn_failed"
-			}
-			state["lastError"] = reason
-		} else {
-			state["lastError"] = ""
-		}
+		state["lastError"] = session.lastTurnFailure()
 	}
 	session.addDSHTodoMetadata(state)
+	session.addDSHPlanMetadata(state)
 	state["goal"] = goalView(session)
 	return map[string]any{
 		"sessionId": session.ID, "eventSeq": session.historySequence(), "state": state, "finish": finished,
@@ -923,9 +974,16 @@ func acpTurnStatePayload(session acpSession, operation string, finished bool) ma
 
 func (s acpSession) lastTurnFailure() string {
 	if s.State == "error" && len(s.Turns) != 0 {
-		return s.Turns[len(s.Turns)-1].FailureCode
+		if s.Goal != nil && s.Goal.Current && !s.Goal.Observed {
+			return "session_turn_failed"
+		}
+		return s.Turns[len(s.Turns)-1].failureReason()
 	}
 	return ""
+}
+
+func (t acpTurn) failureReason() string {
+	return safeDesktopTurnFailure(errors.New(t.FailureCode))
 }
 
 func (h *relaySessionHost) runACPModelTurn(ctx context.Context, ws *websocket.Conn, request *http.Request, session acpSession, turn *acpTurn, files []acpAttachment) error {
@@ -1293,6 +1351,12 @@ func dshPendingWrite(turn acpTurn) bool {
 }
 
 func safeDesktopTurnFailure(err error) string {
+	if errors.Is(err, errSourceGrantRejected) {
+		return errSourceGrantRejected.Error()
+	}
+	if errors.Is(err, errDSHSessionNotFound) {
+		return errDSHSessionNotFound.Error()
+	}
 	if strings.Contains(err.Error(), "dsh_canvas_outcome_unknown") {
 		return "dsh_canvas_outcome_unknown"
 	}
@@ -1538,7 +1602,7 @@ func (session acpSession) historySequence() int {
 		if turn.DSHMemberID != "" {
 			continue
 		}
-		count++
+		count += 1 + len(turn.DSHSteers)
 		if turn.hasHistoryResponse() {
 			count++
 		}
@@ -1554,7 +1618,7 @@ func (t acpTurn) hasHistoryResponse() bool {
 	if t.DSHMemberID != "" {
 		return false
 	}
-	return t.hasModelFailureRecord() || t.Answer != "" || len(t.DSHMemberNotices) != 0 || len(t.DSHCompactions) != 0 || t.DSHTeamBoard.visible() || len(t.DSHParts) > 0 || len(t.DSHDeliverables) > 0 || len(t.workspaceTools()) > 0 || t.GoalCheckpoint != nil && t.GoalCheckpoint.Progress != "" || t.Interrupted && t.DSHCancelConfirmed && (!t.Failed || t.DSHReconciled)
+	return t.DSHUserStopped || t.hasModelFailureRecord() || t.Answer != "" || len(t.DSHMemberNotices) != 0 || len(t.DSHCompactions) != 0 || t.DSHTeamBoard.visible() || len(t.DSHParts) > 0 || len(t.DSHDeliverables) > 0 || len(t.workspaceTools()) > 0 || t.GoalCheckpoint != nil && t.GoalCheckpoint.Progress != "" || t.Interrupted && t.DSHCancelConfirmed && (!t.Failed || t.DSHReconciled)
 }
 
 func (session acpSession) toolHistoryID(turn acpTurn, index, step int) string {
@@ -1707,7 +1771,7 @@ func (session acpSession) responseMessage(index int, calls map[string]any) map[s
 		if turn.DSHTeamBoard.visible() && !slices.ContainsFunc(session.Turns[index+1:], func(later acpTurn) bool { return later.DSHTeamBoard != nil }) {
 			message["dshTeamBoard"] = turn.DSHTeamBoard
 		}
-		if turn.Failed && !turn.DSHReconciled {
+		if turn.Failed && !turn.DSHReconciled && !turn.DSHUserStopped {
 			message["dshFailed"] = true
 			if turn.DSHStopObserved {
 				message["dshStopAccountingPending"] = true
@@ -1729,7 +1793,7 @@ func (session acpSession) responseMessage(index int, calls map[string]any) map[s
 			message["dshStep"] = turn.DSHStep
 		}
 	}
-	if turn.Interrupted && turn.DSHCancelConfirmed && (!turn.Failed || turn.DSHReconciled) {
+	if turn.DSHUserStopped || turn.Interrupted && turn.DSHCancelConfirmed && (!turn.Failed || turn.DSHReconciled) {
 		message["interrupted"] = true
 	}
 	if !turn.Ended.IsZero() {
@@ -1751,21 +1815,26 @@ func (session acpSession) historyWindow(query historyQuery, auth *relayAuthoriza
 		if turn.DSHMemberID != "" {
 			continue
 		}
-		userPosition := position
-		position++
-		if turn.hasHistoryResponse() {
-			position++
-		}
-		if position <= start || userPosition >= end {
-			continue
-		}
-		if userPosition >= start {
+		if position >= start && position < end {
 			messages = append(messages, session.promptMessage(index, auth))
 		}
-		if !turn.hasHistoryResponse() || userPosition+1 >= end {
-			continue
+		position++
+		for _, steer := range turn.DSHSteers {
+			if position >= start && position < end {
+				messages = append(messages, map[string]any{
+					"id": steer.ID, "role": "user", "at": steer.At,
+					"parts":  []map[string]string{{"type": "text", "text": steer.Text}},
+					"origin": map[string]string{"type": "steer", "state": "applied"},
+				})
+			}
+			position++
 		}
-		messages = append(messages, session.responseMessage(index, calls))
+		if turn.hasHistoryResponse() {
+			if position >= start && position < end {
+				messages = append(messages, session.responseMessage(index, calls))
+			}
+			position++
+		}
 	}
 	model := session.Model
 	if model == "" {

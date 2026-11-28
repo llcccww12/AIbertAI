@@ -21,7 +21,8 @@ import (
 // The installer supplies the fixed SDK profile and persistence location; the
 // router supplies the authorized model route. Neither is enabled by default.
 type dshRuntimeConfig struct {
-	VerifiedResourceRoot string
+	ContinueAfterFailedTurn bool
+	VerifiedResourceRoot    string
 	// JournalRoot holds each session's model-call journal (<root>/<session>/pending.json).
 	JournalRoot            string
 	SharedPluginHome       string
@@ -67,14 +68,47 @@ type dshTrustedLaunchKey struct{}
 // files:write) stay read-only and escalate through the host.
 func dshSessionPermissionMode(ctx context.Context, session acpSession) string {
 	if trusted, _ := ctx.Value(dshTrustedLaunchKey{}).(bool); trusted {
-		switch session.permissionMode() {
-		case modeWorkspaceWrite:
-			return "workspace-write"
-		case modeFullAccess:
-			return "danger-full-access"
-		}
+		return dshPermissionPreset(session.permissionMode())
 	}
 	return "read-only"
+}
+
+// dshPermissionPreset names the DSH preset a conversation level maps to. The
+// /permission command takes these names.
+func dshPermissionPreset(mode string) string {
+	switch mode {
+	case modeWorkspaceWrite:
+		return "workspace-write"
+	case modeFullAccess:
+		return "danger-full-access"
+	}
+	return "read-only"
+}
+
+// dshApplyPermissionMode switches a live SDK session to one of DSH's presets.
+// The SDK has no dedicated RPC: its /permission command appends the preset and
+// the sandbox/approval events it bundles, so the session log stays the truth.
+func dshApplyPermissionMode(ctx context.Context, p *dshProcess, sessionID, preset string) error {
+	receipt, err := p.call(ctx, "session/query", map[string]any{
+		"sessionId":     sessionID,
+		"contentBlocks": []map[string]string{{"type": "text", "text": "/permission " + preset}},
+	}, nil)
+	if err != nil {
+		return err
+	}
+	var command struct {
+		Kind      string `json:"kind"`
+		Execution struct {
+			CommandID string `json:"commandId"`
+		} `json:"execution"`
+	}
+	if json.Unmarshal(receipt, &command) != nil || command.Kind != "command" || command.Execution.CommandID == "" {
+		return errors.New("dsh_permission_switch_unavailable")
+	}
+	_, err = p.call(ctx, "aibertai/query-wait", map[string]string{
+		"sessionId": sessionID, "commandId": command.Execution.CommandID,
+	}, nil)
+	return err
 }
 
 func (r dshInstalledRuntime) config() (*dshRuntimeConfig, error) {
@@ -356,7 +390,13 @@ func (p *dshProcess) call(ctx context.Context, method string, params any, event 
 			return nil, stopErr
 		}
 		if f.Error != nil {
-			return nil, fmt.Errorf("dsh rpc %s: %d: %s", method, f.Error.Code, f.Error.Message)
+			err := fmt.Errorf("dsh rpc %s: %d: %s", method, f.Error.Code, f.Error.Message)
+			if method == "session/resume" && f.Error.Code == -32603 {
+				if p, ok := params.(map[string]string); ok && f.Error.Message == fmt.Sprintf("session %q not found", p["sessionId"]) {
+					err = fmt.Errorf("%w: %v", errDSHSessionNotFound, err)
+				}
+			}
+			return nil, err
 		}
 		return f.Result, nil
 	}
@@ -653,20 +693,23 @@ type dshEvent struct {
 	} `json:"event"`
 }
 
-// dshSDKOptions lets the goal driver observe ordered SDK facts and use the
-// command-aware query path. Budget enforcement remains at the gateway boundary.
+var errDSHSessionNotFound = errors.New("dsh_session_not_found")
+
+// dshSDKOptions controls SDK turn admission, observation and recovery.
 type dshSDKOptions struct {
-	Query          bool
-	OperationID    string
-	SkipOperation  bool
-	LeaseControl   bool
-	Observe        func(string, json.RawMessage) error
-	OnCommand      func(string) error
-	VerifyCommand  func(context.Context, string, string, dshConnectorHistoryFetch) error
-	InspectSession func(context.Context, *dshProcess) error
-	AfterReconcile func(context.Context, *dshProcess) error
-	CheckStopped   func(context.Context, *dshProcess, *dshLocalGateway) error
-	CheckCancelled func(context.Context, *dshProcess, *dshLocalGateway, *dshLocalRecord, int64) error
+	AllowPreviousFailure bool
+	AllowMissingSession  bool
+	Query                bool
+	OperationID          string
+	SkipOperation        bool
+	LeaseControl         bool
+	Observe              func(string, json.RawMessage) error
+	OnCommand            func(string) error
+	VerifyCommand        func(context.Context, string, string, dshConnectorHistoryFetch) error
+	InspectSession       func(context.Context, *dshProcess) error
+	AfterReconcile       func(context.Context, *dshProcess) error
+	CheckStopped         func(context.Context, *dshProcess, *dshLocalGateway) error
+	CheckCancelled       func(context.Context, *dshProcess, *dshLocalGateway, *dshLocalRecord, int64) error
 }
 type dshSDKOptionsKey struct{}
 
@@ -1055,15 +1098,28 @@ func runDSHSessionWithProfile(ctx context.Context, cfg *dshRuntimeConfig, sessio
 	boundary.proof = func(ctx context.Context, params map[string]any) (json.RawMessage, error) {
 		return p.boundaryCall(ctx, "aibertai/workspace-proof", params)
 	}
+	createdAfterMissing := false
 	if resume && fresh {
 		if _, err = p.call(ctx, "session/resume", map[string]string{"sessionId": session.DSHSessionID}, nil); err != nil {
-			return err
+			if !opts.AllowMissingSession || !errors.Is(err, errDSHSessionNotFound) {
+				return err
+			}
+			// The SDK creates this same session ID on its first prompt. Do not
+			// replay earlier prompts or reconcile a missing session.
+			resume, createdAfterMissing = false, true
 		}
 	}
 	if opts.InspectSession != nil {
 		// Inspect the restored SDK root under its per-session gate, without
 		// binding a turn, reconciling accounting, or sending model input.
 		return opts.InspectSession(ctx, p)
+	}
+	if session.DSHPendingMode != "" && !createdAfterMissing {
+		// A restored SDK session keeps the preset it pinned when it opened.
+		if err := dshApplyPermissionMode(ctx, p, session.DSHSessionID, session.DSHPendingMode); err != nil {
+			return err
+		}
+		turn.dshModeApplied = session.DSHPendingMode
 	}
 	p.approval = func(raw json.RawMessage) (string, error) {
 		outcome := "rejected"
@@ -1098,6 +1154,11 @@ func runDSHSessionWithProfile(ctx context.Context, cfg *dshRuntimeConfig, sessio
 			}
 			if opts.CheckStopped != nil {
 				return opts.CheckStopped(ctx, p, local)
+			}
+		}
+		if opts.AllowPreviousFailure {
+			if err := local.archivePreviousFailure(session, operationID); err != nil {
+				return err
 			}
 		}
 		local.mu.Lock()
@@ -1494,6 +1555,16 @@ func runDSHSessionWithProfile(ctx context.Context, cfg *dshRuntimeConfig, sessio
 			}
 		}
 		switch e.Event.Type {
+		case "plan/mode":
+			var frame struct {
+				Event struct{ Data struct{ Active *bool } }
+			}
+			if json.Unmarshal(raw, &frame) == nil && frame.Event.Data.Active != nil {
+				turn.DSHPlanActive = frame.Event.Data.Active
+				if project != nil {
+					return project(nil)
+				}
+			}
 		case "aibertai/compaction-usage":
 			var frame struct {
 				Event struct {
@@ -1625,6 +1696,12 @@ func runDSHSessionWithProfile(ctx context.Context, cfg *dshRuntimeConfig, sessio
 				return project(map[string]any{"sessionUpdate": "agent_message_reset", "streamAttemptId": streamID})
 			}
 		case "user/message", "developer/message":
+			if message, ok := readDSHSteeredMessage(raw, operationID); ok && !slices.ContainsFunc(turn.DSHSteers, func(previous dshSteerMessage) bool { return previous.ID == message.ID }) {
+				turn.DSHSteers = append(slices.Clip(turn.DSHSteers), message)
+				if project != nil {
+					return project(nil)
+				}
+			}
 			if entry, ok := readDSHContextInjection(raw); ok {
 				entry.AfterTools = len(turn.ToolRuns)
 				if turn.addContextInjection(entry) && project != nil {
@@ -1884,6 +1961,7 @@ func runDSHSessionWithProfile(ctx context.Context, cfg *dshRuntimeConfig, sessio
 		turn.dshImageAdmission = dshImageOutcomeUnknown
 	}
 	p.cancelSession = session.DSHSessionID
+	turn.dshPromptDispatched = true
 	receipt, err := p.call(ctx, method, params, event)
 	if err != nil {
 		if _, ok := ctx.Value(dshImageInputKey{}).(dshImageInput); ok && strings.Contains(err.Error(), "Unsupported or malformed image data.") {
@@ -1968,6 +2046,16 @@ func runDSHSessionWithProfile(ctx context.Context, cfg *dshRuntimeConfig, sessio
 			}
 		}
 		reason = completion.FinishReason
+		if reason == "completed" && turn.DSHPlanActive == nil {
+			switch strings.TrimSpace(turn.Prompt) {
+			case "/plan":
+				active := true
+				turn.DSHPlanActive = &active
+			case "/plan off":
+				active := false
+				turn.DSHPlanActive = &active
+			}
+		}
 		if completion.FinalResponse != "" {
 			answer = completion.FinalResponse
 			turn.Answer = answer

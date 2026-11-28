@@ -219,7 +219,7 @@ func (h *relaySessionHost) desktopResource(ctx context.Context, method string, r
 		op.Path = "/api/v1/skills/tags"
 	case "_monkeyai/resources/get", "_monkeyai/resources/save", "_monkeyai/resources/delete":
 		switch p.Kind {
-		case "expert", "connector", "rule":
+		case "expert", "connector", "rule", "skill":
 			op.Path = "/api/v1/" + p.Kind + "s"
 		default:
 			return nil, errors.New("resource_operation_unavailable")
@@ -318,15 +318,12 @@ func (h *relaySessionHost) setDesktopSessionModel(ctx context.Context, method st
 	if !ok {
 		return nil, errors.New("session_not_found")
 	}
-	if row.State == "running" || len(row.Turns) > 0 && !row.Turns[len(row.Turns)-1].Acked {
+	asyncReports := l.usesAsyncTurnReports(row)
+	if row.State == "running" || !asyncReports && len(row.Turns) > 0 && !row.Turns[len(row.Turns)-1].Acked {
 		return nil, errors.New("session_unavailable_for_model_change")
 	}
-	if changeModel && row.Engine == "dsh" && row.Model != p.Model && len(row.Turns) > 0 {
-		// Only an unsettled model invocation is bound to the old route's journal.
-		// Any other failure, including quota or access errors, may switch models.
-		if l.dshModelCallPending(row.ID) {
-			return nil, errors.New("dsh_reconciliation_required")
-		}
+	if changeModel && !asyncReports && row.Engine == "dsh" && row.Model != p.Model && len(row.Turns) > 0 && l.dshModelCallPending(row.ID) {
+		return nil, errors.New("dsh_reconciliation_required")
 	}
 	if changeModel {
 		row.Model = p.Model

@@ -107,7 +107,7 @@ func (c *client) relayHandshake(ctx context.Context, auth authorization, user ac
 	})
 	if err != nil {
 		if resp != nil {
-			return nil, ready, fmt.Errorf("设备证明连接失败，HTTP %d", resp.StatusCode)
+			return nil, ready, fmt.Errorf("设备证明连接失败: %w", &backendHTTPError{Method: http.MethodGet, Path: "/api/v1/endpoint-bridge", Status: resp.StatusCode})
 		}
 		return nil, ready, fmt.Errorf("设备证明连接失败: %w", err)
 	}

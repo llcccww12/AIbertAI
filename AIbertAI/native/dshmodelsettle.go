@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // dshStuckModelOnlyTurn reports a failed turn that ran no tools and is blocked
@@ -102,7 +103,9 @@ func (h *relaySessionHost) settleStuckDSHModelTurn(ctx context.Context, id strin
 		}
 		return nil
 	}
-	if err := reconcileDSHSession(context.WithValue(ctx, dshSDKOptionsKey{}, dshSDKOptions{CheckStopped: check}), live.dsh, detached); err != nil {
+	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := reconcileDSHSession(context.WithValue(checkCtx, dshSDKOptionsKey{}, dshSDKOptions{CheckStopped: check}), live.dsh, detached); err != nil {
 		return err
 	}
 	live.mu.Lock()

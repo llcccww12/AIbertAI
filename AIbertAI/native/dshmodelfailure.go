@@ -360,6 +360,35 @@ func (g *dshLocalGateway) abandonFailed(call string) error {
 	return g.archivePendingLocked(call)
 }
 
+// archivePreviousFailure runs under the SDK lease before a fresh interactive
+// prompt. The old invocation stays in the journal under its original ID, so
+// neither the SDK nor the new turn can submit that invocation again.
+func (g *dshLocalGateway) archivePreviousFailure(session acpSession, operation string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	record := g.pending
+	if record == nil || !validUUID(operation) || record.OperationID == operation || g.serving != nil ||
+		len(session.Turns) < 2 || session.Turns[len(session.Turns)-1].Operation != operation {
+		return nil
+	}
+	for _, turn := range session.Turns[:len(session.Turns)-1] {
+		if turn.Operation != record.OperationID || turn.Ended.IsZero() || !turn.Failed && !turn.Interrupted ||
+			turn.GoalCheckpoint != nil || turn.DSHGoalID != "" {
+			continue
+		}
+		if record.State != "rejected" {
+			archived := *record
+			archived.State, archived.Unverified, archived.FailureCode = "rejected", true, "dsh_model_unsettled"
+			if err := g.writePending(&archived); err != nil {
+				return err
+			}
+			*record = archived
+		}
+		return g.archivePendingLocked(record.CallID)
+	}
+	return nil
+}
+
 // dshModelUnsettledRelease bounds how long an unprovable model call may block
 // the session. The archived record stays on disk for later repair; the turn is
 // charged nothing, which is visible to the employee as an unknown result.
@@ -506,4 +535,39 @@ func (h *relaySessionHost) recoverModelFailure(ctx context.Context, session acpS
 
 func dshFinalAccountStatus(s string) bool {
 	return s == "released" || s == "settled" || s == "rejected"
+}
+
+// archivePreviousModelRoute runs while the SDK lease slot is held, after the
+// previous route's child and gateway have been stopped. No network receipt
+// is necessary to retain a finalized failed invocation under its original ID.
+func archivePreviousModelRoute(ctx context.Context, journal string, session acpSession) error {
+	opts, _ := ctx.Value(dshSDKOptionsKey{}).(dshSDKOptions)
+	if !opts.AllowPreviousFailure || len(session.Turns) < 2 {
+		return nil
+	}
+	data, err := os.ReadFile(filepath.Join(journal, "pending.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var pending dshLocalRecord
+	if json.Unmarshal(data, &pending) != nil {
+		return errors.New("invalid_dsh_gateway_journal")
+	}
+	if pending.ModelID == session.Model {
+		return nil
+	}
+	old, err := newDSHLocalGateway(nil, session.ID, selectedModelConfig{ID: pending.ModelID, Protocol: pending.Protocol}, journal)
+	if err != nil {
+		return err
+	}
+	if err := old.archivePreviousFailure(session, session.Turns[len(session.Turns)-1].Operation); err != nil {
+		return err
+	}
+	if old.pending != nil {
+		return errors.New("dsh_reconciliation_required")
+	}
+	return nil
 }

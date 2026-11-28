@@ -2504,6 +2504,17 @@ export const enUS = {
       retry: "Reload",
     },
     otherSettings: {
+      sessionReporting: {
+        title: "Session reporting settings",
+        mode: "Data to collect",
+        off: "Disable session reporting",
+        stats: "Statistics only",
+        full: "Statistics and user message text",
+        save: "Save",
+        saved: "Session reporting settings saved",
+        description: "When message text is enabled, newly reported user messages appear in Message History. Text that was never stored cannot be recovered.",
+        missingText: "Some message text was not collected. You can change what is collected for future messages.",
+      },
       about: "About",
       mcpNetwork: {
         title: "MCP network access",

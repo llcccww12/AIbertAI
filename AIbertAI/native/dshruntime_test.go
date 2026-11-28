@@ -69,6 +69,10 @@ func TestDSHMockProcess(t *testing.T) {
 			_, _ = fmt.Fprintln(f, "prompt")
 			_ = f.Close()
 		}
+		if req.Method == "session/query" && os.Getenv("DSH_MOCK_PERMISSION") == "1" {
+			_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": map[string]any{"kind": "command", "execution": map[string]any{"commandId": "permission-1"}}})
+			continue
+		}
 		if req.Method == "session/query" && os.Getenv("DSH_MOCK_QUERY") == "1" {
 			_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "method": "session.event", "params": map[string]any{"sessionId": req.Params.SessionID, "event": map[string]any{"type": "goal/change", "seq": 7, "data": map[string]any{"operation": "create"}}}})
 			_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "method": "session.event", "params": map[string]any{"sessionId": req.Params.SessionID, "event": map[string]any{"type": "future/unknown", "seq": 8, "data": map[string]any{"value": "preserved"}}}})
@@ -113,6 +117,10 @@ func TestDSHMockProcess(t *testing.T) {
 		result := map[string]any{}
 		if req.Method == "session/prompt" {
 			result["messageId"] = "queued"
+		}
+		if req.Method == "session/resume" && os.Getenv("DSH_MOCK_RESUME_MISSING") == "1" {
+			_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "error": map[string]any{"code": -32603, "message": fmt.Sprintf("session %q not found", req.Params.SessionID)}})
+			continue
 		}
 		if req.Method == "session/resume" && req.Params.SessionID == "missing" {
 			_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "error": map[string]any{"code": -1, "message": "missing"}})
@@ -170,6 +178,28 @@ func TestDSHDurableMessageWithoutDeltas(t *testing.T) {
 		if update["sessionUpdate"] != "agent_message_settled" || update["streamAttemptId"] != "" || meta["dshMessageSeq"] != int64(i+10) {
 			t.Fatalf("missing SDK message identity: %v", update)
 		}
+	}
+}
+
+// A level picked after the first message reaches the SDK session through its
+// own /permission command before the turn's input.
+func TestDSHPendingPermissionModeSwitchesBeforeTurn(t *testing.T) {
+	cfg := mockDSH()
+	base := cfg.Command
+	cfg.Command = func(ctx context.Context, s acpSession) (*exec.Cmd, error) {
+		cmd, err := base(ctx, s)
+		if err == nil {
+			cmd.Env = append(cmd.Env, "DSH_MOCK_PERMISSION=1")
+		}
+		return cmd, err
+	}
+	turn := acpTurn{Prompt: "hello"}
+	err := runDSHTurn(t.Context(), cfg, acpSession{DSHSessionID: "session", DSHPendingMode: "danger-full-access"}, &turn, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if turn.dshModeApplied != "danger-full-access" {
+		t.Fatalf("applied preset %q", turn.dshModeApplied)
 	}
 }
 
@@ -489,5 +519,36 @@ func TestDSHReasoningHistorySurroundsTool(t *testing.T) {
 	parts := row.responseMessage(0, map[string]any{})["parts"].([]map[string]string)
 	if len(parts) != 5 || parts[0]["text"] != "检查文件" || parts[1]["text"] != "先读取" || parts[2]["type"] != "tool_call" || parts[3]["text"] != "最后核对" || parts[4]["text"] != "完成" {
 		t.Fatalf("wrong history order: %#v", parts)
+	}
+}
+
+func TestDSHInteractiveRecoversMissingSessionAfterFailedFirstTurn(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		prior acpTurn
+		ok    bool
+	}{
+		{"legacy failure before first SDK prompt", acpTurn{Failed: true, Acked: true, FailureCode: "session_turn_failed"}, true},
+		{"runtime exited before storing the first SDK session", acpTurn{Failed: true, Acked: true, FailureCode: "dsh_runtime_exited"}, true},
+		{"existing assistant history", acpTurn{Failed: true, Acked: true, FailureCode: "session_turn_failed", Answer: "partial"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := mockDSH()
+			command := cfg.Command
+			cfg.Command = func(ctx context.Context, session acpSession) (*exec.Cmd, error) {
+				cmd, err := command(ctx, session)
+				cmd.Env = append(cmd.Env, "DSH_MOCK_RESUME_MISSING=1")
+				return cmd, err
+			}
+			turn := acpTurn{Operation: "next", Prompt: "new prompt"}
+			session := acpSession{DSHSessionID: "session", Turns: []acpTurn{tc.prior, turn}}
+			err := runDSHInteractiveTurn(t.Context(), cfg, session, &turn, true, nil)
+			if tc.ok && (err != nil || turn.Answer != "final") {
+				t.Fatalf("original session did not accept the next prompt: %q, %v", turn.Answer, err)
+			}
+			if !tc.ok && (!errors.Is(err, errDSHSessionNotFound) || turn.Answer != "") {
+				t.Fatalf("unexpected recreation of a session with assistant history: %q, %v", turn.Answer, err)
+			}
+		})
 	}
 }

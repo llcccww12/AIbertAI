@@ -35574,7 +35574,9 @@ function ni(e, t) {
         : "imageProcessing." + n.reason,
     );
   const r = wn(e),
-    dshKey = dshErrorKey(r),
+    dshKey = r === "source_grant_rejected" || r === "source_auth_unavailable"
+      ? "errors.codes." + r
+      : dshErrorKey(r),
     s = r.match(/^技能 "([a-zA-Z0-9][a-zA-Z0-9_-]{0,63})" 预检失败: (.+)$/s);
   if (dshKey) return t(dshKey);
   if (s) {
@@ -36301,6 +36303,7 @@ const Ma = new HYe((e) => et.getRuntimeEndpoint(e));
 let Tve = !1;
 let employeeTeamCapability = false;
 let employeeStandardPreset = false;
+let employeeRuntimeOffline = false;
 const WYe = () => Tve,
   xH = new Set();
 function OG(e) {
@@ -36604,6 +36607,7 @@ function Qn() {
         directSessionCancel.set(d, s.endpoint);
       }
       return (
+        (employeeRuntimeOffline = u.agentCapabilities?._meta?.offline === true),
         (Tve = u.agentCapabilities?._meta?.goalMode?.version === 1),
         (employeeStandardPreset = s.endpoint?.target?.transport !== "relay" && u.agentCapabilities?._meta?.standardPreset === 1),
         (employeeTeamCapability = s.endpoint?.target?.transport !== "relay" && u.agentCapabilities?._meta?.agentTeam === 1),
@@ -37643,6 +37647,7 @@ function Pve(e, t) {
     ...(Object.hasOwn(n, "goal") ? { goal: SG(e.goal, n.goal ?? null) } : {}),
     ...(typeof n.agentTeamEnabled === "boolean" ? { agentTeamEnabled: n.agentTeamEnabled } : {}),
     ...(n.dshJobsAvailable === true ? {dshJobsAvailable: true} : {}),
+    ...(typeof n.dshPlanActive === "boolean" ? { dshPlanActive: n.dshPlanActive } : {}),
     ...(n.status ? { dshStopAccountingPending: n.dshStopAccountingPending === true } : {}),
     ...(typeof n.agentTeamAvailable === "boolean" ? { agentTeamAvailable: n.agentTeamAvailable } : {}),
     ...(n.goalModeAvailable !== void 0
@@ -37822,6 +37827,7 @@ function AZe(e, t, n, r) {
     goalModeAvailable: s.goalModeAvailable,
     agentTeamEnabled: s.agentTeamEnabled ?? e.agentTeamEnabled,
     dshJobsAvailable: s.dshJobsAvailable ?? e.dshJobsAvailable,
+    dshPlanActive: s.dshPlanActive ?? e.dshPlanActive,
     dshStopAccountingPending: s.dshStopAccountingPending === true,
     agentTeamAvailable: s.agentTeamAvailable ?? e.agentTeamAvailable,
     status: s.status,
@@ -49469,17 +49475,17 @@ function Mwe(e, t, n, r) {
 function Oet(e) {
   return async (t, n, r = [], s = [], i) => {
     const o = e.epoch(),
-      a = e.view(t);
-    if (
-      ((a?.newerCursor !== null || a?.loading) && (await e.latest(t)),
-      !e.current(o))
-    )
-      throw new Error("Account changed");
+      a = e.view(t),
+      u = ts()?.transport === "relay";
+    if (a?.newerCursor !== null || a?.loading) {
+      if (u) await e.latest(t);
+      else void e.latest(t).catch(() => {});
+    }
+    if (!e.current(o)) throw new Error("Account changed");
     const c = e.view(t);
     if (!c) throw new Error("Session not found");
-    const u = ts()?.transport === "relay";
     if (u && !A2() && Zb(c)) throw new Error(Se.remoteHostUnsupported);
-    if (c.historyError) throw new Error(c.historyError);
+    if (u && c.historyError) throw new Error(c.historyError);
     const d = i ?? crypto.randomUUID(),
       f = c.status === "running",
       h = {
@@ -52284,6 +52290,7 @@ const zO = 20,
           $m.onReset(),
           e((G) => ({
             ready: !1,
+            offline: !1,
             connectError: null,
             attention: Object.fromEntries(
               Object.entries(G.attention).filter(
@@ -52483,6 +52490,7 @@ const zO = 20,
       };
     return {
       ready: !1,
+      offline: !1,
       connectError: null,
       reconnectAt: null,
       sessions: [],
@@ -52510,7 +52518,7 @@ const zO = 20,
           const Z = await Qn();
           if (!p.current(G)) return;
           (p.established(),
-            e({ ready: !0, connectError: null, reconnectAt: null }),
+            e({ ready: !0, offline: employeeRuntimeOffline, connectError: null, reconnectAt: null }),
             Gie((J, Q) => {
               Z.request("_monkeyai/draft/set", { target: J, draft: Q }).catch(
                 () => {},
@@ -52604,11 +52612,12 @@ const zO = 20,
           null,
         );
         const J = t().views[P];
-        if ([Se.dshConnectorReconciliationRequired, Se.dshReconciliationRequired, Se.dshModelOutcomeUnknown, Se.dshModelResponseInterrupted, Se.dshCanvasOutcomeUnknown].includes(J?.error) && et.kind === "electron" && ts()?.transport !== "relay" && !J.configuring) {
+        if ([Se.dshConnectorReconciliationRequired, Se.dshCanvasOutcomeUnknown].includes(J?.error) && et.kind === "electron" && ts()?.transport !== "relay" && !J.configuring) {
           const epoch = p.epoch(),
             _cv = J?.error === Se.dshCanvasOutcomeUnknown;
           try {
-            const result = await L(P, _cv ? "_aibertai/session/reconcile-canvas" : "_aibertai/session/reconcile-workspace", { sessionId: P });
+            const method = _cv ? "_aibertai/session/reconcile-canvas" : "_aibertai/session/reconcile-workspace";
+            const result = await L(P, method, { sessionId: P });
             if (!p.current(epoch)) return;
             if (result?.reconciled) await z(P, "refresh", null);
           } catch (error) {
@@ -110144,6 +110153,7 @@ function lwt({ children: e }) {
         l.jsx(Zlt, {}),
         l.jsx(Hvt, {}),
         l.jsx(rwt, {}),
+        !bootSplashSecondary && l.jsx(AccountSessionExpiredBanner, {}),
         l.jsx(Qnt, {
           theme: t ? "dark" : "light",
           position: "top-center",
@@ -114237,7 +114247,8 @@ const qwt = {
       signIn: "登录状态",
       signInActive: "正常",
       signInExpired: "已过期，请重新登录",
-      signInHint: "退出账号后重新登录即可恢复",
+      signInHint: "请在工作台点击「重新登录」。",
+      signInChecking: "等待运行时验证",
       signInSignedOut: "未登录",
       lastFailure: "最近一次失败",
       noFailure: "无",
@@ -114729,13 +114740,13 @@ const qwt = {
         dsh_model_rate_limited: "模型请求达到频率限制。稍后在本会话发送消息即可继续。",
         dsh_model_service_unavailable: "模型服务暂时不可用。稍后或更换模型后，在本会话发送消息即可继续。",
         dsh_model_request_rejected: "模型拒绝了这次请求。调整输入或更换模型后，在本会话发送消息即可继续。",
-        dsh_model_stream_ended: "模型输出中断，已收到的内容已保留。用量已核验，在本会话发送“继续”即可接着处理。",
+        dsh_model_stream_ended: "模型输出中断，已收到的内容已保留。在本会话发送“继续”即可接着处理。",
         dsh_model_output_limit: "回答被截断，已有输出保留在对话中。发送“继续”可让模型接着输出。",
         dsh_model_output_limit_title: "已达到输出 token 上限",
         dsh_model_content_refused: "模型的内容过滤器结束了本次输出。调整请求后，可以在本会话继续。",
-        dsh_model_outcome_unknown: "网关已结束连接，已收到的内容和工具结果已保留。发送消息即可继续；如提示仍待核验，点「重新核验」查询回执。",
-        dsh_model_response_interrupted: "模型输出中途断开，已收到的内容已保留。发送“继续”即可接着处理；如提示仍待核验，点「重新核验」查询回执。",
-        dsh_reconciliation_required: "上一次模型调用的结果还在等待网关回执，暂时不能发送新消息。点「重新核验」查询结果后即可继续。",
+        dsh_model_outcome_unknown: "模型连接已中断，已收到的内容和工具结果已保留。你可以在这个会话继续发送消息。",
+        dsh_model_response_interrupted: "模型输出中途断开，已收到的内容已保留。你可以在这个会话继续发送消息。",
+        dsh_reconciliation_required: "本轮提前结束，可以在原会话继续发消息。",
         model_vision_unavailable: "当前模型不支持图片输入，请切换支持图片的模型后重试。",
         attachment_image_invalid: "图片格式不受支持或文件已损坏，请检查附件后重试。",
         attachment_unavailable_or_too_large: "附件无法读取或会话内容过大，请检查文件、减少附件或新建会话后重试。",
@@ -114747,7 +114758,12 @@ const qwt = {
         dsh_compaction_usage_invalid: "上下文压缩的用量未能核验，会话已暂停，请先检查结果。",
         dsh_compaction_entry_unavailable: "上下文压缩入口正在接入，当前没有执行压缩。",
         tool_approval_unavailable: "未收到工具审批。请确认此会话仍已连接，再重新发起。",
-        session_turn_failed: "本轮执行未完成，请查看执行过程。",
+        session_turn_failed: "本轮执行未完成。你可以在这个会话继续发送消息。",
+        session_report_pending: "上一轮已结束，记录将在后台补传。",
+        dsh_runtime_exited: "本轮执行时引擎连接中断。连接恢复后，可以在这个会话继续发送消息。",
+        dsh_session_not_found: "引擎无法恢复这个会话的执行状态。你可以新建会话继续，历史消息可在这里查看。",
+        source_grant_rejected: "登录已过期，请重新登录后再发送。",
+        source_auth_unavailable: "暂时无法验证登录状态，请检查网络后重试。",
         operations_unavailable: "当前设备的操作恢复暂不可用。",
         operations_busy: "正在处理的操作过多，请稍后再试。",
         unsupported_operation: "该操作不支持恢复。",
@@ -115464,7 +115480,7 @@ const qwt = {
       },
       cancel: "停止",
       stopping: "正在停止…",
-      stopAccountingPending: "本轮执行已停止，模型调用的用量回执待核验。重新打开会话会再次检查。",
+      stopAccountingPending: "已停止，可以继续发消息。",
       stopUnconfirmed: "运行时尚未确认停止，请查看当前会话状态后重试。",
       attach: "附件",
       plan: "计划",
@@ -115487,7 +115503,14 @@ const qwt = {
       output: "输出",
       input: "参数",
       connectError: "无法连接运行时",
-      reconnecting: "运行时已断开，正在重新连接…",
+      reconnecting: "连接已断开，正在重连。草稿已保留。",
+      offlineHistory: "平台连接暂时不可用。可以查看本机历史、编辑草稿，恢复连接后即可发送。",
+      onlineAgain: "连接已恢复，可以发送消息。",
+      draftOffline: "可编辑草稿 · 恢复连接后发送",
+      planLabel: "计划",
+      planMode: "计划模式",
+      enterPlanMode: "进入计划模式",
+      exitPlanMode: "退出计划模式",
       remoteDisconnectedHint:
         "远端任务可能仍在运行；当前显示上次状态，重连后更新。",
       reconnectIn: "{{seconds}} 秒后自动重试",
@@ -117333,7 +117356,8 @@ Start with the conclusion, then explain the reasoning.`,
       signIn: "Sign-in state",
       signInActive: "Active",
       signInExpired: "Expired — sign in again",
-      signInHint: "Sign out and sign in to recover",
+      signInHint: "Select Sign in again in the workbench.",
+      signInChecking: "Waiting for the runtime to verify",
       signInSignedOut: "Not signed in",
       lastFailure: "Last failure",
       noFailure: "None",
@@ -117902,14 +117926,14 @@ Start with the conclusion, then explain the reasoning.`,
         dsh_model_rate_limited: "The model rate limit was reached. Send a message in this chat after a short wait to continue.",
         dsh_model_service_unavailable: "The model service is temporarily unavailable. Try again later or choose another model to continue in this chat.",
         dsh_model_request_rejected: "The model rejected this request. Adjust the input or choose another model, then send a message in this chat.",
-        dsh_model_stream_ended: "The model stream ended early. The partial response is saved and usage has been verified. Send “continue” in this chat to pick up from there.",
+        dsh_model_stream_ended: "The model stream ended early. The partial response is saved. Send “continue” in this chat to pick up from there.",
         dsh_model_output_limit: "The reply was cut off; earlier output is preserved in the conversation. Send “continue” to let the model resume.",
         dsh_model_output_limit_title: "Output token limit reached",
         dsh_model_content_refused: "The model’s content filter ended this response. Adjust the request to continue in this chat.",
-        dsh_model_outcome_unknown: "The gateway connection ended. Received content and tool results are saved. Send a message to continue; if it still needs verification, use Recheck.",
-        dsh_model_response_interrupted: "The model stream was interrupted. Received content is saved. Send “continue” to resume; if it still needs verification, use Recheck.",
+        dsh_model_outcome_unknown: "The model connection ended. Received content and tool results are saved. You can send another message in this chat.",
+        dsh_model_response_interrupted: "The model stream was interrupted. Received content is saved. You can send another message in this chat.",
         dsh_reconciliation_required:
-          "The previous model call is still waiting for its gateway receipt, so a new message cannot be sent yet. Use Recheck to look it up, then continue.",
+          "This turn ended early. You can send another message in this chat.",
         model_vision_unavailable: "The current model does not support image input. Choose a vision-capable model and try again.",
         attachment_image_invalid: "The image format is unsupported or the file is damaged. Check the attachment and try again.",
         attachment_unavailable_or_too_large: "The attachment cannot be read or the session is too large. Check the file, reduce attachments, or start a new session.",
@@ -117922,7 +117946,12 @@ Start with the conclusion, then explain the reasoning.`,
         dsh_compaction_entry_unavailable:
           "DSH context compaction is not yet available from this control; no compaction was performed.",
         tool_approval_unavailable: "Tool approval was unavailable. Check your connection to this session and try again.",
-        session_turn_failed: "This turn did not complete. Check the execution details.",
+        session_turn_failed: "This turn did not complete. You can send another message in this chat.",
+        session_report_pending: "The previous turn ended. Its record will sync in the background.",
+        dsh_runtime_exited: "The engine disconnected during this turn. You can continue in this chat after it reconnects.",
+        dsh_session_not_found: "The engine could not restore this chat. Start a new chat to continue. Your messages are available here.",
+        source_grant_rejected: "Your session expired. Sign in again before sending a message.",
+        source_auth_unavailable: "Could not verify your sign-in. Check your connection and try again.",
         operations_unavailable:
           "Operation recovery is temporarily unavailable on this device.",
         operations_busy:
@@ -118729,7 +118758,7 @@ Start with the conclusion, then explain the reasoning.`,
       },
       cancel: "Stop",
       stopping: "Stopping…",
-      stopAccountingPending: "Execution has stopped. The model usage receipt is pending. Reopen this chat to check again.",
+      stopAccountingPending: "Stopped. You can continue sending messages.",
       stopUnconfirmed: "The runtime has not confirmed the stop. Check the session status and try again.",
       attach: "Attach",
       plan: "Plan",
@@ -118752,7 +118781,14 @@ Start with the conclusion, then explain the reasoning.`,
       output: "Output",
       input: "Input",
       connectError: "Cannot connect to the runtime",
-      reconnecting: "Runtime disconnected, reconnecting…",
+      reconnecting: "Connection lost. Reconnecting… Your draft is kept.",
+      offlineHistory: "The platform is unavailable. You can read local history and edit drafts, then send when the connection returns.",
+      onlineAgain: "Connection restored. You can send messages.",
+      draftOffline: "Edit your draft · Send after reconnecting",
+      planLabel: "Plan",
+      planMode: "Plan mode",
+      enterPlanMode: "Enter plan mode",
+      exitPlanMode: "Exit plan mode",
       remoteDisconnectedHint:
         "Remote tasks may still be running. Showing the last known state until reconnection.",
       reconnectIn: "Retrying automatically in {{seconds}}s",
@@ -131083,6 +131119,10 @@ function mL() {
     error: r,
     authorizeUrl: i,
     signIn: y.useCallback((u) => c((d) => ir.getState().login(u, d)), [c]),
+    reauthenticate: y.useCallback(() => c(async (d) => {
+      await et.reauthenticate(d);
+      await ir.getState().hydrate();
+    }), [c]),
     switchTo: y.useCallback(
       (u) => c((d) => ir.getState().switchAccount(u, d)),
       [c],
@@ -131094,6 +131134,57 @@ function mL() {
         ir.getState().cancelLogin(a.current.requestId));
     }, []),
   };
+}
+function AccountSessionExpiredBanner() {
+  const { t } = Xe();
+  const accountId = ir((state) => state.account?.id);
+  const serverUrl = ir((state) => state.account?.server.url);
+  const [expired, setExpired] = y.useState(null);
+  const login = mL();
+  y.useEffect(() => {
+    if (!accountId || !et.onAccountSessionExpired) return;
+    let active = true;
+    let observed = false;
+    const unsubscribe = et.onAccountSessionExpired((state) => {
+      if (state.accountId !== accountId || state.serverUrl !== serverUrl) return;
+      observed = true;
+      setExpired(state.expired ? { accountId, serverUrl } : null);
+    });
+    et.getAuthStatus().then((status) => {
+      if (active && !observed && status.account?.id === accountId && status.account.server.url === serverUrl) {
+        setExpired(status.sessionExpired ? { accountId, serverUrl } : null);
+      }
+    }).catch(() => {});
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [accountId, serverUrl]);
+  if (!login.busy && (!expired || expired.accountId !== accountId || expired.serverUrl !== serverUrl)) return null;
+  return l.jsxs("div", {
+    className: "bg-background text-foreground rounded-lg border px-4 py-3 shadow-lg",
+    style: { position: "fixed", zIndex: 60, top: 90, left: "50%", transform: "translateX(-50%)", width: "max-content", maxWidth: "calc(100vw - 32px)" },
+    children: [
+      l.jsxs("div", {
+        className: "flex items-center gap-3",
+        children: [
+          l.jsx("p", { role: "alert", className: "text-sm", children: t("settings.diagnostics.signInExpired") }),
+          l.jsx(Te, {
+            type: "button",
+            size: "sm",
+            disabled: login.busy,
+            onClick: async () => {
+              const outcome = await login.reauthenticate();
+              if (outcome === "same") void Jt.getState().retryConnect();
+            },
+            children: t("settings.account.reLogin"),
+          }),
+        ],
+      }),
+      login.busy && l.jsx(eEe, { url: login.authorizeUrl, onCancel: login.cancel }),
+      login.error && l.jsx("p", { role: "alert", className: "mt-2 text-sm text-destructive", children: login.error }),
+    ],
+  });
 }
 function eEe({ url: e, onCancel: t, centered: n = !1 }) {
   const { t: r } = Xe(),
@@ -137529,7 +137620,9 @@ function x8t() {
                         ? "settings.diagnostics.signInExpired"
                         : a?.signIn?.state === "active"
                           ? "settings.diagnostics.signInActive"
-                          : "settings.diagnostics.signInSignedOut",
+                          : a?.signIn?.state === "checking"
+                            ? "settings.diagnostics.signInChecking"
+                            : "settings.diagnostics.signInSignedOut",
                     ),
                     a?.signIn?.state === "expired" &&
                       l.jsx("span", {
@@ -161502,6 +161595,7 @@ function E_e({
 }) {
   const [confirmTeam, setConfirmTeam] = y.useState(false);
   const [teamRead, setTeamRead] = y.useState(null);
+  const runtimeConnected = Jt((state) => state.ready && !state.offline);
   const { t: d, i18n: f } = Xe(),
     { show: h } = Ly(),
     { workspaceName: p } = Bp(),
@@ -161671,6 +161765,7 @@ function E_e({
     $e = B === "text" && G && Q.length > 1,
     [Ve, Ne] = y.useState(null),
     qe = k_e(C ? Ve : null, '[aria-checked="true"]');
+  if (!runtimeConnected) return null;
   return l.jsxs(l.Fragment, { children: [
     confirmTeam && teamMode?.sessionId && l.jsx(y.Suspense, { fallback: null, children:
       l.jsx(EmployeeTeamConfirmation, { sessionId: teamMode.sessionId, language: f.language, cancel: () => setConfirmTeam(false), save: saveTeam }),
@@ -163090,6 +163185,9 @@ function PTt({
   stopDisabled = C,
   dshControls = false,
   stopExecutionId,
+  planActive,
+  onTogglePlan,
+  planDisabled,
   onCompact: P,
 }) {
   const { t: G } = Xe(),
@@ -163130,9 +163228,14 @@ function PTt({
     bn = G9t(le.text, Fe, Ge),
     xn = bn ? `${bn.start}:${bn.query}` : null,
     In = !!(Je && !w && bn && Nt !== xn),
-    ze = i?.available
-      ? p_e(u, [{ name: "goal", description: G("goal.description") }])
-      : u,
+    ze = p_e(u, [
+      ...(i?.available ? [{ name: "goal", description: G("goal.description") }] : []),
+      ...(onTogglePlan ? [{
+        name: "plan",
+        title: G("session.planLabel"),
+        description: G(planActive ? "session.exitPlanMode" : "session.enterPlanMode"),
+      }] : []),
+    ]),
     tt = X9t(ze, bn?.query ?? ""),
     mt = Math.min(An, Math.max(0, tt.length - 1)),
     Lt = y.useId(),
@@ -163295,6 +163398,13 @@ function PTt({
     },
     Ss = (it) => {
       if (!bn) return;
+      if (it.builtin && it.name === "plan") {
+        if (planDisabled || A || pe.current.editing) return;
+        const draft = pe.current.text;
+        Hs({ text: draft.slice(bn.end).trimStart(), caret: 0 });
+        onTogglePlan().catch(Ft);
+        return;
+      }
       if (it.builtin && it.name === "goal") {
         as(!0);
         return;
@@ -163864,7 +163974,10 @@ function PTt({
       }
     },
     Cr = "Enter",
-    ei = Yo
+    draftOffline = Jt((state) => !state.ready || state.offline),
+    ei = draftOffline
+      ? G("session.draftOffline")
+      : Yo
       ? G(
           Yo.index === 0
             ? "composer.historyNewestHint"
@@ -164234,6 +164347,18 @@ ${it.preview}`
                         className: "composer-input-row",
                         "data-goal-armed": Q || void 0,
                         children: [
+                          planActive && onTogglePlan && l.jsx(Te, {
+                            type: "button",
+                            variant: "ghost",
+                            size: "xs",
+                            className: "composer-goal-prefix",
+                            "aria-pressed": true,
+                            "aria-label": G("session.exitPlanMode"),
+                            title: G("session.exitPlanMode"),
+                            disabled: planDisabled || A || !!le.editing,
+                            onClick: () => onTogglePlan().then(() => kt.current?.focus(), Ft),
+                            children: G("session.planMode"),
+                          }),
                           Q &&
                             l.jsxs(Te, {
                               type: "button",
@@ -164402,7 +164527,7 @@ ${it.preview}`
                             className: "composer-actions",
                             children: [
                               !b &&
-                                l.jsx(kTt, {
+                                l.jsx(wTt, {
                                   mode: p,
                                   disabled: !!C,
                                   onChange: _a,
@@ -166484,10 +166609,8 @@ function fhe() {
     g = qa((Je) => Je.projects),
     b = qa((Je) => Je.loaded),
     v = qa((Je) => Je.error),
-    w = Jt((Je) => Je.ready),
-    C = Jt((Je) => Je.connectError),
+    w = Jt((Je) => Je.ready && !Je.offline),
     S = Jt((Je) => Je.create),
-    A = Jt((Je) => Je.init),
     _ = zp(),
     E = yn((Je) => Je.load),
     T = _?.experts.filter((Je) => !_.expertIssues[Je.id]) ?? [],
@@ -166706,6 +166829,7 @@ ${e("settings.experts.aiPrompt")}`,
     "data-composer-region": !0,
     children: [
       s.dialog,
+      l.jsx(She, {}),
       (c || !a) &&
         l.jsx(yZ, {
           className: "new-session-sidebar-toggle",
@@ -166846,8 +166970,7 @@ ${e("settings.experts.aiPrompt")}`,
                   (Fe ? v || (b ? e("projects.notFound") : null) : null) ??
                   (Qe ? e("errors.codes.project_folder_missing") : null) ??
                   qe ??
-                  _?.models.status?.error ??
-                  (C ? `${e("session.connectError")}: ${ni(C, e)}` : null),
+                  (w ? _?.models.status?.error : null),
                 modelControl: l.jsx(E_e, {
                   models: _?.models.all ?? [],
                   media: { kind: A_e(B?.designType), value: me, onChange: be },
@@ -166868,16 +166991,6 @@ ${e("settings.experts.aiPrompt")}`,
                   },
                 }),
               }),
-              C &&
-                l.jsx(Te, {
-                  variant: "link",
-                  size: "sm",
-                  className: "h-auto p-0 text-xs",
-                  onClick: () => {
-                    A();
-                  },
-                  children: e("session.retry"),
-                }),
             ],
           }),
           !r &&
@@ -167789,6 +167902,7 @@ function phe({
   const { t: a, i18n } = Xe(),
     accountId = ir(state => state.account?.id),
     [headerTarget, setHeaderTarget] = y.useState(null),
+    runtimeConnected = Jt((state) => state.ready && !state.offline),
     c = e.isDefaultWorkspace
       ? ""
       : e.cwd.split(/[\\/]/).filter(Boolean).pop() || e.cwd,
@@ -167815,16 +167929,16 @@ function phe({
     });
   return l.jsx(WX, {
     className: "session-page-header",
-    memberNavigation: e.dshJobsAvailable && accountId && l.jsx("div", { className: "dsh-member-navigation-slot", ref: setHeaderTarget }),
+    memberNavigation: runtimeConnected && e.dshJobsAvailable && accountId && l.jsx("div", { className: "dsh-member-navigation-slot", ref: setHeaderTarget }),
     title: d === u ? h : u,
     breadcrumb: d && d !== u ? h : void 0,
     sidebarTrigger: o,
     right: l.jsxs(l.Fragment, {
       children: [
-        e.dshJobsAvailable && accountId && l.jsx(y.Suspense, { fallback: null, children:
+        runtimeConnected && e.dshJobsAvailable && accountId && l.jsx(y.Suspense, { fallback: null, children:
           l.jsx(EmployeeMembers, { accountId, sessionId: e.id, rootTitle: u, headerTarget, running: e.status === "running", request: employeeMemberRequest, promptMember: employeePromptMember, interruptMember: employeeInterruptMember,
             language: i18n.language }, JSON.stringify([accountId, e.id])) }),
-        e.dshJobsAvailable && l.jsx(y.Suspense, {fallback: null, children:
+        runtimeConnected && e.dshJobsAvailable && l.jsx(y.Suspense, {fallback: null, children:
           l.jsx(EmployeeJobs, {sessionId: e.id, request: employeeJobRequest, language: i18n.language}, e.id)}),
         l.jsx(Cjt, { sessionId: e.id, tasks: e.dshJobsAvailable ? e.tasks.filter(task => task.type === "agent") : e.tasks }),
         i,
@@ -168871,6 +168985,7 @@ function Xjt({ sessionId: e, transcriptRef: t }) {
   });
 }
 function Qjt({
+  dshSteering,
   sessionId: e,
   queue: t,
   error: n,
@@ -168972,6 +169087,8 @@ function Qjt({
                   }),
               ],
             }),
+          t?.paused && t.pauseReason &&
+            l.jsx("p", { className: "pending-warning", role: "status", children: ni(t.pauseReason, a) }),
           n &&
             l.jsxs("div", {
               className: "pending-warning",
@@ -169010,7 +169127,7 @@ function Qjt({
                   E = g || S || A,
                   T = _
                     ? "session.queue.resend"
-                    : s
+                    : s && dshSteering
                       ? "session.queue.steerNow"
                       : "session.queue.sendNow",
                   M = w.handleProps(C.id);
@@ -169139,14 +169256,14 @@ function Qjt({
                                   title: a(
                                     _
                                       ? "session.queue.resend"
-                                      : s
+                                      : s && dshSteering
                                         ? "session.queue.steerNowHint"
                                         : "session.queue.sendNow",
                                   ),
                                   onClick: () => {
                                     v({
                                       sessionId: e,
-                                      action: "sendNow",
+                                      action: s && dshSteering ? "steer" : "sendNow",
                                       id: C.id,
                                     });
                                   },
@@ -169201,8 +169318,27 @@ function She() {
     n = Jt((a) => a.connectError),
     r = Jt((a) => a.reconnectAt),
     s = Jt((a) => a.retryConnect),
-    i = eMt(r);
-  if (t) return null;
+    i = eMt(r),
+    offline = Jt((a) => a.offline),
+    connected = t && !offline,
+    previouslyConnected = y.useRef(false),
+    wasDisconnected = y.useRef(false),
+    [restored, setRestored] = y.useState(false);
+  y.useEffect(() => {
+    if (!connected) {
+      if (offline || previouslyConnected.current) wasDisconnected.current = true;
+      setRestored(false);
+      return;
+    }
+    previouslyConnected.current = true;
+    if (!wasDisconnected.current) return;
+    wasDisconnected.current = false;
+    setRestored(true);
+    const timeout = setTimeout(() => setRestored(false), 4000);
+    return () => clearTimeout(timeout);
+  }, [connected, offline]);
+  if (connected) return restored ? l.jsx("p", { role: "status", className: "mx-6 mt-3 text-sm text-muted-foreground", children: e("session.onlineAgain") }) : null;
+  if (offline && t) return l.jsx("p", { role: "status", className: "mx-6 mt-3 text-sm text-muted-foreground", children: e("session.offlineHistory") });
   const o =
     n === Se.runtimeFailed
       ? e("session.runtimeFailed")
@@ -172083,33 +172219,6 @@ function e7e({ part: e }) {
         }),
     ],
   });
-}
-function EmployeeModelReceiptCheck({ sessionId }) {
-  const { i18n } = Xe();
-  const [phase, setPhase] = y.useState("idle");
-  const checking = y.useRef(false);
-  const zh = i18n.language.startsWith("zh");
-  async function verify() {
-    if (checking.current) return;
-    checking.current = true;
-    setPhase("checking");
-    try {
-      // The normal open path refreshes history and queries the existing receipt.
-      await Jt.getState().open(sessionId);
-      setPhase("pending");
-    } catch {
-      setPhase("unavailable");
-    } finally {
-      checking.current = false;
-    }
-  }
-  return l.jsxs("div", { className: "dsh-receipt-check", children: [
-    l.jsx("button", { type: "button", onClick: verify, disabled: phase === "checking",
-      children: phase === "checking" ? (zh ? "正在核验…" : "Checking…") : (zh ? "重新核验" : "Check receipt") }),
-    l.jsx("span", { role: "status", children: phase === "pending"
-      ? (zh ? "暂未核验完成，可稍后再查。" : "Still awaiting confirmation. Check again later.")
-      : phase === "unavailable" ? (zh ? "暂时无法查询，请重试。" : "Could not check the receipt. Try again.") : "" }),
-  ] });
 }
 function t7e({ part: e }) {
   const { t } = Xe(),
@@ -188981,6 +189090,71 @@ function VIt(e) {
 function Npe(e, t) {
   return `question-option flex min-w-0 cursor-pointer gap-3 rounded-lg px-2 py-2 font-normal ${t ? "items-start" : "items-center"} ${e ? "question-option-selected" : ""}`;
 }
+function EmployeePlanReview({ question, onSubmit, onDismiss }) {
+  const { i18n } = Xe();
+  const zh = i18n.language.startsWith("zh");
+  const [feedback, setFeedback] = y.useState("");
+  const [pending, setPending] = y.useState(false);
+  const [error, setError] = y.useState("");
+  const approve = question.intent.approve;
+  const revise = question.options.find(option => option.label !== approve)?.label;
+  async function submit(selected) {
+    setPending(true);
+    setError("");
+    const text = feedback.trim();
+    try {
+      if (selected === undefined) await onDismiss();
+      else await onSubmit([{
+        header: question.header,
+        question: question.question,
+        selected: selected === revise && text ? [selected, text] : [selected],
+        ...(selected === revise && text ? { custom: true } : {}),
+      }]);
+    } catch (reason) {
+      setError(wn(reason));
+    } finally {
+      setPending(false);
+    }
+  }
+  return l.jsx("section", {
+    className: Mpe,
+    "data-interaction": "plan-review",
+    "aria-label": zh ? "计划审阅" : "Plan review",
+    "aria-busy": pending,
+    children: l.jsxs("div", {
+      className: "question-card-content min-w-0",
+      children: [
+        l.jsx("h2", { className: "text-sm font-medium", children: zh ? "审阅计划" : "Review plan" }),
+        l.jsx("div", {
+          className: "max-h-64 overflow-y-auto rounded-lg border px-3 py-2 select-text",
+          children: l.jsx(O0, { variant: "chat", text: question.detail }),
+        }),
+        l.jsx(nu, {
+          rows: 2,
+          className: "question-custom",
+          placeholder: zh ? "希望怎么修改？（选填）" : "What should change? (optional)",
+          "aria-label": zh ? "计划修改意见" : "Plan feedback",
+          value: feedback,
+          disabled: pending,
+          onChange: event => setFeedback(event.target.value),
+        }),
+        error && l.jsx("p", { role: "alert", className: "text-sm text-destructive", children: error }),
+        l.jsxs("div", {
+          className: "question-actions",
+          children: [
+            l.jsx(Te, { size: "sm", variant: "ghost", disabled: pending,
+              onClick: () => submit(), children: zh ? "暂不审阅" : "Dismiss" }),
+            l.jsx(Te, { size: "sm", variant: "outline", disabled: pending || !revise,
+              onClick: () => submit(revise), children: zh ? "要求修改" : "Request changes" }),
+            l.jsx(Te, { size: "sm", disabled: pending || !approve,
+              onClick: () => submit(approve), children: zh ? "批准并执行" : "Approve and proceed" }),
+          ],
+        }),
+      ],
+    }),
+  });
+}
+
 function p9e({
   ask: e,
   renderQuestionDetails: t,
@@ -189030,6 +189204,9 @@ function p9e({
         ],
       }),
     });
+  const review = e.questions.length === 1 && e.questions[0];
+  if (review?._dshNative && review.intent?.kind === "plan-review")
+    return l.jsx(EmployeePlanReview, { question: review, onSubmit: r, onDismiss: s }, review.intent.callId);
   const M = (K) => p[K] ?? [],
     I = (K, $, L) => {
       (setDSHSkipped((z) => ({ ...z, [K]: !1 })), $.multiSelect || b((z) => ({ ...z, [K]: "" })),
@@ -198562,9 +198739,8 @@ function iOt({
               l.jsx(t0, { className: "break-all", children: e.dshStopAccountingPending ? h("session.stopAccountingPending") : ni(e.error, h) }),
             ],
           }),
-        L && et.kind === "electron" && ts()?.transport !== "relay" &&
-          [Se.dshModelOutcomeUnknown, Se.dshModelResponseInterrupted].includes(e.error) &&
-          l.jsx(EmployeeModelReceiptCheck, { sessionId: e.id }, e.id + ":" + e.error),
+        L && e.error === "dsh_session_not_found" &&
+          l.jsx(Te, { variant: "outline", size: "sm", render: l.jsx(xR, { to: "/" }), children: h("nav.newSession") }),
         e.loading === "newer" &&
           l.jsx("div", {
             className: "chat-history-status flex justify-center",
@@ -276123,7 +276299,8 @@ function trn() {
   (!b.current || b.current.id !== n || b.current.connected !== g) &&
     (b.current = { id: n, connected: g, creating: Nwe(n) });
   const v = b.current.creating,
-    w = g && !h?.initializing,
+    offline = Jt((Me) => Me.offline),
+    w = g && !offline && !h?.initializing,
     C = Jjt(n, w && !!h, h?.expertId),
     { total: S } = FX({
       sessionId: n,
@@ -276864,6 +277041,7 @@ function trn() {
                           error: h.queueError,
                           disabled: !w,
                           running: Oe,
+                          dshSteering: h.dshJobsAvailable,
                           onAction: q,
                           onEdit: (Me) => re.current?.editQueuedMessage(Me),
                         },
@@ -276954,6 +277132,9 @@ function trn() {
                       },
                       onCancel: () => F(h.id),
                       dshControls: !!h.dshJobsAvailable,
+                      planActive: h.dshPlanActive,
+                      onTogglePlan: h.dshJobsAvailable ? () => ut(h.dshPlanActive ? "/plan off" : "/plan", []) : void 0,
+                      planDisabled: Ue || An,
                       stopExecutionId: h.executionId,
                       stopDisabled: !g || (h.goal?.status === "paused" && !!h.goal.current_execution_id),
                       onCompact: pt,
@@ -280662,13 +280843,25 @@ function hideBootSplash() {
   const el = document.getElementById("boot-splash");
   if (!el) return;
   if (bootSplashSecondary) return el.remove();
-  // 最短展示时间从窗口真正显示时算起（见 boot-splash.js）。
-  const fade = () => setTimeout(() => {
-    el.classList.add("boot-splash-done");
-    setTimeout(() => el.remove(), 400);
-  }, Math.max(0, (matchMedia("(prefers-reduced-motion: reduce)").matches ? 600 : 1900) - (performance.now() - window.__bootSplashShownAt)));
+  // Prefer timing from the window's first frame, with a fallback if the
+  // boot script or its first-frame signal never arrives.
+  const minimum = matchMedia("(prefers-reduced-motion: reduce)").matches ? 600 : 1900;
+  const readyAt = performance.now();
+  let fallback;
+  const fade = () => {
+    clearTimeout(fallback);
+    window.removeEventListener("aibertai:boot-splash-shown", fade);
+    const shownAt = window.__bootSplashShownAt ?? readyAt;
+    setTimeout(() => {
+      el.classList.add("boot-splash-done");
+      setTimeout(() => el.remove(), 400);
+    }, Math.max(0, minimum - (performance.now() - shownAt)));
+  };
   if (window.__bootSplashShownAt !== void 0) fade();
-  else window.addEventListener("aibertai:boot-splash-shown", fade, { once: !0 });
+  else {
+    window.addEventListener("aibertai:boot-splash-shown", fade, { once: !0 });
+    fallback = setTimeout(fade, minimum);
+  }
 }
 function watchBootSplash() {
   const text = document.querySelector("#boot-splash .boot-splash-text");

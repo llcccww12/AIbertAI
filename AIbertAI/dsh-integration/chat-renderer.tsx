@@ -46,7 +46,10 @@ const detailsTools = new Set([
   'team_task_update', 'team_task_list', 'create_goal', 'get_goal', 'update_goal',
 ])
 
-const labels = { zh: { ...commonZh, ...toolsZh, ...chatZh }, en: { ...commonEn, ...toolsEn, ...chatEn } }
+const labels = {
+  zh: { ...commonZh, ...toolsZh, ...chatZh, 'message.turnProcess.took': '本轮已结束，用时 ' },
+  en: { ...commonEn, ...toolsEn, ...chatEn, 'message.turnProcess.took': 'Turn finished in ' },
+}
 const teamLabels = { zh: teamZh, en: teamEn }
 // The board sits in the transcript; the separate subagent catalog is unmounted here.
 const boardSessions = select => select({ projectionsBySession: {} })
