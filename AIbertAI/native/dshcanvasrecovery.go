@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -170,7 +171,7 @@ func (h *relaySessionHost) settleStaleCanvasTurn(id string) error {
 	live.mu.Lock()
 	defer live.mu.Unlock()
 	row, ok := live.sessions[id]
-	if !ok || live.restarting || live.compacting[id] || live.activeTurns[id] != nil || !dshCanvasRecoveryAvailable(row) || !row.Turns[len(row.Turns)-1].Acked {
+	if !ok || live.restarting || live.compacting[id] || live.activeTurns[id] != nil || !dshCanvasRecoveryAvailable(row) || (!live.usesAsyncTurnReports(row) && !row.Turns[len(row.Turns)-1].Acked) {
 		return fail
 	}
 	if live.workspaces == nil {
@@ -199,7 +200,7 @@ func dshSettleStaleCanvasWrite(root, workspace *os.Root, session acpSession) (bo
 		return false, nil
 	}
 	last := session.Turns[len(session.Turns)-1]
-	if !last.Failed || !last.Acked || last.DSHReconciled || last.DSHUserReviewed || last.FailureCode != "dsh_canvas_outcome_unknown" || len(last.ToolRuns) == 0 || !validUUID(last.Operation) {
+	if !last.Failed || last.Ended.IsZero() || last.DSHReconciled || last.DSHUserReviewed || last.FailureCode != "dsh_canvas_outcome_unknown" || len(last.ToolRuns) == 0 || !validUUID(last.Operation) {
 		return false, nil
 	}
 	run := last.ToolRuns[len(last.ToolRuns)-1]
@@ -288,11 +289,11 @@ func dshCanvasRecoveryAvailable(row acpSession) bool {
 		return false
 	}
 	last := row.Turns[len(row.Turns)-1]
-	if !last.Failed || last.DSHReconciled || (last.FailureCode != "dsh_canvas_outcome_unknown" && last.FailureCode != "dsh_runtime_exited") || len(last.ToolRuns) == 0 {
+	if !last.Failed || last.Ended.IsZero() || last.DSHReconciled || last.DSHUserReviewed || (last.FailureCode != "dsh_canvas_outcome_unknown" && last.FailureCode != "dsh_runtime_exited") || len(last.ToolRuns) == 0 {
 		return false
 	}
 	run := last.ToolRuns[len(last.ToolRuns)-1]
-	return run.Call != nil && run.DSHCallID != "" && designWriteTool(run.Call.Function.Name)
+	return run.Call != nil && run.DSHCallID != "" && dshRecoverableCanvasTool(run.Call.Function.Name)
 }
 
 func (h *relaySessionHost) recoverDSHCanvasSession(ctx context.Context, id string) error {
@@ -301,17 +302,17 @@ func (h *relaySessionHost) recoverDSHCanvasSession(ctx context.Context, id strin
 		return fail()
 	}
 	live := h.live
-	// The interrupted turn must be reported before evidence can release it.
 	live.mu.Lock()
 	row, ok := live.sessions[id]
-	needsReport := ok && dshCanvasRecoveryAvailable(row) && !row.Turns[len(row.Turns)-1].Acked
-	live.mu.Unlock()
-	if needsReport && h.retryPendingReport(ctx, id) != nil {
-		return fail()
+	if ok && !live.usesAsyncTurnReports(row) && dshCanvasRecoveryAvailable(row) && !row.Turns[len(row.Turns)-1].Acked {
+		live.mu.Unlock()
+		if h.retryPendingReport(ctx, id) != nil {
+			return fail()
+		}
+		live.mu.Lock()
+		row, ok = live.sessions[id]
 	}
-	live.mu.Lock()
-	row, ok = live.sessions[id]
-	if !ok || live.restarting || live.compacting[id] || live.activeTurns[id] != nil || !dshCanvasRecoveryAvailable(row) || !row.Turns[len(row.Turns)-1].Acked {
+	if !ok || live.restarting || live.compacting[id] || live.activeTurns[id] != nil || !dshCanvasRecoveryAvailable(row) || (!live.usesAsyncTurnReports(row) && !row.Turns[len(row.Turns)-1].Acked) {
 		live.mu.Unlock()
 		return fail()
 	}
@@ -349,8 +350,7 @@ func (h *relaySessionHost) recoverDSHCanvasSession(ctx context.Context, id strin
 		live.mu.Lock()
 		defer live.mu.Unlock()
 		current, ok := live.sessions[id]
-		currentBytes, err := json.Marshal(current)
-		if !ok || err != nil || string(currentBytes) != string(snapshot) {
+		if !ok || !sameCanvasRecoverySession(current, detached) {
 			return fail()
 		}
 		current.Turns = append([]acpTurn(nil), current.Turns...)
@@ -411,11 +411,20 @@ func (h *relaySessionHost) recoverDSHCanvasSession(ctx context.Context, id strin
 	live.mu.Lock()
 	defer live.mu.Unlock()
 	current, ok := live.sessions[id]
-	currentBytes, err := json.Marshal(current)
-	if !ok || err != nil || string(currentBytes) != string(snapshot) {
+	if !ok || !sameCanvasRecoverySession(current, detached) {
 		return fail()
 	}
 	current.Turns = append([]acpTurn(nil), current.Turns...)
+	last := current.Turns[len(current.Turns)-1]
+	rebuilt.Acked = last.Acked
+	if !last.Acked {
+		// A retry must send the original facts even if the platform received
+		// them before the connection dropped.
+		rebuilt.CanvasRecoveryReport, err = last.reportPayload(len(current.Turns), current.CWD)
+		if err != nil {
+			return fail()
+		}
+	}
 	rebuilt.DSHProjectionSeq = &projectionSeq
 	rebuilt.DSHReconciled = true
 	current.Turns[len(current.Turns)-1] = rebuilt
@@ -423,4 +432,19 @@ func (h *relaySessionHost) recoverDSHCanvasSession(ctx context.Context, id strin
 		return fail()
 	}
 	return nil
+}
+
+// An acknowledgement can arrive during recovery without changing its evidence.
+func sameCanvasRecoverySession(current, original acpSession) bool {
+	if len(current.Turns) != len(original.Turns) {
+		return false
+	}
+	current.Turns = slices.Clone(current.Turns)
+	for i := range current.Turns {
+		current.Turns[i].Acked = original.Turns[i].Acked
+		current.Turns[i].CanvasRecoveryReport = original.Turns[i].CanvasRecoveryReport
+	}
+	got, gotErr := json.Marshal(current)
+	want, wantErr := json.Marshal(original)
+	return gotErr == nil && wantErr == nil && string(got) == string(want)
 }

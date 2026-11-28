@@ -106,6 +106,7 @@ type acpTurn struct {
 	Ended                  time.Time             `json:"endedAt,omitzero"`
 	Prompt                 string                `json:"prompt"`
 	ReportText             bool                  `json:"reportText,omitempty"`
+	CanvasRecoveryReport   json.RawMessage       `json:"canvasRecoveryReport,omitempty"`
 	Resources              []turnResource        `json:"resources,omitempty"`
 	ModelInput             string                `json:"modelInput,omitempty"`
 	DSHHasImages           bool                  `json:"dshHasImages,omitempty"`
@@ -361,6 +362,22 @@ func (h *relaySessionHost) submitACPTurn(ctx context.Context, id string, index i
 			return err
 		}
 	}
+	live.mu.Lock()
+	cwd := live.sessions[id].CWD
+	live.mu.Unlock()
+	payload, err := turn.reportPayload(index, cwd)
+	if err != nil {
+		return err
+	}
+	return live.withTurnAuthorization(ctx, func(ctx context.Context, auth authorization) error {
+		return live.client.sendTurnReport(ctx, auth, h.reportMachine(), id, index, index-1, payload)
+	})
+}
+
+func (turn acpTurn) reportPayload(index int, cwd string) ([]byte, error) {
+	if len(turn.CanvasRecoveryReport) > 0 {
+		return turn.CanvasRecoveryReport, nil
+	}
 	stop := "complete"
 	if turn.Failed {
 		stop = "error"
@@ -378,12 +395,7 @@ func (h *relaySessionHost) submitACPTurn(ctx context.Context, id string, index i
 	if turn.ReportText {
 		input = turnReportInput(turn.Prompt)
 	}
-	live.mu.Lock()
-	cwd := live.sessions[id].CWD
-	live.mu.Unlock()
-	return live.withTurnAuthorization(ctx, func(ctx context.Context, auth authorization) error {
-		return live.client.reportTurn(ctx, auth, h.reportMachine(), id, turn.Model, index, index-1, turn.Started, turn.Ended, stop, turn.Usage, input, turn.reportFacts(cwd), facts...)
-	})
+	return encodeTurnReport(turn.Model, index, turn.Started, turn.Ended, stop, turn.Usage, input, turn.reportFacts(cwd), facts)
 }
 
 func (l *acpLive) withTurnAuthorization(ctx context.Context, call func(context.Context, authorization) error) error {

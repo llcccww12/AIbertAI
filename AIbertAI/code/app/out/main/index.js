@@ -23518,6 +23518,7 @@ marker="$(dirname "$app")/.aibertai-updating"
 staged=""
 progress_dir=$(mktemp -d "$temp/aibertai-progress.XXXXXX")
 progress=""
+progress_pid=""
 if [ -n "$progress_dir" ]; then progress="$progress_dir/status"; fi
 show_progress() {
   if [ -n "$progress" ]; then
@@ -23530,10 +23531,16 @@ cleanup_progress() {
 trap cleanup_progress EXIT
 fail() {
   echo "FAILED: $1"
+  show_progress "安装失败：$1" -2
   [ -n "$staged" ] && rm -rf "$staged"
   rm -f "$marker"
   [ -d "$app" ] && open "$app"
+  [ -z "$progress_pid" ] || wait "$progress_pid"
   exit 1
+}
+unpack_failed() {
+  rm -f "$zip"
+  fail "无法解压安装包，请重新下载更新。"
 }
 if [ -n "$progress" ]; then
   show_progress "正在等待旧版本退出…" -1
@@ -23544,21 +23551,25 @@ function run(args) {
   const fm = $.NSFileManager.defaultManager
   const app = $.NSApplication.sharedApplication
   app.setActivationPolicy(1)
-  const window = $.NSWindow.alloc.initWithContentRectStyleMaskBackingDefer($.NSMakeRect(0,0,400,108),1,2,false)
+  const window = $.NSWindow.alloc.initWithContentRectStyleMaskBackingDefer($.NSMakeRect(0,0,440,108),3,2,false)
   window.title = 'AIbertAI 更新'
   window.center
-  const label = $.NSTextField.alloc.initWithFrame($.NSMakeRect(24,64,352,22))
+  window.releasedWhenClosed = false
+  const closeButton = window.standardWindowButton(0)
+  closeButton.enabled = false
+  const label = $.NSTextField.alloc.initWithFrame($.NSMakeRect(24,64,392,22))
   label.editable = false
   label.bordered = false
   label.drawsBackground = false
   window.contentView.addSubview(label)
-  const bar = $.NSProgressIndicator.alloc.initWithFrame($.NSMakeRect(24,32,352,16))
+  const bar = $.NSProgressIndicator.alloc.initWithFrame($.NSMakeRect(24,32,392,16))
   bar.minValue = 0
   bar.maxValue = 100
   window.contentView.addSubview(bar)
   window.makeKeyAndOrderFront(null)
   app.activateIgnoringOtherApps(true)
   let last
+  let failureExpires
   while (fm.fileExistsAtPath(path)) {
     const raw = ObjC.unwrap($.NSString.stringWithContentsOfFileEncodingError(path,4,null))
     if (raw && raw !== last) {
@@ -23567,14 +23578,23 @@ function run(args) {
       const percent = Number(value)
       label.stringValue = percent < 0 ? message : message + ' ' + percent + '%'
       bar.indeterminate = percent < 0
-      if (percent < 0) bar.startAnimation(null)
+      if (percent === -2) {
+        bar.stopAnimation(null)
+        bar.hidden = true
+        closeButton.enabled = true
+        window.level = $.NSFloatingWindowLevel
+        window.orderFrontRegardless
+        failureExpires = Date.now() + 60000
+      } else if (percent < 0) bar.startAnimation(null)
       else { bar.stopAnimation(null); bar.doubleValue = percent }
       window.displayIfNeeded
     }
+    if (failureExpires && (!window.isVisible || Date.now() >= failureExpires)) break
     $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.15))
   }
 }
 JXA
+  progress_pid=$!
 fi
 while kill -0 "$pid" 2>/dev/null; do sleep 0.5; done
 staged=$(mktemp -d "$(dirname "$app")/.aibertai-update.XXXXXX") || fail "无法创建临时目录"
@@ -23589,10 +23609,10 @@ if [ -n "$progress" ] && [ -n "$total" ] && [ "$total" -gt 0 ]; then
       if (percent > last) {print percent; fflush(); last = percent}
       next
     } { print > "/dev/stderr" }' |
-    while IFS= read -r percent; do show_progress "正在解压新版…" "$percent"; done || fail "解压失败"
+    while IFS= read -r percent; do show_progress "正在解压新版…" "$percent"; done || unpack_failed
 else
   show_progress "正在解压新版…" -1
-  /usr/bin/ditto -x -k "$zip" "$staged" || fail "解压失败"
+  /usr/bin/ditto -x -k "$zip" "$staged" || unpack_failed
 fi
 show_progress "正在验证并替换应用…" -1
 new=$(find "$staged" -maxdepth 1 -name '*.app' -type d | head -n 1)

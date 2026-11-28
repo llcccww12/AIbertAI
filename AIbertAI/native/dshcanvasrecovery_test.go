@@ -104,7 +104,7 @@ func TestDSHSettleStaleCanvasWriteUsesCanvasEvidence(t *testing.T) {
 			callUse := &modelToolUse{ID: call}
 			callUse.Function.Name = "media_generate_image"
 			row := acpSession{ID: session, Turns: []acpTurn{{
-				Operation: operation, Failed: true, Acked: true, Ended: time.Now().UTC(),
+				Operation: operation, Failed: true, Ended: time.Now().UTC(),
 				FailureCode: "dsh_canvas_outcome_unknown",
 				ToolRuns:    []workspaceToolRun{{DSHCallID: call, Call: callUse}},
 			}}}

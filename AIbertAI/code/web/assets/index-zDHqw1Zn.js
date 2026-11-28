@@ -213315,6 +213315,7 @@ function Szt({
   sessionId: e,
   node: t,
   models: n = [],
+  referenceImages = [],
   disabled: r,
   unavailable: s,
   onSubmit: i,
@@ -213327,6 +213328,7 @@ function Szt({
     [g, b] = y.useState(""),
     [v, w] = y.useState(""),
     [C, S] = y.useState(!1),
+    [referenceNodeId, setReferenceNodeId] = y.useState(""),
     A = zn((Q) => Q.imageGenerationModels[e] ?? ""),
     _ = y.useRef(null),
     E = y.useRef(null),
@@ -213356,8 +213358,10 @@ function Szt({
           : (W[0] ?? "")),
     [$, L] = K.split(":").map(Number),
     H = `${K && !g && Math.abs(Math.log(t.width / t.height / ($ / L))) > 0.015 ? "≈ " : ""}${K || "不可用"}`,
-    P = t.empty ? "generate" : "edit",
-    G = !B?.operations || B.operations.includes(P);
+    P = t.empty && !referenceNodeId ? "generate" : "edit",
+    G = !B?.operations || B.operations.includes(P),
+    referenceMissing = !!referenceNodeId && !referenceImages.some((image) => image.id === referenceNodeId),
+    canSubmit = !!a.trim() && !!i && !u && !r && !s && !!O && G && !!K && !!F && !referenceMissing;
   (y.useEffect(() => {
     b("");
   }, [t.id, t.width, t.height]),
@@ -213402,14 +213406,15 @@ function Szt({
       onWheel: (Q) => Q.stopPropagation(),
       onSubmit: (Q) => {
         (Q.preventDefault(),
-          !(!a.trim() || !i || u || r || s || !O || !G || !K || !F) &&
+          canSubmit &&
             (d(!0),
             Promise.resolve()
               .then(() =>
                 i(a.trim(), {
                   aspectRatio: K,
                   quality: F,
-                  ...(O ? { model: O.id } : {}),
+                  model: O.id,
+                  ...(referenceNodeId ? { referenceNodeId } : {}),
                 }),
               )
               .then(() => c(""))
@@ -213420,21 +213425,20 @@ function Szt({
         l.jsxs("div", {
           className: "design-image-composer-body",
           children: [
-            l.jsx(Te, {
-              type: "button",
-              variant: "ghost",
-              size: "icon-xs",
-              className: "design-image-add composer-tool composer-attachment",
-              "aria-label": "添加参考图片",
-              title: "参考图片将在后续版本开放",
-              disabled: !0,
-              children: l.jsx(ke, {
-                icon: Ey,
-                size: 14,
-                strokeWidth: 1.8,
-                className: "composer-attachment-icon",
-                "aria-hidden": "true",
-              }),
+            l.jsxs("select", {
+              className: "design-image-reference",
+              "aria-label": "选择参考图片",
+              title: referenceImages.length ? "从画布选择参考图" : "可先把图片拖入画布，再选作参考图",
+              value: referenceNodeId,
+              disabled: s || r || u,
+              onChange: (event) => setReferenceNodeId(event.target.value),
+              children: [
+                l.jsx("option", { value: "", children: t.empty ? "文生图 · 无参考图" : "图生图 · 当前图片" }),
+                referenceMissing && l.jsx("option", { value: referenceNodeId, disabled: true, children: "参考图已不可用" }),
+                ...referenceImages.map((image, index) =>
+                  l.jsx("option", { value: image.id, children: `参考图 ${index + 1} · ${image.title?.trim() || "图片"}` }, image.id),
+                ),
+              ],
             }),
             l.jsx(Te, {
               type: "button",
@@ -213455,7 +213459,7 @@ function Szt({
               "aria-label": "图片生成描述",
               maxLength: 2e4,
               rows: 3,
-              placeholder: "描述希望重新生成的图片内容…",
+              placeholder: P === "edit" ? "描述想对参考图做哪些修改…" : "描述希望生成的图片…",
               value: a,
               disabled: s || r || u,
               onChange: (Q) => c(Q.target.value),
@@ -213573,14 +213577,7 @@ function Szt({
                   ),
                 ),
               }),
-              !G &&
-                l.jsxs("span", {
-                  role: "status",
-                  children: [
-                    "当前模型不支持图片",
-                    P === "edit" ? "编辑" : "生成",
-                  ],
-                }),
+
             ],
           }),
         l.jsxs("div", {
@@ -213650,6 +213647,11 @@ function Szt({
               children: "暂无可用的图片模型",
             }),
             l.jsx("span", { className: "design-image-control-spacer" }),
+            O && (!G || referenceMissing) && l.jsx("span", {
+              className: "design-image-submit-status",
+              role: "status",
+              children: referenceMissing ? "请重新选择参考图" : P === "edit" ? "请选择支持图生图的模型" : "请选择支持文生图的模型",
+            }),
             u &&
               l.jsx("span", {
                 className: "design-image-submit-status",
@@ -213661,7 +213663,7 @@ function Szt({
               size: "icon-sm",
               className: "composer-send",
               "aria-label": "开始重新生成图片",
-              disabled: s || r || u || !a.trim() || !i || !O || !G || !K || !F,
+              disabled: !canSubmit,
               children: u
                 ? "…"
                 : l.jsx(ke, {
@@ -264150,6 +264152,9 @@ function ctn({
                     sessionId: e,
                     node: nr,
                     models: r,
+                    referenceImages: J?.nodes.filter((node) =>
+                      node.id !== nr.id && node.type === "image" && !node.empty && !node.hidden && node.source
+                    ),
                     disabled: eg || Wl,
                     onAspectRatioChange: (U) => c3(nr, U),
                     onSubmit: c
@@ -277361,6 +277366,7 @@ function trn() {
                           nodeId: Me.id,
                           prompt: It,
                           ...(Gt.model ? { model: Gt.model } : {}),
+                          ...(Gt.referenceNodeId ? { referenceNodeId: Gt.referenceNodeId } : {}),
                           parameters: {
                             aspect_ratio: Gt.aspectRatio,
                             quality: Gt.quality,

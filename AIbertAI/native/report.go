@@ -159,6 +159,14 @@ func turnReportTools(tools []reportedTool) ([]reportedTool, bool) {
 }
 
 func (c *client) reportTurn(ctx context.Context, auth authorization, machine, session, selected string, index, after int, started, ended time.Time, stop string, usage modelUsage, input reportedInput, facts turnReportFacts, tools ...reportedTool) error {
+	payload, err := encodeTurnReport(selected, index, started, ended, stop, usage, input, facts, tools)
+	if err != nil {
+		return err
+	}
+	return c.sendTurnReport(ctx, auth, machine, session, index, after, payload)
+}
+
+func encodeTurnReport(selected string, index int, started, ended time.Time, stop string, usage modelUsage, input reportedInput, facts turnReportFacts, tools []reportedTool) ([]byte, error) {
 	if selected == "" {
 		selected = modelID
 	}
@@ -196,13 +204,13 @@ func (c *client) reportTurn(ctx context.Context, auth authorization, machine, se
 	if len(facts.SkillEvents) != 0 {
 		turn["skill_events"] = facts.SkillEvents
 	}
-	payload, err := json.Marshal(map[string]any{
+	return json.Marshal(map[string]any{
 		"facts_version": 1, "turns": []any{turn},
 		"snapshots": []any{map[string]any{"snapshot_id": snapshot, "items": items}},
 	})
-	if err != nil {
-		return err
-	}
+}
+
+func (c *client) sendTurnReport(ctx context.Context, auth authorization, machine, session string, index, after int, payload []byte) error {
 	// If a report committed before its reply was lost, the backend checks its
 	// hash when the identical report is replayed at the returned cursor.
 	for attempt := 0; attempt < 2; attempt++ {

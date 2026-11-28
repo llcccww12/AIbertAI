@@ -186,6 +186,9 @@ func TestDSHCanvasSDKWorkerAcceptance(t *testing.T) {
 			}
 			_, _ = w.Write(skillPackage)
 			return
+		case r.URL.Path == "/api/v1/experts":
+			fmt.Fprint(w, `{"experts":[],"total_count":0}`)
+			return
 		case r.URL.Path == "/api/v1/models":
 			fmt.Fprintf(w, `{"models":[{"id":%q,"kind":"text","protocol":"openai_chat_completions"}],"total_count":1}`, modelID)
 			return
@@ -505,7 +508,7 @@ func TestDSHCanvasSDKWorkerAcceptance(t *testing.T) {
 		permissions := &sync.Map{}
 		runCtx := context.WithValue(ctx, acpPermissionContextKey{}, permissions)
 		runCtx = context.WithValue(runCtx, dshWorkspaceAuthorizeKey{}, func(context.Context) error { return nil })
-		if scenario != "recover" && scenario != "recover_pending" {
+		if scenario != "recover" && scenario != "recover_pending" && scenario != "recover_unreported" {
 			runCtx = context.WithValue(runCtx, dshSideEffectRootKey{}, root)
 		}
 		bridge := host.dshCanvasBridge(runCtx, ws, r, session, &turn, design, catalog)
@@ -621,11 +624,11 @@ func TestDSHCanvasSDKWorkerAcceptance(t *testing.T) {
 	if claimErr != nil {
 		t.Fatal(claimErr)
 	}
-	if scenario == "recover" || scenario == "recover_pending" {
+	if scenario == "recover" || scenario == "recover_pending" || scenario == "recover_unreported" {
 		if err != nil || len(claims) != 1 || claims[0].State != "result_ready" {
 			t.Fatalf("missing pre-barrier claim: %v %+v", err, claims)
 		}
-		turn.Failed, turn.Acked, turn.FailureCode, turn.Ended = true, true, "dsh_canvas_outcome_unknown", time.Now().UTC()
+		turn.Failed, turn.Acked, turn.FailureCode, turn.Ended = true, scenario != "recover_unreported", "dsh_canvas_outcome_unknown", time.Now().UTC()
 		session.Turns, session.State = []acpTurn{turn}, "error"
 		live.mu.Lock()
 		live.dsh = cfg
@@ -645,8 +648,16 @@ func TestDSHCanvasSDKWorkerAcceptance(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		live = &acpLive{store: &desktopSessionStore{Root: reopened}, dsh: cfg, sessions: map[string]acpSession{id: restored}}
+		live = &acpLive{store: &desktopSessionStore{Root: reopened}, workspaces: workspaces, dsh: cfg, sessions: map[string]acpSession{id: restored}}
 		host.live = live
+		var pendingReport []byte
+		if scenario == "recover_unreported" {
+			live.reportWake = make(chan struct{}, 1)
+			pendingReport, e = turn.reportPayload(1, session.CWD)
+			if e != nil {
+				t.Fatal(e)
+			}
+		}
 		if scenario == "recover_pending" {
 			pendingPath := filepath.Join(dir, "journal", id, "pending.json")
 			pending, _ := json.Marshal(dshLocalRecord{SessionID: id, CallID: "99999999-9999-4999-8999-999999999999", ModelID: modelID, State: "dispatched"})
@@ -668,12 +679,28 @@ func TestDSHCanvasSDKWorkerAcceptance(t *testing.T) {
 			t.Fatalf("gateway settlement and history recovery failed: %v", e)
 		}
 
+		if scenario == "recover_unreported" {
+			row, loadErr := readDesktopSession(reopened, id)
+			if loadErr != nil {
+				t.Fatal(loadErr)
+			}
+			if row.Turns[0].Acked || string(row.Turns[0].CanvasRecoveryReport) != string(pendingReport) {
+				t.Fatal("recovery changed the pending report")
+			}
+			if _, _, _, reserveErr := live.reserveTurn(id, "55555555-5555-4555-8555-555555555555", "", "继续处理这个画布", nil, func() {}, false, nil); reserveErr != nil {
+				t.Fatalf("report still blocked the next message in the same session: %v", reserveErr)
+			}
+		}
+
 		claims, e = dshConnectorClaims(root, id)
 		if e != nil || len(claims) != 1 || claims[0].State != "reconciled" || dshConnectorAssertSettled(root, id) != nil {
 			t.Fatalf("recovery did not release: %+v %v", claims, e)
 		}
 		if e = dshConnectorDispatch(root, id, op, "canvas-call-1"); e == nil {
 			t.Fatal("original write can replay")
+		}
+		if scenario == "recover_unreported" {
+			return
 		}
 		// Simulate a second crash after durable claim release but before the
 		// platform session update. Recovery must be repeatable without dispatch.

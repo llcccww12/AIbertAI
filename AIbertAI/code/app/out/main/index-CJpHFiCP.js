@@ -21616,6 +21616,7 @@ class CanvasGenerationService {
       let result;
       if (request2.kind === "image" && node.type === "image") {
         const reference = !saved.task && request2.referenceNodeId ? await this.canvas.imageTarget(sessionId, request2.referenceNodeId, true) : void 0;
+        if (reference && (reference.node.empty || reference.node.hidden)) throw new Error("invalid_canvas_image_source");
         const generated = reference ? await this.media.edit(sessionId, { ...input, source_path: reference.sourcePath }, { preserveQuality: true, ...taskOptions }) : node.empty || saved.task ? await this.media.generate(sessionId, input, { preserveQuality: true, ...taskOptions }) : await this.media.edit(sessionId, { ...input, source_path: (await this.canvas.imageTarget(sessionId, request2.nodeId, true)).sourcePath }, { preserveQuality: true, ...taskOptions });
         await checkTarget();
         result = await this.canvas.createImage(sessionId, { sourcePath: generated.source_path, replaceNodeId: request2.nodeId, placeBeside: true, title: node.title, beforeApply });

@@ -544,6 +544,7 @@ func (h *relaySessionHost) reportTurnBacklog(ctx context.Context, id string) err
 		}
 		row.Turns = slices.Clone(row.Turns)
 		row.Turns[index].Acked = true
+		row.Turns[index].CanvasRecoveryReport = nil
 		err := live.save(row)
 		live.mu.Unlock()
 		if err != nil {
