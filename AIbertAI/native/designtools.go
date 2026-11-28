@@ -82,7 +82,7 @@ func (b *desktopDesignBridge) read(r io.Reader) {
 	scanner.Buffer(make([]byte, 4096), 64<<10)
 	for scanner.Scan() {
 		var reply designToolResult
-		if json.Unmarshal(scanner.Bytes(), &reply) != nil || reply.Type != "design_tool_result" || len(reply.Result) > 48<<10 {
+		if json.Unmarshal(scanner.Bytes(), &reply) != nil || (reply.Type != "design_tool_result" && reply.Type != "browser_tool_result") || len(reply.Result) > 48<<10 {
 			continue
 		}
 		b.mu.Lock()
@@ -114,6 +114,10 @@ func (b *desktopDesignBridge) callGuarded(ctx context.Context, row acpSession, d
 		b.mu.Unlock()
 	}()
 	event := map[string]any{"event": "design_tool", "id": id, "sessionId": row.ID, "cwd": row.CWD, "design": design, "name": name, "arguments": args}
+	browser := name == desktopBrowserRead || name == desktopBrowserOpen || browserControlTool(name)
+	if browser {
+		event = map[string]any{"event": "browser_tool", "id": id, "sessionId": row.ID, "name": name, "arguments": args}
+	}
 	if revision != nil {
 		event["expectedRevision"], event["expectedCanvasDigest"] = *revision, digest
 		if sourceDigest != "" {
@@ -129,7 +133,9 @@ func (b *desktopDesignBridge) callGuarded(ctx context.Context, row acpSession, d
 	// Slightly above the design worker's own 110s limit, so a slow Windows
 	// render reports the worker's answer instead of a host timeout.
 	timeout := 115 * time.Second
-	if dshMediaWrite(name) {
+	if browser {
+		timeout = 25 * time.Second
+	} else if dshMediaWrite(name) {
 		timeout = 21 * time.Minute
 	} else if name == "canvas_capture_preview" || name == designStyleChoiceTool || name == "design_session_open" {
 		timeout = 125 * time.Second
@@ -147,6 +153,10 @@ func (b *desktopDesignBridge) callGuarded(ctx context.Context, row acpSession, d
 		}
 		return string(reply.Result), nil
 	case <-ctx.Done():
+		if browser {
+			_ = b.send(map[string]string{"event": "browser_tool_cancel", "id": id})
+			return "", errors.New("browser_tool_unavailable")
+		}
 		if dshMediaWrite(name) || name == designStyleChoiceTool {
 			_ = b.send(map[string]string{"event": "design_tool_cancel", "id": id})
 		}

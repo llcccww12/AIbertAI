@@ -88,11 +88,29 @@ func dshPermissionPreset(mode string) string {
 // dshApplyPermissionMode switches a live SDK session to one of DSH's presets.
 // The SDK has no dedicated RPC: its /permission command appends the preset and
 // the sandbox/approval events it bundles, so the session log stays the truth.
-func dshApplyPermissionMode(ctx context.Context, p *dshProcess, sessionID, preset string) error {
-	receipt, err := p.call(ctx, "session/query", map[string]any{
+func dshApplyPermissionMode(ctx context.Context, p *dshProcess, sessionID, preset string, leased bool) error {
+	query := map[string]any{
 		"sessionId":     sessionID,
 		"contentBlocks": []map[string]string{{"type": "text", "text": "/permission " + preset}},
-	}, nil)
+	}
+	var operation string
+	if leased {
+		// The SDK admits only one query or prompt per lease. Finish the
+		// permission command on its own lease before binding the user turn.
+		var err error
+		operation, err = newUUID()
+		if err != nil {
+			return err
+		}
+		if _, err = p.call(ctx, "aibertai/turn-bind", map[string]any{
+			"sessionId": sessionID, "operationId": operation, "workspaceBridge": false,
+			"hostTools": []dshHostTool{}, "expertInstructions": "",
+		}, nil); err != nil {
+			return err
+		}
+		query["aibertaiOperationId"] = operation
+	}
+	receipt, err := p.call(ctx, "session/query", query, nil)
 	if err != nil {
 		return err
 	}
@@ -100,14 +118,22 @@ func dshApplyPermissionMode(ctx context.Context, p *dshProcess, sessionID, prese
 		Kind      string `json:"kind"`
 		Execution struct {
 			CommandID string `json:"commandId"`
+			Result    struct {
+				Kind string `json:"kind"`
+			} `json:"result"`
 		} `json:"execution"`
 	}
-	if json.Unmarshal(receipt, &command) != nil || command.Kind != "command" || command.Execution.CommandID == "" {
+	if json.Unmarshal(receipt, &command) != nil || command.Kind != "command" ||
+		command.Execution.CommandID == "" || command.Execution.Result.Kind != "success" {
 		return errors.New("dsh_permission_switch_unavailable")
 	}
 	_, err = p.call(ctx, "aibertai/query-wait", map[string]string{
 		"sessionId": sessionID, "commandId": command.Execution.CommandID,
 	}, nil)
+	if err != nil || !leased {
+		return err
+	}
+	_, err = p.call(ctx, "aibertai/turn-release", map[string]string{"sessionId": sessionID, "operationId": operation}, nil)
 	return err
 }
 
@@ -153,6 +179,17 @@ type dshFrame struct {
 		Message string `json:"message"`
 	} `json:"error,omitempty"`
 }
+
+type dshRPCError struct {
+	method  string
+	code    int
+	message string
+}
+
+func (e *dshRPCError) Error() string {
+	return fmt.Sprintf("dsh rpc %s: %d: %s", e.method, e.code, e.message)
+}
+
 type dshProcess struct {
 	writeMu                      sync.Mutex
 	observerReplies              sync.Map // human control requests are independent of the model turn
@@ -390,10 +427,10 @@ func (p *dshProcess) call(ctx context.Context, method string, params any, event 
 			return nil, stopErr
 		}
 		if f.Error != nil {
-			err := fmt.Errorf("dsh rpc %s: %d: %s", method, f.Error.Code, f.Error.Message)
+			err := &dshRPCError{method: method, code: f.Error.Code, message: f.Error.Message}
 			if method == "session/resume" && f.Error.Code == -32603 {
 				if p, ok := params.(map[string]string); ok && f.Error.Message == fmt.Sprintf("session %q not found", p["sessionId"]) {
-					err = fmt.Errorf("%w: %v", errDSHSessionNotFound, err)
+					return nil, fmt.Errorf("%w: %w", errDSHSessionNotFound, err)
 				}
 			}
 			return nil, err
@@ -1114,12 +1151,13 @@ func runDSHSessionWithProfile(ctx context.Context, cfg *dshRuntimeConfig, sessio
 		// binding a turn, reconciling accounting, or sending model input.
 		return opts.InspectSession(ctx, p)
 	}
-	if session.DSHPendingMode != "" && !createdAfterMissing {
+	if preset := session.DSHPendingMode; preset != "" && !reconcileOnly && !createdAfterMissing && (resume || !leased) &&
+		preset == dshSessionPermissionMode(ctx, session) {
 		// A restored SDK session keeps the preset it pinned when it opened.
-		if err := dshApplyPermissionMode(ctx, p, session.DSHSessionID, session.DSHPendingMode); err != nil {
+		if err := dshApplyPermissionMode(ctx, p, session.DSHSessionID, preset, leased); err != nil {
 			return err
 		}
-		turn.dshModeApplied = session.DSHPendingMode
+		turn.dshModeApplied = preset
 	}
 	p.approval = func(raw json.RawMessage) (string, error) {
 		outcome := "rejected"

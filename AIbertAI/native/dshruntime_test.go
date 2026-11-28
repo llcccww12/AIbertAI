@@ -22,12 +22,16 @@ func TestDSHMockProcess(t *testing.T) {
 	}
 	scan := bufio.NewScanner(os.Stdin)
 	enc := json.NewEncoder(os.Stdout)
+	var permissionLease, userPromptOperation string
+	permissionDrained, permissionReleased := false, false
 	for scan.Scan() {
 		var req struct {
 			ID     int    `json:"id"`
 			Method string `json:"method"`
 			Params struct {
-				SessionID string `json:"sessionId"`
+				SessionID       string `json:"sessionId"`
+				OperationID     string `json:"operationId"`
+				PromptOperation string `json:"aibertaiOperationId"`
 			} `json:"params"`
 		}
 		if json.Unmarshal(scan.Bytes(), &req) != nil {
@@ -69,9 +73,35 @@ func TestDSHMockProcess(t *testing.T) {
 			_, _ = fmt.Fprintln(f, "prompt")
 			_ = f.Close()
 		}
-		if req.Method == "session/query" && os.Getenv("DSH_MOCK_PERMISSION") == "1" {
-			_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": map[string]any{"kind": "command", "execution": map[string]any{"commandId": "permission-1"}}})
-			continue
+		if os.Getenv("DSH_MOCK_PERMISSION") == "1" {
+			switch req.Method {
+			case "aibertai/turn-bind":
+				if permissionLease == "" {
+					permissionLease = req.Params.OperationID
+				}
+			case "session/query":
+				if !validUUID(permissionLease) || req.Params.PromptOperation != permissionLease {
+					os.Exit(7)
+				}
+				_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": map[string]any{"kind": "command", "execution": map[string]any{"commandId": "permission-1", "result": map[string]string{"kind": "success"}}}})
+				continue
+			case "aibertai/query-wait":
+				permissionDrained = true
+			case "aibertai/turn-release":
+				if req.Params.OperationID == permissionLease {
+					permissionReleased = permissionDrained
+				}
+			case "session/prompt":
+				if !permissionReleased || !validUUID(req.Params.PromptOperation) || req.Params.PromptOperation == permissionLease {
+					os.Exit(8)
+				}
+				userPromptOperation = req.Params.PromptOperation
+			case "session/wait":
+				_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "method": "session.event", "params": map[string]any{
+					"sessionId": req.Params.SessionID, "aibertaiOperationId": userPromptOperation,
+					"event": map[string]any{"type": "turn/end", "data": map[string]any{"reason": map[string]string{"kind": "completed"}}},
+				}})
+			}
 		}
 		if req.Method == "session/query" && os.Getenv("DSH_MOCK_QUERY") == "1" {
 			_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "method": "session.event", "params": map[string]any{"sessionId": req.Params.SessionID, "event": map[string]any{"type": "goal/change", "seq": 7, "data": map[string]any{"operation": "create"}}}})
@@ -193,8 +223,14 @@ func TestDSHPendingPermissionModeSwitchesBeforeTurn(t *testing.T) {
 		}
 		return cmd, err
 	}
-	turn := acpTurn{Prompt: "hello"}
-	err := runDSHTurn(t.Context(), cfg, acpSession{DSHSessionID: "session", DSHPendingMode: "danger-full-access"}, &turn, false, nil)
+	cfg.LeasePool = &dshLeasePool{}
+	t.Cleanup(func() { _ = cfg.LeasePool.close(context.Background()) })
+	cfg.ValidateLease = func(context.Context, acpSession) (selectedModelConfig, error) {
+		return selectedModelConfig{ID: "model"}, nil
+	}
+	turn := acpTurn{Operation: "11111111-1111-4111-8111-111111111111", Prompt: "hello"}
+	ctx := context.WithValue(t.Context(), dshTrustedLaunchKey{}, true)
+	err := runDSHTurn(ctx, cfg, acpSession{DSHSessionID: "22222222-2222-4222-8222-222222222222", Model: "model", Mode: modeFullAccess, DSHPendingMode: "danger-full-access"}, &turn, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

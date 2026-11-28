@@ -408,6 +408,9 @@ func (g *dshLocalGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// after the proxy substitutes the upstream model. A changed model still
 	// fails the server's exact hash check during recovery.
 	upstreamModel := strings.TrimSuffix(g.selected.Model, "@"+g.model)
+	if g.requireInvocationID && g.protocol == "openai_chat_completions" {
+		body = projectDSHChatToolImages(body)
+	}
 	record := &dshLocalRecord{SessionID: g.session, OperationID: g.operationID, CallID: id, ModelID: g.model, Protocol: g.protocol, UpstreamModel: upstreamModel, Body: body, State: "dispatched"}
 	g.pending = record
 	g.ackSignal = make(chan struct{})

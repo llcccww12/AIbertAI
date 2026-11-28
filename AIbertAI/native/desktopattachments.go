@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -71,6 +72,60 @@ func openDesktopAttachment(root *os.Root, file acpAttachment, maximum int64) (*o
 	}
 	defer dir.Close()
 	return openAttachmentFile(dir, file.Name, maximum)
+}
+
+// Publish the already-authorized bytes inside the tool workspace. Include the
+// session and attachment URI so another attachment with the same name gets a
+// separate copy, while retrying a turn can reuse its copy.
+func (h *relaySessionHost) stageDSHDocumentAttachment(session acpSession, file acpAttachment, data []byte) (string, error) {
+	if h.live == nil || h.live.workspaces == nil {
+		return "", errWorkspacePath
+	}
+	digest := sha256.Sum256([]byte(session.ID + "\x00" + file.URI))
+	path := fmt.Sprintf("%s/uploads/attachment-%x/%s", workspaceDataDir, digest, file.Name)
+	relative, err := workspaceRelative(path)
+	if err != nil {
+		return "", err
+	}
+	workspaces := h.live.workspaces
+	workspaces.writes.Lock()
+	defer workspaces.writes.Unlock()
+	root, err := workspaces.sessionRoot(session)
+	if err != nil {
+		return "", err
+	}
+	defer root.Close()
+	dir := filepath.Dir(relative)
+	if dshMissingWriteParent(root, path) {
+		if err := root.MkdirAll(dir, 0700); err != nil {
+			return "", err
+		}
+	}
+	state, err := dshWorkspaceTarget(root, path)
+	if err != nil {
+		return "", err
+	}
+	parent, err := root.OpenRoot(dir)
+	if err != nil {
+		return "", err
+	}
+	defer parent.Close()
+	if state.File != nil {
+		existing, err := openAttachmentFile(parent, file.Name, int64(len(data)))
+		if err != nil {
+			return "", err
+		}
+		defer existing.Close()
+		current, err := io.ReadAll(io.LimitReader(existing, int64(len(data))+1))
+		if err != nil || !bytes.Equal(current, data) {
+			return "", errInvalidUpload
+		}
+		return path, nil
+	}
+	if err := persistSourceState(parent, file.Name, data, true); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 // A file URI in history is readable only if it belongs to the requested session.

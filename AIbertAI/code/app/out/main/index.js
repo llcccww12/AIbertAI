@@ -13023,8 +13023,8 @@ function queryFromUrl(value) {
     return "";
   }
 }
-function waitForLoad(contents, expectedUrl, signal, navigate) {
-  const expected = queryFromUrl(expectedUrl);
+function waitForLoad(contents, expectedUrl, signal, navigate, checkSearch = true) {
+  const expected = checkSearch && queryFromUrl(expectedUrl);
   return new Promise((resolve, reject) => {
     let timer2;
     const cleanup2 = () => {
@@ -13037,7 +13037,7 @@ function waitForLoad(contents, expectedUrl, signal, navigate) {
     const done = () => {
       if (contents.isDestroyed()) return;
       const current = contents.getURL();
-      const ready2 = expected ? current.includes("baidu.com/s") || queryFromUrl(current) === expected : current.startsWith("http") && !current.includes("/s?wd=") && !current.includes("/link?url=");
+      const ready2 = !checkSearch ? /^https?:\/\//.test(current) : expected ? current.includes("baidu.com/s") || queryFromUrl(current) === expected : current.startsWith("http") && !current.includes("/s?wd=") && !current.includes("/link?url=");
       if (!ready2) return;
       cleanup2();
       resolve();
@@ -13093,6 +13093,145 @@ async function readSearch(contents, requestedQuery, engine) {
 }
 async function readArticle(contents) {
   return await contents.executeJavaScript("(" + readPageText.toString() + ")(0," + BROWSER_TEXT_LIMIT + ")", true);
+}
+const runtimeBrowserCalls = new Map();
+const runtimeBrowserControls = new Map();
+let runtimeEmbeddedControls;
+function endRuntimeBrowserControl(operationId) {
+  const state = runtimeBrowserControls.get(operationId);
+  if (!state) return;
+  runtimeBrowserControls.delete(operationId);
+  runtimeEmbeddedControls?.release(state.grant.id);
+}
+async function runtimeBrowserControl(scope, name, args, signal) {
+  if (!isAccountId(args?.operationId)) return { error: "browser_tool_invalid" };
+  const activePage = () => embeddedBrowserPages(scope).find((page) => page.active);
+  const observe = name === "browser_inspect_controls";
+  let page = activePage();
+  if (observe && !page) {
+    const deadline = Date.now() + 2000;
+    while (!page && !signal.aborted && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      page = activePage();
+    }
+  }
+  if (!page || page.contents.isLoadingMainFrame()) return { error: "no_ready_visible_page" };
+  const operationId = args.operationId;
+  let state = runtimeBrowserControls.get(operationId);
+  if (observe && state?.contents !== page.contents) {
+    endRuntimeBrowserControl(operationId);
+    const grant = { id: node_crypto.randomUUID(), tabId: page.contents.id, revision: 1, expiresAt: 0 };
+    state = { scope, grant, contents: page.contents };
+    runtimeBrowserControls.set(operationId, state);
+    runtimeEmbeddedControls ??= new EmbeddedBrowser();
+    try {
+      await runtimeEmbeddedControls.request(scope, { kind: "grant", grant }, { signal });
+      if (signal.aborted || runtimeBrowserControls.get(operationId) !== state) throw new BrowserControlError("cancelled");
+    } catch (error) {
+      endRuntimeBrowserControl(operationId);
+      throw error;
+    }
+  }
+  if (!state || !sameScope(state.scope, scope) || state.contents !== page.contents || signal.aborted) {
+    return { error: "stale_ref", hint: "Inspect the current page again." };
+  }
+  const execute = (tool, toolArgs) => runtimeEmbeddedControls.request(scope, {
+    kind: "execute", grantId: state.grant.id, revision: state.grant.revision,
+    deadline: Date.now() + 10000, tool, args: toolArgs,
+  }, { signal, assertCurrent: () => {
+    const access = browserService()?.state(scope);
+    if (activePage()?.contents !== state.contents || runtimeBrowserControls.get(operationId) !== state ||
+        access?.available && (!access.enabled || access.mode === "plan")) throw new BrowserControlError("stale_ref");
+  } });
+  if (observe) {
+    state.approval = undefined;
+    const result = await execute("browser_snapshot", {});
+    const nodes = result.data.nodes.filter((node) => node.ref && !node.protected && !node.disabled);
+    const controls = nodes.slice(0, 150).map(({ ref, role, name }) => ({ ref, role, name: clipped(name.trim(), 100) }));
+    state.snapshot = { id: result.data.snapshotId, origin: browserOrigin(result.page.url), controls };
+    return { snapshotId: state.snapshot.id, origin: state.snapshot.origin, controls, truncated: controls.length < nodes.length || result.data.truncated };
+  }
+  const tool = name === "browser_click_control" ? "browser_click" : name === "browser_fill_field" ? "browser_fill" : null;
+  if (!tool) return { error: "browser_tool_invalid" };
+  const target = state.snapshot?.controls.find((control) => control.ref === args.ref);
+  if (!target || state.snapshot.id !== args.snapshotId || browserOrigin(page.contents.getURL()) !== state.snapshot.origin) return { error: "stale_ref" };
+  if (tool === "browser_fill" && (!["textbox", "searchbox", "spinbutton", "combobox"].includes(target.role) || typeof args.text !== "string")) {
+    return { error: "unsupported_target" };
+  }
+  const fingerprint = JSON.stringify([tool, args.snapshotId, args.ref, args.text, page.contents.getURL()]);
+  if (!args.approvalId) {
+    const id = node_crypto.randomUUID();
+    state.approval = { id, fingerprint };
+    return { approvalId: id, origin: state.snapshot.origin, label: target.name || target.role };
+  }
+  const approval = state.approval;
+  state.approval = undefined;
+  if (approval?.id !== args.approvalId || approval.fingerprint !== fingerprint) return { error: "stale_ref" };
+  state.snapshot = undefined;
+  const result = await execute(tool, { snapshotId: args.snapshotId, ref: args.ref, ...(tool === "browser_fill" ? { text: args.text } : {}) });
+  return result.data;
+}
+async function runtimeBrowserPage(scope, name, args, signal) {
+  const owner = browserOwner();
+  if (!embedded || !owner || owner.isDestroyed()) return { error: "browser_unavailable" };
+  const access = browserService()?.state(scope);
+  if (access?.available && !access.enabled) return { error: "browser_tools_disabled" };
+  if (["browser_inspect_controls", "browser_click_control", "browser_fill_field"].includes(name)) {
+    if (access?.mode === "plan") return { error: "browser_tools_disabled" };
+    return runtimeBrowserControl(scope, name, args, signal);
+  }
+  let contents, httpStatus;
+  if (name === "browser_read_current_page" && args && Object.keys(args).length === 0) {
+    contents = embeddedBrowserPages(scope).find((page) => page.owner === owner && page.active)?.contents;
+    if (!contents) return { error: "no_visible_page", hint: "Open the AIbertAI browser panel in this conversation and select a webpage." };
+    if (contents.isLoadingMainFrame()) return { error: "page_loading" };
+  } else if (name === "browser_open_for_verification" && args && Object.keys(args).length === 1 && typeof args.url === "string" && args.url.length <= 4096) {
+    browserOrigin(args.url);
+    const target = { ...scope, tabId: "tab-" + node_crypto.randomUUID() };
+    await embedded.ready(owner, scope);
+    if (signal.aborted) throw signal.reason;
+    contents = embedded.contents(owner, target);
+    const recordStatus = (_event, _url, status) => { httpStatus = status; };
+    contents.on("did-navigate", recordStatus);
+    try {
+      await waitForLoad(contents, args.url, signal, () => {
+        embedded.openTab(owner, target, args.url, true);
+        owner.webContents.send("workspace:browser:visibility", { ...scope, visible: true });
+      }, false);
+    } catch (error) {
+      if (signal.aborted && !contents.isDestroyed()) contents.stop();
+      throw error;
+    } finally {
+      contents.removeListener("did-navigate", recordStatus);
+    }
+  } else {
+    return { error: "browser_tool_invalid" };
+  }
+  if (signal.aborted) throw signal.reason;
+  const page = await contents.executeJavaScript("(" + readPageText.toString() + ")(0,4000)");
+  browserOrigin(page.url);
+  return { url: page.url.slice(0, 4096), title: page.title.slice(0, 512), text: page.text, truncated: page.truncated, httpStatus };
+}
+async function answerRuntimeBrowserTool(proc, authorizationServer, event) {
+  const account = currentAccount();
+  if (!account || account.id !== activeAccountId || account.server.url !== authorizationServer ||
+      !isLoggedIn(account.id) || !isAccountId(event.id) || !isAccountId(event.sessionId) ||
+      runtimeBrowserCalls.has(event.id)) return;
+  const scope = { accountId: account.id, sessionId: event.sessionId };
+  const controller = new AbortController();
+  runtimeBrowserCalls.set(event.id, controller);
+  const reply = { type: "browser_tool_result", id: event.id };
+  try {
+    reply.result = await runtimeBrowserPage(scope, event.name, event.arguments, controller.signal);
+    if (Buffer.byteLength(JSON.stringify(reply.result)) > 48 * 1024) reply.result = { error: "browser_result_too_large" };
+  } catch (error) {
+    reply.result = { error: error?.uncertain ? "outcome_unknown" : error instanceof BrowserControlError ? error.code : "browser_load_failed" };
+  } finally {
+    runtimeBrowserCalls.delete(event.id);
+  }
+  if (!controller.signal.aborted && child$2 === proc && currentAccount()?.id === scope.accountId && isLoggedIn(scope.accountId)) {
+    proc.stdin?.write(JSON.stringify(reply) + "\n");
+  }
 }
 class BrowserResearch {
   constructor(ownerFor = browserOwner, access = (_scope, _tabId, _tool, signal, run2) => run2(signal)) {
@@ -13727,8 +13866,11 @@ class BrowserPageController {
     ctx.check();
     return context;
   }
-  async execute(tool, args, revision, deadline, signal, files2) {
-    const ctx = { signal, deadline, mutated: false, check: () => this.assertLive(revision, signal, deadline, browserToolAccess(tool) === "observe" || tool === "browser_handle_dialog") };
+  async execute(tool, args, revision, deadline, signal, files2, assertCurrent) {
+    const ctx = { signal, deadline, mutated: false, check: () => {
+      this.assertLive(revision, signal, deadline, browserToolAccess(tool) === "observe" || tool === "browser_handle_dialog");
+      assertCurrent?.();
+    } };
     try {
       ctx.check();
       if (this.dialog && !["browser_dialogs", "browser_handle_dialog"].includes(tool)) throw new BrowserControlError("dialog_open");
@@ -13812,6 +13954,7 @@ class BrowserPageController {
         if (!element) throw new BrowserControlError("stale_ref");
         const located = await this.locate(element, ctx);
         this.observed(args);
+        if (assertCurrent && ["password", "file"].includes(located.type)) throw new BrowserControlError("unsupported_target");
         if (tool === "browser_hover") {
           await this.input("Input.dispatchMouseEvent", { type: "mouseMoved", x: located.x, y: located.y }, ctx);
         } else if (tool === "browser_drag") {
@@ -14279,7 +14422,7 @@ class EmbeddedBrowser extends node_events.EventEmitter {
       else data = entry.downloads.cancel(id2, String(request2.args.downloadId));
       return { page, data };
     }
-    return entry.controller.execute(request2.tool, request2.args, request2.revision, request2.deadline, signal, request2.files);
+    return entry.controller.execute(request2.tool, request2.args, request2.revision, request2.deadline, signal, request2.files, options2.assertCurrent);
   }
 }
 const automatic = /* @__PURE__ */ new Set(["fullscreen", "pointerLock", "clipboard-sanitized-write"]);
@@ -14497,6 +14640,9 @@ async function activateBrowserRuntime(accountId) {
   }
 }
 function closeBrowserRuntime() {
+  for (const call of runtimeBrowserCalls.values()) call.abort();
+  runtimeBrowserCalls.clear();
+  for (const id of runtimeBrowserControls.keys()) endRuntimeBrowserControl(id);
   service?.runtimeClosed();
 }
 function removeBrowserAccount(accountId, deleteData = true) {
@@ -14880,6 +15026,18 @@ function onStdoutLine(proc, token, raw, logger, authorizationServer) {
     if (child$2 === proc) void answerRuntimeDesignTool(proc, authorizationServer, event);
     return;
   }
+  if (event?.event === "browser_tool_cancel" && child$2 === proc) {
+    runtimeBrowserCalls.get(event.id)?.abort();
+    return;
+  }
+  if (event?.event === "browser_tool_end" && child$2 === proc) {
+    endRuntimeBrowserControl(event.operationId);
+    return;
+  }
+  if (event?.event === "browser_tool" && authorizationServer) {
+    if (child$2 === proc) void answerRuntimeBrowserTool(proc, authorizationServer, event);
+    return;
+  }
   if (!event || event.event !== "ready") {
     if (event?.event === "error" && child$2 === proc) console.error(`[main] runtime refused to start: ${typeof event.reason === "string" ? event.reason : "unknown"}`);
     logger.write(line + "\n");
@@ -14935,7 +15093,7 @@ async function start$2(account) {
     return;
   }
   const token = node_crypto.randomBytes(32).toString("base64url");
-  const init = { type: "init", designBridge: desktopPlatform().features.design, machineId: installationId(), device: {
+  const init = { type: "init", designBridge: desktopPlatform().features.design, browserBridge: Boolean(embedded && desktopPlatform().features.browserControl), machineId: installationId(), device: {
     ...deviceIdentity(),
     arch: process.arch,
     locale: typeof readPrefs().locale === "string" ? readPrefs().locale : electron.app.getLocale(),
@@ -18995,10 +19153,14 @@ class BrowserHost {
     return this.ensure(owner, scope2).view.webContents;
   }
   /** 普通新标签加入页签栏，但不挂载视图、切换选中页或抢焦点。 */
-  openTab(owner, scope2, url2) {
+  openTab(owner, scope2, url2, activate = false) {
     this.hydrate(owner, scope2);
-    this.ensure(owner, scope2).userOpened = true;
-    return this.navigate(owner, scope2, url2);
+    const page = this.ensure(owner, scope2);
+    page.userOpened = true;
+    if (activate) page.lastShown = ++this.shownSequence;
+    const state = this.navigate(owner, scope2, url2);
+    if (activate) owner.webContents.send("workspace:browser:state", { ...state, userOpened: true, activate: true });
+    return state;
   }
   navigate(owner, scope2, input, navigationId, options2) {
     const url2 = browserUrl(input);

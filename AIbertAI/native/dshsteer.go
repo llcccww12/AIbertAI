@@ -84,7 +84,7 @@ func (h *relaySessionHost) sendDSHSteer(ctx context.Context, slot *dshLeaseSlot,
 		if err != nil {
 			return err
 		}
-		input, _, err = h.prepareDSHImageInput(ctx, row.ID, item.Text, item.Attachments, selected.SupportsVision)
+		input, _, err = h.prepareDSHImageInput(ctx, row, item.Text, item.Attachments, selected.SupportsVision)
 		if err != nil {
 			return err
 		}

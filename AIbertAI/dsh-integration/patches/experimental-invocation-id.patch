@@ -11936,7 +11936,7 @@ diff --git a/packages/sdk/server/src/server.ts b/packages/sdk/server/src/server.
        this.assertLiveAgent(rec, sessionId)
        const agent = rec.handle.agent
 -      if (agent.status !== 'idle' || agent.inbox.nextTurn.length !== 0 || agent.inbox.nextStep.length !== 0
-+      if (agent.status !== 'idle' || agent.inbox.nextTurn.length !== 0 || agent.inbox.nextStep.some(message => message.source.kind !== 'plan-mode' || message.source.form !== 'notice')
++      if (agent.status !== 'idle' || agent.inbox.nextTurn.length !== 0 || agent.inbox.nextStep.some(message => message.source.kind !== 'user-approval' && (message.source.kind !== 'plan-mode' || message.source.form !== 'notice'))
          || this.ctx.get('goals')?.get(agent)?.activation === 'armed') throw new Error('turn lease busy')
      }
    }

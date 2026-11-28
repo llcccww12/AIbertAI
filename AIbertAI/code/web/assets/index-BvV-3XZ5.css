@@ -34,3 +34,77 @@ html[data-custom-background] #root{isolation:isolate}.theme-background{position:
 .account-avatar-body{display:flex;min-width:0;flex:1;flex-direction:column;gap:2px}.account-avatar-name{overflow:hidden;font-size:15px;line-height:20px;font-weight:var(--weight-demibold);text-overflow:ellipsis;white-space:nowrap}.account-avatar-email{overflow:hidden;font-size:12px;line-height:16px;color:var(--muted-foreground);text-overflow:ellipsis;white-space:nowrap}.account-avatar-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.account-avatar-hint{margin-top:4px;font-size:12px;line-height:16px;color:var(--muted-foreground)}.account-avatar-hint.is-error{color:var(--destructive)}
 :root[data-theme=century-blue] .app-sidebar .sidebar-quota,:root[data-theme=textured-gray] .app-sidebar .sidebar-quota{border-color:var(--emboss-menu-border);background:var(--emboss-paper)}:root[data-theme=century-blue] .app-sidebar .sidebar-quota:hover,:root[data-theme=textured-gray] .app-sidebar .sidebar-quota:hover{background:var(--emboss-hover)}
 @media(prefers-reduced-motion:reduce){.sidebar-quota-bar-fill,.sidebar-quota-ring-fill,.app-sidebar .sidebar-quota,.account-avatar-overlay{transition:none}}
+
+/* The chat column narrows independently of the window when a side panel opens. */
+.conversation-composer:not([data-new-session]) .composer-toolbar .composer-actions {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.conversation-composer:not([data-new-session]) .composer-toolbar .composer-model-context {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.conversation-composer:not([data-new-session]) .composer-toolbar .composer-model {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.conversation-composer:not([data-new-session]) .composer-toolbar .composer-model-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conversation-composer:not([data-new-session]) .composer-toolbar :is(.dsh-meter-trigger, .composer-model-chevron) {
+  flex-shrink: 0;
+}
+@container composer (max-width: 560px) {
+  .conversation-composer:not([data-new-session]) .composer-toolbar .dsh-meter-trigger {
+    display: none;
+  }
+}
+@container composer (max-width: 500px) {
+  .conversation-composer:not([data-new-session]) .composer-toolbar .composer-permission {
+    justify-content: center;
+    width: var(--composer-control-size);
+    padding-inline: 0;
+  }
+  .conversation-composer:not([data-new-session]) .composer-toolbar .composer-permission > :is(span, svg:last-child) {
+    display: none;
+  }
+}
+@container composer (max-width: 350px) {
+  .conversation-composer:not([data-new-session]) .composer-tools .design-resource-picker {
+    display: none;
+  }
+}
+
+.resource-scenes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.resource-scenes-label {
+  margin-inline-end: 5px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.resource-scene-chip {
+  height: 28px;
+  max-width: 100%;
+  gap: 5px;
+  padding-inline: 10px;
+  border-radius: 7px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.resource-scene-chip[aria-pressed=true] {
+  background: var(--settings-group, var(--muted));
+  color: var(--foreground);
+}
+.resource-scene-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

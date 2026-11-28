@@ -47,7 +47,7 @@ func TestDSHFailedModelCallSettlesWithoutLedgerProof(t *testing.T) {
 	for _, tc := range []struct {
 		status int
 		code   string
-	}{{200, "dsh_model_stream_ended"}, {502, "dsh_model_service_unavailable"}, {0, "dsh_model_service_unavailable"}} {
+	}{{200, "dsh_model_stream_ended"}, {400, "dsh_model_request_rejected"}, {502, "dsh_model_service_unavailable"}, {0, "dsh_model_service_unavailable"}} {
 		g := pendingSettleGateway(t, tc.status)
 		if err := g.acceptModelSettlement(context.Background(), settleSession, settleCall, "failed", 7); err != nil {
 			t.Fatalf("status %d: %v", tc.status, err)

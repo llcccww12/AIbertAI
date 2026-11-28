@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"path"
+	"slices"
 	"strings"
 )
 
@@ -23,9 +26,52 @@ type dshImageInput struct {
 	blocks []map[string]string
 }
 
+// The SDK's Chat Completions adapter emits tool-result images as synthetic
+// user messages. Keep them for the turn that read them. A new user turn can
+// read the files again instead of resending every previous preview.
+func projectDSHChatToolImages(body []byte) []byte {
+	var request map[string]json.RawMessage
+	var messages []json.RawMessage
+	if json.Unmarshal(body, &request) != nil || json.Unmarshal(request["messages"], &messages) != nil {
+		return body
+	}
+	type imageBlock struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	newTurn := false
+	changed := false
+	for i := len(messages) - 1; i >= 0; i-- {
+		var message struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		}
+		if json.Unmarshal(messages[i], &message) != nil || message.Role != "user" {
+			continue
+		}
+		var blocks []imageBlock
+		if json.Unmarshal(message.Content, &blocks) != nil || len(blocks) < 2 ||
+			blocks[0] != (imageBlock{Type: "text", Text: "Attached image(s) from tool result:"}) ||
+			slices.ContainsFunc(blocks[1:], func(block imageBlock) bool { return block.Type != "image_url" }) {
+			newTurn = true
+			continue
+		}
+		if newTurn {
+			messages[i] = json.RawMessage(`{"role":"user","content":"[Images from an earlier tool result were omitted. Re-read the source files if needed.]"}`)
+			changed = true
+		}
+	}
+	if !changed {
+		return body
+	}
+	request["messages"], _ = json.Marshal(messages)
+	projected, _ := json.Marshal(request)
+	return projected
+}
+
 // prepareDSHImageInput reads only attachments already authorized for this
 // session. The ordered blocks are ephemeral; the SDK persists admitted images.
-func (h *relaySessionHost) prepareDSHImageInput(ctx context.Context, session, prompt string, files []acpAttachment, vision bool) (dshImageInput, bool, error) {
+func (h *relaySessionHost) prepareDSHImageInput(ctx context.Context, session acpSession, prompt string, files []acpAttachment, vision bool) (dshImageInput, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return dshImageInput{}, false, err
 	}
@@ -33,7 +79,7 @@ func (h *relaySessionHost) prepareDSHImageInput(ctx context.Context, session, pr
 	remaining, textRemaining := int64(relayMaxUpload), maxAttachmentText
 	hasImage := false
 	for _, file := range files {
-		data, err := h.readPromptAttachment(session, file, remaining)
+		data, err := h.readPromptAttachment(session.ID, file, remaining)
 		if err != nil {
 			return dshImageInput{}, false, err
 		}
@@ -58,8 +104,20 @@ func (h *relaySessionHost) prepareDSHImageInput(ctx context.Context, session, pr
 			blocks = append(blocks, map[string]string{"type": "image", "data": base64.StdEncoding.EncodeToString(data), "mimeType": mime, "name": file.Name})
 			continue
 		}
-		if mime == "application/pdf" {
-			extracted, err := h.extractAttachment(context.WithValue(ctx, dshAttachmentExtractionKey{}, true), file.Name, data)
+		if mime == "application/pdf" || ext == ".docx" || ext == ".xlsx" || ext == ".pptx" {
+			header := "\n\n[Attachment: " + file.Name + "]\n"
+			original, stageErr := h.stageDSHDocumentAttachment(session, file, data)
+			if stageErr == nil {
+				header += fmt.Sprintf("Original file in workspace: %q. For file editing, open this path and save the result as a new file.\n", original)
+			} else {
+				header += "[The original file could not be made available to workspace tools. The attachment can still be downloaded from the conversation.]\n"
+			}
+			var extracted attachmentText
+			if mime == "application/pdf" {
+				extracted, err = h.extractAttachment(context.WithValue(ctx, dshAttachmentExtractionKey{}, true), file.Name, data)
+			} else {
+				extracted, err = extractOfficeAttachmentWithLimit(ext, data, relayMaxUpload)
+			}
 			if err := ctx.Err(); err != nil {
 				return dshImageInput{}, false, err
 			}
@@ -68,32 +126,16 @@ func (h *relaySessionHost) prepareDSHImageInput(ctx context.Context, session, pr
 				if extracted.Truncated {
 					text += "\n[Attachment text truncated.]"
 				}
-				blocks = append(blocks, map[string]string{"type": "text", "text": "\n\n[Attachment: " + file.Name + "]\n" + text})
+				blocks = append(blocks, map[string]string{"type": "text", "text": header + text})
 				continue
 			}
-			blocks = append(blocks, map[string]string{"type": "text", "text": "\n\n[Attachment: " + file.Name + "]\n[No readable text was extracted. The original file remains available.]"})
+			blocks = append(blocks, map[string]string{"type": "text", "text": header + "[No readable text was extracted.]"})
 			continue
 		}
 		// Plain text is already usable by the SDK; the legacy extraction
 		// preview limit must not silently cut off the model's attachment.
-		if mime != "application/pdf" && ext != ".docx" && ext != ".xlsx" && ext != ".pptx" && isAttachmentText(data) {
+		if isAttachmentText(data) {
 			blocks = append(blocks, map[string]string{"type": "text", "text": "\n\n[Attachment: " + file.Name + "]\n" + string(data)})
-			continue
-		}
-		if mime != "application/pdf" && (ext == ".docx" || ext == ".xlsx" || ext == ".pptx") {
-			extracted, err := extractOfficeAttachmentWithLimit(ext, data, relayMaxUpload)
-			if err := ctx.Err(); err != nil {
-				return dshImageInput{}, false, err
-			}
-			if err == nil && strings.TrimSpace(extracted.Text) != "" {
-				text := extracted.Text
-				if extracted.Truncated {
-					text += "\n[Attachment text truncated.]"
-				}
-				blocks = append(blocks, map[string]string{"type": "text", "text": "\n\n[Attachment: " + file.Name + "]\n" + text})
-				continue
-			}
-			blocks = append(blocks, map[string]string{"type": "text", "text": "\n\n[Attachment: " + file.Name + "]\n[No readable text was extracted. The original file remains available.]"})
 			continue
 		}
 		text := "[No readable text was extracted. The original file remains available.]"

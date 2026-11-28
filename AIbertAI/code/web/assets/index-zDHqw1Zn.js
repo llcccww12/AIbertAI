@@ -111312,7 +111312,6 @@ const bZ = [
     { id: "skills", icon: m0, group: "workspace" },
     { id: "knowledgeBases", icon: i0, group: "workspace" },
     { id: "tools", icon: l4, group: "workspace" },
-    { id: "browser", icon: Rc, group: "workspace" },
     { id: "updates", icon: wd, group: "support" },
     { id: "diagnostics", icon: Ptt, group: "support" },
   ],
@@ -111320,8 +111319,7 @@ const bZ = [
 function Hwt(e, t, n = !1) {
   return bZ.filter(
     (r) =>
-      (r.id !== "storage" || ((e === "win32" || e === "darwin") && !n)) &&
-      (r.id !== "browser" || t?.browserControl !== !1),
+      r.id !== "storage" || ((e === "win32" || e === "darwin") && !n),
   );
 }
 function Ly() {
@@ -111334,7 +111332,7 @@ function Ly() {
     n = La(),
     r = new URLSearchParams(t.search).get("settings"),
     s = r !== null,
-    i = e.find((u) => u.id === r)?.id ?? "account",
+    i = e.find((u) => u.id === (r === "browser" ? "tools" : r))?.id ?? "account",
     o = y.useCallback(
       (u) => {
         const d = new URLSearchParams(t.search);
@@ -111478,7 +111476,7 @@ const qwt = {
     cloud: "云浏览器",
     cloudSoon: "云浏览器即将推出",
     panelTitle: "让 AI 帮你操作网页",
-    hint: "AIbertAI可以在你的 Chrome 或 Edge 中查看网页、点击和填写内容，沿用已登录的账号。",
+    hint: "把 Chrome 或 Edge 中已打开的网页分享给 AIbertAI，就能在对话中总结内容、提取信息。",
     hintOhos:
       "AIbertAI可以在你的海泰浏览器或华为浏览器中查看网页、点击和填写内容，沿用已登录的账号。",
     sitePermissionsHintOhos:
@@ -111546,10 +111544,6 @@ const qwt = {
     },
     connected: "{{browsers}} 已连接",
     connectedHint: "回到对话中，告诉AIbertAI要访问哪个网站、完成什么任务。",
-    sharedHint: "在浏览器扩展里分享当前页，再在这里读取正文或定位标签页。",
-    sharedRead: "读取已分享网页",
-    sharedFocus: "定位 Chrome 标签页",
-    sharedEmpty: "请先在浏览器扩展中分享当前页。",
     desktopOnly: "请在AIbertAI桌面应用中连接 Chrome 或 Edge。",
     enable: "允许此对话使用浏览器",
     enableHint: "此对话的浏览器访问已关闭。开启后，AI 才能查看和操作网页。",
@@ -111713,7 +111707,7 @@ const qwt = {
     cloud: "Cloud browser",
     cloudSoon: "Cloud browser is coming soon",
     panelTitle: "Let AI work in your browser",
-    hint: "AIbertAI can read pages, click and fill in forms in your Chrome or Edge, using your signed-in accounts.",
+    hint: "Share a page from Chrome or Edge to summarize it or extract information in a chat.",
     hintOhos:
       "AIbertAI can read pages, click and fill in forms in Haitai Browser or Huawei Browser, using your signed-in accounts.",
     sitePermissionsHintOhos:
@@ -111784,10 +111778,6 @@ const qwt = {
     connected: "{{browsers}} connected",
     connectedHint:
       "Return to your conversation and tell AIbertAI which website to use and what to do.",
-    sharedHint: "Share the current tab in the browser extension, then read or locate it here.",
-    sharedRead: "Read shared page",
-    sharedFocus: "Locate Chrome tab",
-    sharedEmpty: "Share the current tab from the browser extension first.",
     desktopOnly: "Use the AIbertAI desktop app to connect Chrome or Edge.",
     enable: "Allow browser access in this chat",
     enableHint:
@@ -113451,6 +113441,9 @@ const qwt = {
       clearFilters: "清除筛选",
       noMatches: "没有匹配的资源",
       showMore: "显示更多",
+      scenes: "场景",
+      allScenes: "全部",
+      otherScenes: "其他",
       defaultUse: "新对话默认启用",
       onlyDefaults: "仅看默认启用",
       filterTags: "标签",
@@ -116484,6 +116477,9 @@ const qwt = {
       clearFilters: "Clear filters",
       noMatches: "No matching resources",
       showMore: "Show more",
+      scenes: "Scene",
+      allScenes: "All",
+      otherScenes: "Other",
       defaultUse: "Enabled by default in new conversations",
       onlyDefaults: "Only enabled by default",
       filterTags: "Tags",
@@ -138114,6 +138110,44 @@ const x1 = 30,
   }),
   OM = (e, t) =>
     w8t.compare(e.name, t.name) || (e.id < t.id ? -1 : e.id > t.id ? 1 : 0);
+const preferredResourceScenes = [
+  "投标", "漫剧制作", "设计出图", "网页开发", "文档办公",
+];
+function resourceSceneTags(entries, source) {
+  const tags = new Map();
+  let hasUntagged = false;
+  for (const entry of entries) {
+    if (entry.category !== source) continue;
+    if (!entry.tags?.length) hasUntagged = true;
+    for (const tag of entry.tags ?? []) {
+      const counted = tags.get(tag.id);
+      if (counted) counted.count++;
+      else tags.set(tag.id, { ...tag, count: 1 });
+    }
+  }
+  const preferredRank = (tag) => {
+    const index = preferredResourceScenes.indexOf(gC(tag.name));
+    return index < 0 ? preferredResourceScenes.length : index;
+  };
+  const common = [...tags.values()]
+    .sort(
+      (a, b) =>
+        preferredRank(a) - preferredRank(b) || b.count - a.count || OM(a, b),
+    )
+    .slice(0, 4);
+  return { common, hasOther: hasUntagged || tags.size > common.length };
+}
+function resourceSceneId(catalog, id) {
+  return catalog.common.some((tag) => tag.id === id) ? id : mX;
+}
+function matchesResourceScene(tags, selected, catalog) {
+  return (
+    !selected.length ||
+    (tags?.length
+      ? tags.some((tag) => selected.includes(resourceSceneId(catalog, tag.id)))
+      : selected.includes(mX))
+  );
+}
 function hEe(e, t) {
   return [
     ...e.server.skills.map((n) => {
@@ -138123,7 +138157,7 @@ function hEe(e, t) {
         name: n.name,
         description: n.description,
         category: r,
-        tags: r === "team" ? n.tags : [],
+        tags: n.tags ?? [],
         server: n,
         command: Ak(n),
         text: { name: swt(n), description: B0(n) },
@@ -138150,7 +138184,7 @@ function hEe(e, t) {
     }))
     .sort(OM);
 }
-function k8t(e, t, n = {}, r) {
+function k8t(e, t, n = {}, r, sceneTags) {
   const s = gC(t.text),
     i = s.split(/\s+/u).filter(Boolean),
     o = (f) => r?.get(f.id) ?? n[f.id] === !0,
@@ -138163,9 +138197,7 @@ function k8t(e, t, n = {}, r) {
             ? 2
             : f.search.tags.includes(s)
               ? 3
-              : 4,
-    c = new Map();
-  let u = 0;
+              : 4;
   const d = e.filter((f) => {
     if (
       f.category !== t.source ||
@@ -138177,31 +138209,11 @@ function k8t(e, t, n = {}, r) {
       )
     )
       return !1;
-    if (t.source !== "team") return !0;
-    f.tags.length || u++;
-    for (const h of f.tags) {
-      const p = c.get(h.id);
-      p ? p.count++ : c.set(h.id, { ...h, count: 1 });
-    }
-    return (
-      !t.tags.length ||
-      f.tags.some((h) => t.tags.includes(h.id)) ||
-      (!f.tags.length && t.tags.includes(mX))
-    );
+    return matchesResourceScene(f.tags, t.tags, sceneTags);
   });
-  if (t.source === "team") {
-    for (const f of e)
-      if (f.category === "team")
-        for (const h of f.tags)
-          t.tags.includes(h.id) &&
-            !c.has(h.id) &&
-            c.set(h.id, { ...h, count: 0 });
-  }
-  return (
-    (s || d.some(o)) &&
-      d.sort((f, h) => a(f) - a(h) || Number(o(h)) - Number(o(f)) || OM(f, h)),
-    { entries: d, tags: [...c.values()].sort(OM), untagged: u }
-  );
+  if (s || d.some(o))
+    d.sort((f, h) => a(f) - a(h) || Number(o(h)) - Number(o(f)) || OM(f, h));
+  return d;
 }
 function bL({ id: e, model: t }) {
   const n = "@" + e;
@@ -138285,7 +138297,7 @@ const w5 = 30,
     numeric: !0,
     sensitivity: "base",
   });
-function xL(e) {
+function xL(e, scenes = false) {
   const t = ir((O) =>
       [O.account?.user.id, O.account?.server?.url].join(`
 `),
@@ -138312,6 +138324,10 @@ function xL(e) {
             .flatMap((O) => O.tags?.map((N) => N.id) ?? []),
         ),
       [e],
+    ),
+    sceneTags = y.useMemo(
+      () => (scenes ? resourceSceneTags(e, r) : void 0),
+      [e, r, scenes],
     ),
     {
       matches: w,
@@ -138342,10 +138358,12 @@ function xL(e) {
       return {
         matches: R.filter(
           ({ item: W }) =>
-            r !== "team" ||
-            !u.length ||
-            W.tags?.some((V) => u.includes(V.id)) ||
-            (!W.tags?.length && u.includes(mX)),
+            sceneTags
+              ? matchesResourceScene(W.tags, u, sceneTags)
+              : r !== "team" ||
+                !u.length ||
+                W.tags?.some((V) => u.includes(V.id)) ||
+                (!W.tags?.length && u.includes(mX)),
         )
           .map(({ item: W, name: V }) => ({
             item: W,
@@ -138363,7 +138381,7 @@ function xL(e) {
         tagCounts: B,
         untagged: q,
       };
-    }, [e, r, p, a, u, n]),
+    }, [e, r, p, a, u, n, sceneTags]),
     A = w.slice(0, f),
     _ = w.length,
     E = A.length,
@@ -138417,6 +138435,7 @@ function xL(e) {
       rootRef: m,
       bottomRef: g,
       teamTags: v,
+      sceneTags,
       tagCounts: C,
       untagged: S,
       filtered: !!(i || a || u.length),
@@ -139562,6 +139581,49 @@ function yX({ tags: e, onSelect: t }) {
       })
     : null;
 }
+function ResourceSceneFilters({ catalog, selected, onChange }) {
+  const { t } = Xe();
+  const { common, hasOther } = catalog;
+  if (!common.length && !selected.length) return null;
+  function toggle(id) {
+    onChange(
+      selected.includes(id)
+        ? selected.filter((value) => value !== id)
+        : [...selected, id],
+    );
+  }
+  function chip(name, active, onClick, key) {
+    return l.jsx(Te, {
+      type: "button",
+      variant: "ghost",
+      size: "sm",
+      className: "resource-scene-chip",
+      "aria-pressed": active,
+      onClick,
+      children: l.jsx("span", {
+        className: "resource-scene-name",
+        title: name,
+        children: name,
+      }),
+    }, key);
+  }
+  return l.jsxs("div", {
+    className: "resource-scenes",
+    role: "group",
+    "aria-label": t("settings.resources.scenes"),
+    children: [
+      l.jsx("span", {
+        className: "resource-scenes-label",
+        "aria-hidden": true,
+        children: t("settings.resources.scenes"),
+      }),
+      chip(t("settings.resources.allScenes"), !selected.length, () => onChange([])),
+      ...common.map(({ id, name }) => chip(name, selected.includes(id), () => toggle(id), id)),
+      (hasOther || selected.includes(mX)) &&
+        chip(t("settings.resources.otherScenes"), selected.includes(mX), () => toggle(mX)),
+    ],
+  });
+}
 function bX({
   children: e,
   textKey: t = "settings.resources",
@@ -139572,6 +139634,7 @@ function bX({
   showSearch: o = !0,
   defaults: a,
   tags: c,
+  scenes,
   filtered: u,
   onClear: d,
 }) {
@@ -139673,8 +139736,10 @@ function bX({
           }),
         ],
       }),
+      scenes && l.jsx(ResourceSceneFilters, scenes),
       u &&
         d &&
+        (!scenes || a?.checked || !!s) &&
         l.jsxs("div", {
           className: "resource-active-filters",
           children: [
@@ -139750,6 +139815,11 @@ function wL({
                   onChange: e.changeTags,
                 }
               : void 0,
+          scenes: e.sceneTags && {
+            catalog: e.sceneTags,
+            selected: e.tags,
+            onChange: e.changeTags,
+          },
           children: l.jsx(Mp, {
             "aria-label": o("settings.resources.categoriesLabel"),
             children: c0.map((a) =>
@@ -142649,9 +142719,8 @@ function REt() {
       ],
       [h?.server.experts, n],
     ),
-    q = xL(B),
+    q = xL(B, true),
     F = q.category,
-    W = yn((H) => H.getExpertTags),
     V = h?.server.experts.find((H) => H.id === N),
     K = l.jsxs(l.Fragment, {
       children: [
@@ -142682,7 +142751,6 @@ function REt() {
       l.jsx(wL, {
         library: q,
         searchLabel: e("settings.experts.search"),
-        loadTags: W,
         children: l.jsx(x8, {
           label: e("settings.sections.experts"),
           empty: !q.total,
@@ -142712,11 +142780,11 @@ function REt() {
                           variant: "outline",
                           children: e("settings.experts.unavailable"),
                         }),
-                      F === "team" &&
-                        l.jsx(yX, {
-                          tags: P.expert.tags ?? [],
-                          onSelect: (Q) => q.changeTags([Q]),
-                        }),
+                      l.jsx(yX, {
+                        tags: P.expert.tags ?? [],
+                        onSelect: (Q) =>
+                          q.changeTags([resourceSceneId(q.sceneTags, Q)]),
+                      }),
                     ],
                   }),
                   metadata: C4(G, e),
@@ -144939,6 +145007,7 @@ function i_t() {
           name: v.name,
           category: fh(v, t),
           search: [B0(v), v.content, v.user?.name].filter(Boolean).join(" "),
+          tags: v.tags,
           defaultUse:
             v.required ||
             (n?.resourcePreferences.enabled["rule/server/" + v.id] ?? !1),
@@ -144946,7 +145015,7 @@ function i_t() {
         })),
       [n?.server.rules, n?.resourcePreferences.enabled, t],
     ),
-    m = xL(p),
+    m = xL(p, true),
     g = m.category,
     b = l.jsxs(l.Fragment, {
       children: [
@@ -144985,6 +145054,11 @@ function i_t() {
                       name: v.name,
                       description: v.content,
                       user: v.user ?? null,
+                      badges: !!v.tags?.length && l.jsx(yX, {
+                        tags: v.tags,
+                        onSelect: (tagId) =>
+                          m.changeTags([resourceSceneId(m.sceneTags, tagId)]),
+                      }),
                       metadata: C4(v, e),
                       onOpen: () => (g === "mine" ? o({ id: v.id }) : h(v)),
                       actions:
@@ -146001,7 +146075,6 @@ function w_t() {
     o = yn(($e) => $e.skillPackages),
     a = yn(($e) => $e.retrySkill),
     c = yn(($e) => $e.syncNow),
-    u = yn(($e) => $e.getSkillTags),
     [d, f] = y.useState(!1),
     [h, p] = y.useState(v5),
     [m, g] = y.useState(x1),
@@ -146015,31 +146088,22 @@ function w_t() {
       for (const Ve of C) $e[Ve.category]++;
       return $e;
     }, [C]),
+    sceneTags = y.useMemo(
+      () => resourceSceneTags(C, h.source),
+      [C, h.source],
+    ),
     _ = y.useMemo(
-      () => k8t(C, { ...h, text: w }, n?.resourcePreferences.enabled, S),
-      [C, h, w, n?.resourcePreferences.enabled, S],
-    ),
-    E = y.useMemo(
-      () =>
-        new Set(
-          C.filter(($e) => $e.category === "team").flatMap(($e) =>
-            $e.tags.map((Ve) => Ve.id),
-          ),
-        ),
-      [C],
-    ),
-    T = y.useMemo(
-      () => new Map(_.tags.map(($e) => [$e.id, $e.count])),
-      [_.tags],
+      () => k8t(C, { ...h, text: w }, n?.resourcePreferences.enabled, S, sceneTags),
+      [C, h, w, n?.resourcePreferences.enabled, S, sceneTags],
     ),
     M = !!(h.text || h.tags.length || h.defaultOnly),
     I = n?.resourceSyncStatus?.skills,
     O =
       !C.length && !I?.error && (I?.state === "idle" || I?.state === "syncing"),
     N = !C.length && !!I?.error,
-    R = _.entries.slice(0, m),
+    R = _.slice(0, m),
     B = R.length,
-    q = _.entries.length,
+    q = _.length,
     F = B < q,
     W = typeof IntersectionObserver == "function",
     V = ($e) => {
@@ -146174,7 +146238,7 @@ function w_t() {
             textKey: "settings.skills",
             searchLabel: e("settings.skills.search"),
             placeholder: e(
-              h.source === "team"
+              sceneTags.common.length > 0
                 ? "settings.skills.searchWithTags"
                 : "settings.skills.search",
             ),
@@ -146187,18 +146251,11 @@ function w_t() {
               checked: h.defaultOnly,
               onChange: ($e) => V({ ...h, defaultOnly: $e }),
             },
-            tags:
-              h.source === "team"
-                ? {
-                    textKey: "settings.skills",
-                    loadTags: u,
-                    available: E,
-                    counts: T,
-                    untagged: _.untagged,
-                    selected: h.tags,
-                    onChange: ($e) => V({ ...h, tags: $e }),
-                  }
-                : void 0,
+            scenes: {
+              catalog: sceneTags,
+              selected: h.tags,
+              onChange: ($e) => V({ ...h, tags: $e }),
+            },
             children: l.jsx(Mp, {
               "aria-label": e("settings.skills.categoriesLabel"),
               children: c0.map(($e) =>
@@ -146286,12 +146343,14 @@ function w_t() {
                                         onOpen: Ne ? () => G(Ne.id) : void 0,
                                         badges: l.jsxs(l.Fragment, {
                                           children: [
-                                            Ve.category === "team" &&
-                                              l.jsx(yX, {
-                                                tags: Ve.tags,
-                                                onSelect: (ot) =>
-                                                  V({ ...h, tags: [ot] }),
-                                              }),
+                                            l.jsx(yX, {
+                                              tags: Ve.tags,
+                                              onSelect: (ot) =>
+                                                V({
+                                                  ...h,
+                                                  tags: [resourceSceneId(sceneTags, ot)],
+                                                }),
+                                            }),
                                             !Ne &&
                                               l.jsx($o, {
                                                 variant: "outline",
@@ -146432,7 +146491,7 @@ function w_t() {
           {
             skill: Ie.server,
             command: Ie.command,
-            showTags: Ie.category === "team",
+            showTags: Ie.tags.length > 0,
             onClose: () => G(null),
           },
           Ie.id + ":" + Ie.server.version,
@@ -151638,152 +151697,6 @@ function XEe({ status: e, builtin: t = !1 }) {
     ],
   });
 }
-function v7t() {
-  const { t: e } = Xe(),
-    { status: t, loading: n, refresh: r } = GEe(),
-    s = KEe(),
-    i = ir((o) => o.account?.id),
-    [sharedPage, setSharedPage] = y.useState(null),
-    loadSharedPage = (action) => s.run(async () => {
-      const result = await et.browserControl.sharedPage(action);
-      if (!result || action === "read") setSharedPage(result ?? false);
-    });
-  y.useEffect(() => {
-    setSharedPage(null);
-  }, [t.stateVersion, i]);
-  return et.kind !== "electron"
-    ? l.jsx("p", {
-        className: "text-sm text-muted-foreground",
-        children: e(Gd("browserControl.desktopOnly")),
-      })
-    : l.jsxs("div", {
-        className: "browser-control-settings",
-        children: [
-          l.jsx("p", {
-            className: "browser-control-hint",
-            children: e(Gd("browserControl.hint")),
-          }),
-          n
-            ? l.jsx("p", {
-                className: "browser-control-hint",
-                role: "status",
-                children: e("browserControl.checking"),
-              })
-            : _L(t)
-              ? l.jsx(ZEe, { status: t, action: s, refresh: r })
-              : l.jsxs(l.Fragment, {
-                  children: [
-                    l.jsx(XEe, { status: t }),
-                    l.jsx("p", {
-                      className: "browser-control-hint",
-                      children: e("browserControl.sharedHint"),
-                    }),
-                    et.browserControl.sharedPage && l.jsxs(l.Fragment, {
-                      children: [
-                        l.jsxs("div", {
-                          className: "browser-control-actions",
-                          children: [
-                            l.jsx(Te, { size: "sm", variant: "outline", disabled: s.busy,
-                              onClick: () => loadSharedPage("read"), children: e("browserControl.sharedRead") }),
-                            l.jsx(Te, { size: "sm", variant: "outline", disabled: s.busy,
-                              onClick: () => loadSharedPage("focus"), children: e("browserControl.sharedFocus") }),
-                          ],
-                        }),
-                        sharedPage === false && l.jsx("p", {
-                          role: "status", className: "browser-control-hint", children: e("browserControl.sharedEmpty"),
-                        }),
-                        sharedPage && l.jsxs("div", {
-                          className: "browser-connection-help",
-                          children: [
-                            l.jsx("strong", { children: sharedPage.title || sharedPage.url }),
-                            l.jsx("p", { className: "browser-control-hint break-all", children: sharedPage.url }),
-                            l.jsx("pre", { className: "max-h-64 overflow-auto whitespace-pre-wrap break-words select-text",
-                              children: sharedPage.text }),
-                          ],
-                        }),
-                      ],
-                    }),
-                  ],
-                }),
-          !n && l.jsx(YEe, { warnings: t.warnings }),
-          t.registered &&
-            l.jsxs("details", {
-              className: "browser-connection-help",
-              children: [
-                l.jsx("summary", {
-                  role: "button",
-                  children: e("browserControl.manage"),
-                }),
-                l.jsx("p", {
-                  className: "browser-control-hint",
-                  children: e(Gd("browserControl.unregisterHint")),
-                }),
-                l.jsxs("div", {
-                  className: "browser-control-actions",
-                  children: [
-                    l.jsx(Te, {
-                      variant: "outline",
-                      size: "sm",
-                      disabled: s.busy,
-                      onClick: () =>
-                        s.run(async () => {
-                          (await et.browserControl.registerNativeHost(),
-                            await r());
-                        }),
-                      children: e("browserControl.repair"),
-                    }),
-                    l.jsx(Te, {
-                      variant: "ghost",
-                      size: "sm",
-                      disabled: s.busy,
-                      onClick: () =>
-                        s.run(async () => {
-                          (await et.browserControl.unregisterNativeHost(),
-                            await r());
-                        }),
-                      children: e("browserControl.unregister"),
-                    }),
-                  ],
-                }),
-              ],
-            }),
-          l.jsxs("div", {
-            className: "browser-connection-help",
-            children: [
-              l.jsx("p", {
-                className: "browser-control-hint",
-                children: e(Gd("browserControl.sitePermissionsHint")),
-              }),
-              l.jsx(Te, {
-                variant: "outline",
-                size: "sm",
-                disabled: s.busy || !i,
-                onClick: () =>
-                  i &&
-                  s.run(() => et.browserControl.resetSitePermissions(i), {
-                    success: e("browserControl.sitePermissionsReset"),
-                    failure: e("browserControl.sitePermissionsResetFailed"),
-                  }),
-                children: e("browserControl.resetSitePermissions"),
-              }),
-            ],
-          }),
-          t.reason &&
-            l.jsx("p", {
-              className: "browser-control-hint",
-              children: e(Gd("browserControl.errors." + t.reason), {
-                defaultValue: e("browserControl.failure"),
-              }),
-            }),
-          s.error &&
-            l.jsx("p", {
-              className: "browser-control-error",
-              role: "alert",
-              children: s.error,
-            }),
-        ],
-      });
-}
 function w7t({ scope: e, active: t }) {
   const { t: n } = Xe(),
     { status: r, loading: s, refresh: i } = GEe(),
@@ -152283,7 +152196,6 @@ function S7t({ section: e }) {
       skills: w_t,
       knowledgeBases: zfe,
       tools: a7t,
-      browser: v7t,
       rules: i_t,
       experts: REt,
       appearance: C7t,
@@ -152822,8 +152734,8 @@ const ji = uc((e, t) => {
           treeWidth: u.workspaceFileTreeWidth,
           ...(u.workbenchLayout ? { layout: u.workbenchLayout } : {}),
           ...(u.workspaceTab ? { tab: u.workspaceTab } : {}),
-          ...(u.browserBackend ? { browserBackend: u.browserBackend } : {}),
           ...d,
+          browserBackend: et.platform === "ohos" ? "personal" : "embedded",
           panels: f,
           ...(!d?.navigation &&
           f.includes("browser") &&
@@ -267058,6 +266970,7 @@ function wtn({
   onCopy: C,
   bookmarked: S,
   onImportCookies: A,
+  onResetSitePermissions,
   importCookiesLabel: _,
   importing: E = !1,
   toolbarStart: T,
@@ -267215,6 +267128,10 @@ function wtn({
                           onClick: A,
                           children: _,
                         }),
+                      onResetSitePermissions && l.jsx(hn, {
+                        onClick: onResetSitePermissions,
+                        children: I("browserControl.resetSitePermissions"),
+                      }),
                     ],
                   }),
                 ],
@@ -268292,6 +268209,13 @@ function dR({
             onCopy: X,
             bookmarked: T,
             onImportCookies: ae ? je : void 0,
+            onResetSitePermissions:
+              nativeBrowser && e.accountId && et.features?.browserControl !== !1 &&
+              typeof et.browserControl?.resetSitePermissions === "function"
+                ? () => et.browserControl.resetSitePermissions(e.accountId)
+                    .then(() => rn.success(b("browserControl.sitePermissionsReset")))
+                    .catch(() => rn.error(b("browserControl.sitePermissionsResetFailed")))
+                : void 0,
             importCookiesLabel: b("workspace.browser.importCookies"),
             importing: N,
             toolbarStart: f,
@@ -274994,8 +274918,8 @@ function $nn({
     p = c("errors.codes.remote_host_unsupported"),
     m = Onn() === `canvas:${u.sessionId}`,
     g = et.platform !== "ohos",
-    b = g && r ? d.browserBackend : r ? "personal" : "embedded",
-    v = !!(r && !i),
+    b = !g && r ? "personal" : "embedded",
+    v = !!(!g && r && !i),
     w = (M) => e.showBrowser(M),
     C = v
       ? l.jsx(HIe, {
@@ -275146,7 +275070,7 @@ function $nn({
               : l.jsxs("div", {
                   className: "browser-workspace-body",
                   children: [
-                    l.jsxs("div", {
+                    !g && l.jsxs("div", {
                       className: "browser-workspace-view",
                       hidden: b !== "personal",
                       children: [T, r],
@@ -276438,7 +276362,7 @@ function trn() {
           Me.accountId !== Q.scope.accountId ||
             Me.sessionId !== Q.scope.sessionId ||
             (Me.visible
-              ? Q.showBrowser("embedded")
+              ? (Q.showBrowser("embedded"), Q.showTool("browser"))
               : Q.panels.includes("browser") &&
                 Q.view.browserBackend === "embedded" &&
                 Q.closeTool("browser"));
@@ -276449,6 +276373,7 @@ function trn() {
       Q.panels,
       Q.view.browserBackend,
       Q.showBrowser,
+      Q.showTool,
       Q.closeTool,
     ]));
   const Ee = y.useMemo(

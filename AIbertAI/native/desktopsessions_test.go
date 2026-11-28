@@ -373,6 +373,24 @@ func TestSessionsContinueWithReportsOffline(t *testing.T) {
 	t.Run("cloud-legacy", func(t *testing.T) { testTurnReportBacklog(t, "") })
 }
 
+func TestDSHTurnFailureDiagnosticsExcludeRPCMessageAndPaths(t *testing.T) {
+	const private = "private workspace path and prompt"
+	rpc := &dshRPCError{method: "session/resume", code: -32603, message: private}
+	err := fmt.Errorf("resume: %w", rpc)
+	attrs := dshTurnFailureDiagnostics(err)
+	if len(attrs) != 2 || attrs[0].Key != "sdk_method" || attrs[0].Value.String() != "session/resume" ||
+		attrs[1].Key != "sdk_code" || attrs[1].Value.Int64() != -32603 {
+		t.Fatalf("unexpected RPC diagnostic attributes: %v", attrs)
+	}
+	if got := safeDesktopTurnFailure(err); got != "session_turn_failed" {
+		t.Fatalf("private details changed the public error code: %q", got)
+	}
+	attrs = dshTurnFailureDiagnostics(&os.PathError{Op: "open", Path: private, Err: os.ErrPermission})
+	if len(attrs) != 1 || attrs[0].Key != "sdk_error_kind" || attrs[0].Value.String() != "filesystem" {
+		t.Fatalf("unexpected filesystem diagnostic attributes: %v", attrs)
+	}
+}
+
 func testTurnReportBacklog(t *testing.T, engine string) {
 	t.Helper()
 	const id = "11111111-1111-4111-8111-111111111111"

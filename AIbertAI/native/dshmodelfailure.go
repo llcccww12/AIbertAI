@@ -350,7 +350,9 @@ func (g *dshLocalGateway) abandonFailed(call string) error {
 	next := *g.pending
 	next.State, next.Unverified = "rejected", true
 	next.FailureCode = "dsh_model_service_unavailable"
-	if next.Status >= 200 && next.Status < 300 {
+	if next.Status == http.StatusBadRequest {
+		next.FailureCode = dshFailureCode(next.Status)
+	} else if next.Status >= 200 && next.Status < 300 {
 		next.FailureCode = "dsh_model_stream_ended"
 	}
 	if err := g.writePending(&next); err != nil {

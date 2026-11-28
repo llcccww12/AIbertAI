@@ -321,7 +321,7 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 	var init struct {
 		Type, Token, WebOrigin, ServerURL, UserID, DataKey, MachineID string
 		ClientVersion                                                 string
-		DesignBridge                                                  bool
+		DesignBridge, BrowserBridge                                   bool
 	}
 	if readErr != nil || json.Unmarshal(line, &init) != nil || init.Type != "init" || !validUUID(init.UserID) ||
 		(backendOrigin != "" && init.ServerURL != backendOrigin) || (modelID != "" && !validUUID(modelID)) ||
@@ -346,13 +346,13 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 		defer eventMu.Unlock()
 		return events.Encode(value)
 	}
-	var designBridge *desktopDesignBridge
-	if init.DesignBridge {
-		designBridge = &desktopDesignBridge{send: sendEvent, pending: make(map[string]chan designToolResult)}
+	var runtimeTools *desktopDesignBridge
+	if init.DesignBridge || init.BrowserBridge {
+		runtimeTools = &desktopDesignBridge{send: sendEvent, pending: make(map[string]chan designToolResult)}
 	}
 	go func() {
-		if designBridge != nil {
-			designBridge.read(reader)
+		if runtimeTools != nil {
+			runtimeTools.read(reader)
 		} else {
 			_, _ = io.Copy(io.Discard, reader)
 		}
@@ -492,7 +492,13 @@ func desktopRuntime(ctx context.Context, profile, file string, in io.Reader, out
 		local: &desktopRuntimeAccess{address: listener.Addr().String(), origin: init.WebOrigin,
 			protocol: "monkeyai.token." + init.Token, serverID: serverID, reportMachine: ready.MachineID,
 			userID: init.UserID, installedMachine: init.MachineID, clientVersion: init.ClientVersion, attachments: attachments},
-		live: live, designBridge: designBridge, goals: newGoalRuntime()}
+		live: live, goals: newGoalRuntime()}
+	if init.DesignBridge {
+		host.designBridge = runtimeTools
+	}
+	if init.BrowserBridge {
+		host.browserBridge = runtimeTools
+	}
 	if live.dsh != nil {
 		host.interactions = newDesktopDSHInteractions()
 		defer func() {

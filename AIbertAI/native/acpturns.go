@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -591,7 +592,7 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 							var input dshImageInput
 							var hasImage bool
 							if err == nil {
-								input, hasImage, err = h.prepareDSHImageInput(turnCtx, id, turn.Prompt, files, selected.SupportsVision)
+								input, hasImage, err = h.prepareDSHImageInput(turnCtx, session, turn.Prompt, files, selected.SupportsVision)
 								inputPreparationFailed = err != nil
 							}
 							if err == nil {
@@ -794,7 +795,12 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 				}
 			}
 			if ctx.Err() == nil && !plannedGoalStop && !turn.DSHUserStopped {
-				slog.Warn("桌面对话执行失败", "session_id", id, "operation_id", op, "reason", turn.FailureCode)
+				attrs := []slog.Attr{slog.String("session_id", id), slog.String("operation_id", op), slog.String("reason", turn.FailureCode)}
+				if session.Engine == "dsh" {
+					attrs = append(attrs, slog.Bool("sdk_prompt_dispatch_attempted", turn.dshPromptDispatched))
+					attrs = append(attrs, dshTurnFailureDiagnostics(err)...)
+				}
+				slog.LogAttrs(ctx, slog.LevelWarn, "桌面对话执行失败", attrs...)
 			}
 		}
 		if turn.Ended.Before(turn.Started) {
@@ -802,7 +808,7 @@ func (h *relaySessionHost) promptACP(ctx context.Context, ws *websocket.Conn, re
 		}
 		live.mu.Lock()
 		current := live.sessions[id]
-		if turn.dshModeApplied != "" {
+		if turn.dshModeApplied != "" && current.DSHPendingMode == turn.dshModeApplied {
 			// The SDK accepted the level the user picked mid-session; a later
 			// change queues the next switch.
 			session.DSHPendingMode, current.DSHPendingMode = "", ""
@@ -1360,6 +1366,20 @@ func dshPendingWrite(turn acpTurn) bool {
 		}
 	}
 	return false
+}
+
+// RPC error messages can contain user text, paths or provider details. Log only
+// the host-selected method and numeric code alongside the existing safe reason.
+func dshTurnFailureDiagnostics(err error) []slog.Attr {
+	var rpc *dshRPCError
+	if errors.As(err, &rpc) {
+		return []slog.Attr{slog.String("sdk_method", rpc.method), slog.Int("sdk_code", rpc.code)}
+	}
+	var path *os.PathError
+	if errors.As(err, &path) {
+		return []slog.Attr{slog.String("sdk_error_kind", "filesystem")}
+	}
+	return nil
 }
 
 func safeDesktopTurnFailure(err error) string {

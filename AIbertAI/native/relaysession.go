@@ -36,6 +36,7 @@ type relaySessionHost struct {
 	terminalLifetime     context.Context
 	trace                bool
 	designBridge         *desktopDesignBridge
+	browserBridge        *desktopDesignBridge
 	goals                *goalRuntime
 	legacyImport         desktopImportResult
 	importedResources    *importedDesktopResources
